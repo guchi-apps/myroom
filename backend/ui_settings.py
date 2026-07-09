@@ -12,6 +12,7 @@ SETTING_DISPLAY_ORDER = "display_order"
 SETTING_CHART_COLORS = "chart_colors"
 SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
+SETTING_PRESSURE_OFFSETS = "pressure_offsets"
 
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
 
@@ -30,6 +31,7 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_CHART_COLORS: dict(DEFAULT_CHART_COLORS),
         SETTING_HIDDEN_DEVICES: [],
         SETTING_STALE_ALERT_EXCLUDED: [],
+        SETTING_PRESSURE_OFFSETS: {},
     }
 
 
@@ -100,6 +102,22 @@ def _normalize_stale_alert_excluded(raw: Any) -> List[str]:
     return excluded
 
 
+def _normalize_pressure_offsets(raw: Any) -> Dict[str, float]:
+    if not isinstance(raw, dict):
+        return {}
+
+    offsets: Dict[str, float] = {}
+    for key, value in raw.items():
+        try:
+            device_id = str(int(key))
+            offset = float(value)
+        except (TypeError, ValueError):
+            continue
+        if offset != 0:
+            offsets[device_id] = offset
+    return offsets
+
+
 def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = _default_settings()
     if not raw:
@@ -117,6 +135,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ),
         SETTING_STALE_ALERT_EXCLUDED: _normalize_stale_alert_excluded(
             raw.get(SETTING_STALE_ALERT_EXCLUDED, defaults[SETTING_STALE_ALERT_EXCLUDED])
+        ),
+        SETTING_PRESSURE_OFFSETS: _normalize_pressure_offsets(
+            raw.get(SETTING_PRESSURE_OFFSETS, defaults[SETTING_PRESSURE_OFFSETS])
         ),
     }
 
@@ -190,6 +211,9 @@ def save_settings(
         ),
         SETTING_STALE_ALERT_EXCLUDED: updates.get(
             SETTING_STALE_ALERT_EXCLUDED, current.get(SETTING_STALE_ALERT_EXCLUDED, [])
+        ),
+        SETTING_PRESSURE_OFFSETS: updates.get(
+            SETTING_PRESSURE_OFFSETS, current.get(SETTING_PRESSURE_OFFSETS, {})
         ),
     }
     normalized = _normalize_settings(merged)

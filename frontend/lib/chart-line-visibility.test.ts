@@ -9,6 +9,7 @@ import {
   loadChartLineVisibility,
   mergeEffectiveChartLineVisibility,
   normalizeChartLineVisibility,
+  outdoorMetricVisibilityKey,
   OUTDOOR_VISIBILITY_KEY,
   resolveEffectiveChartLineVisibility,
   saveChartLineVisibility,
@@ -16,7 +17,7 @@ import {
 } from "@/lib/chart-line-visibility";
 
 describe("chart-line-visibility", () => {
-  it("builds defaults with all metric keys visible per device and outdoor hidden", () => {
+  it("builds defaults with all metric keys visible per device and outdoor metrics hidden", () => {
     const defaults = buildDefaultChartLineVisibility([1, 2]);
 
     expect(defaults[deviceMetricVisibilityKey(1, "temperature")]).toBe(true);
@@ -24,7 +25,8 @@ describe("chart-line-visibility", () => {
     expect(defaults[deviceMetricVisibilityKey(2, "temperature")]).toBe(true);
     expect(defaults[deviceMetricVisibilityKey(2, "humidity")]).toBe(true);
     expect(defaults[deviceDht11VisibilityKey(1)]).toBe(true);
-    expect(defaults[OUTDOOR_VISIBILITY_KEY]).toBe(false);
+    expect(defaults[outdoorMetricVisibilityKey("temperature")]).toBe(false);
+    expect(defaults[outdoorMetricVisibilityKey("humidity")]).toBe(false);
     expect(defaults[AIRCON_TARGET_VISIBILITY_KEY]).toBe(true);
   });
 
@@ -32,7 +34,7 @@ describe("chart-line-visibility", () => {
     const normalized = normalizeChartLineVisibility(
       {
         [deviceMetricVisibilityKey(1, "temperature")]: false,
-        [OUTDOOR_VISIBILITY_KEY]: true,
+        [outdoorMetricVisibilityKey("temperature")]: true,
       },
       [1, 2]
     );
@@ -40,7 +42,18 @@ describe("chart-line-visibility", () => {
     expect(normalized[deviceMetricVisibilityKey(1, "temperature")]).toBe(false);
     expect(normalized[deviceMetricVisibilityKey(1, "humidity")]).toBe(true);
     expect(normalized[deviceMetricVisibilityKey(2, "temperature")]).toBe(true);
-    expect(normalized[OUTDOOR_VISIBILITY_KEY]).toBe(true);
+    expect(normalized[outdoorMetricVisibilityKey("temperature")]).toBe(true);
+    expect(normalized[outdoorMetricVisibilityKey("humidity")]).toBe(false);
+  });
+
+  it("toggling outdoor temperature does not affect outdoor humidity", () => {
+    const defaults = buildDefaultChartLineVisibility([1]);
+    const tempKey = outdoorMetricVisibilityKey("temperature");
+    const humKey = outdoorMetricVisibilityKey("humidity");
+    const updated = toggleChartLineVisibility(defaults, tempKey);
+
+    expect(isChartLineVisible(updated, tempKey)).toBe(true);
+    expect(isChartLineVisible(updated, humKey)).toBe(false);
   });
 
   it("toggles visibility", () => {
@@ -78,13 +91,13 @@ describe("chart-line-visibility", () => {
 
     saveChartLineVisibility({
       [deviceMetricVisibilityKey(2, "temperature")]: false,
-      [OUTDOOR_VISIBILITY_KEY]: true,
+      [outdoorMetricVisibilityKey("temperature")]: true,
     });
 
     const loaded = loadChartLineVisibility([1, 2]);
     expect(loaded[deviceMetricVisibilityKey(1, "temperature")]).toBe(true);
     expect(loaded[deviceMetricVisibilityKey(2, "temperature")]).toBe(false);
-    expect(loaded[OUTDOOR_VISIBILITY_KEY]).toBe(true);
+    expect(loaded[outdoorMetricVisibilityKey("temperature")]).toBe(true);
 
     vi.unstubAllGlobals();
   });
@@ -101,9 +114,10 @@ describe("chart-line-visibility", () => {
   it("merges session overrides on top of defaults", () => {
     const defaults = buildDefaultChartLineVisibility([1]);
     const tempKey = deviceMetricVisibilityKey(1, "temperature");
+    const outdoorTempKey = outdoorMetricVisibilityKey("temperature");
     const effective = mergeEffectiveChartLineVisibility(defaults, {
       [tempKey]: false,
-      [OUTDOOR_VISIBILITY_KEY]: true,
+      [outdoorTempKey]: true,
     });
 
     expect(resolveEffectiveChartLineVisibility(defaults, {}, tempKey)).toBe(
@@ -113,6 +127,6 @@ describe("chart-line-visibility", () => {
       resolveEffectiveChartLineVisibility(defaults, { [tempKey]: false }, tempKey)
     ).toBe(false);
     expect(isChartLineVisible(effective, tempKey)).toBe(false);
-    expect(isChartLineVisible(effective, OUTDOOR_VISIBILITY_KEY)).toBe(true);
+    expect(isChartLineVisible(effective, outdoorTempKey)).toBe(true);
   });
 });

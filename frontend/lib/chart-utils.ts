@@ -1044,19 +1044,27 @@ function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-export function formatChartAxisDate(timestamp: number, viewRange: ChartViewRange): string {
+export function formatChartAxisDate(
+  timestamp: number,
+  viewRange: ChartViewRange,
+  dateOnly = false
+): string {
   const date = new Date(timestamp);
   if (isNaN(date.getTime())) return "";
-  if (viewRange === "year") {
+  if (viewRange === "year" || dateOnly) {
     return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
   }
   return `${date.getMonth() + 1}/${date.getDate()} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
-export function formatActivePointLabel(timestamp: number, viewRange: ChartViewRange): string {
+export function formatActivePointLabel(
+  timestamp: number,
+  viewRange: ChartViewRange,
+  dateOnly = false
+): string {
   const date = new Date(timestamp);
   if (isNaN(date.getTime())) return "";
-  if (viewRange === "year") {
+  if (viewRange === "year" || dateOnly) {
     return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
   }
   return `${date.getMonth() + 1}/${date.getDate()} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
@@ -1399,6 +1407,107 @@ export function getChartTicks(
 
 export function isAggregatedRange(viewRange: ChartViewRange): boolean {
   return viewRange === "year";
+}
+
+/** 生データを日単位でグルーピングし、デバイスごとの日次平均・最高・最低値を持つ点列を作る（週・月表示の最高/最低モード用） */
+export function buildDailyMinMaxHistory(
+  historyData: HistoryPoint[],
+  deviceIds: readonly number[],
+  metric: ChartMetric
+): HistoryPoint[] {
+  if (!historyData.length) return [];
+
+  const outdoorKey = `outdoor_${metric}` as keyof HistoryPoint;
+  const buckets = new Map<
+    string,
+    { values: Record<number, number[]>; outdoorValues: number[] }
+  >();
+
+  for (const point of historyData) {
+    const d = new Date(point.datetimeObj);
+    const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    let bucket = buckets.get(dateKey);
+    if (!bucket) {
+      bucket = { values: {}, outdoorValues: [] };
+      buckets.set(dateKey, bucket);
+    }
+
+    for (const deviceId of deviceIds) {
+      const value = getDeviceMetricValue(point, deviceId, metric);
+      if (value == null) continue;
+      (bucket.values[deviceId] ??= []).push(value);
+    }
+
+    const outdoorValue = point[outdoorKey];
+    if (typeof outdoorValue === "number" && !Number.isNaN(outdoorValue)) {
+      bucket.outdoorValues.push(outdoorValue);
+    }
+  }
+
+  const rows: HistoryPoint[] = [];
+  for (const [dateKey, bucket] of buckets.entries()) {
+    const [year, month, date] = dateKey.split("-").map(Number);
+    const noon = new Date(year, month, date, 12, 0, 0, 0);
+    const row = {
+      datetime: noon.toISOString(),
+      datetimeObj: noon.getTime(),
+    } as unknown as Record<string, unknown>;
+
+    let hasAny = false;
+    for (const deviceId of deviceIds) {
+      const values = bucket.values[deviceId];
+      if (!values?.length) continue;
+      hasAny = true;
+      row[deviceMetricKey(deviceId, metric)] =
+        Math.round((values.reduce((sum, v) => sum + v, 0) / values.length) * 10) / 10;
+      row[deviceMetricMinKey(deviceId, metric)] = Math.min(...values);
+      row[deviceMetricMaxKey(deviceId, metric)] = Math.max(...values);
+    }
+
+    if (bucket.outdoorValues.length) {
+      hasAny = true;
+      row[outdoorKey as string] =
+        Math.round(
+          (bucket.outdoorValues.reduce((sum, v) => sum + v, 0) /
+            bucket.outdoorValues.length) *
+            10
+        ) / 10;
+    }
+
+    if (hasAny) rows.push(row as unknown as HistoryPoint);
+  }
+
+  rows.sort((a, b) => a.datetimeObj - b.datetimeObj);
+  return rows;
+}
+
+/** 最高/最低モードで、選択時刻に最も近い日の最高・最低値を取得する */
+export function getDeviceMetricMinMaxAtTime(
+  historyData: HistoryPoint[],
+  deviceId: number,
+  metric: ChartMetric,
+  targetTime: number
+): { min?: number; max?: number } {
+  if (!historyData.length) return {};
+
+  let nearest: HistoryPoint | undefined;
+  let bestDiff = Infinity;
+  for (const point of historyData) {
+    const diff = Math.abs(point.datetimeObj - targetTime);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      nearest = point;
+    }
+  }
+  if (!nearest) return {};
+
+  const row = nearest as unknown as Record<string, unknown>;
+  const min = row[deviceMetricMinKey(deviceId, metric)];
+  const max = row[deviceMetricMaxKey(deviceId, metric)];
+  return {
+    min: typeof min === "number" ? min : undefined,
+    max: typeof max === "number" ? max : undefined,
+  };
 }
 
 export function calcDiscomfortIndex(temperature: number, humidity: number): number {

@@ -104,6 +104,7 @@ export interface UiSettings {
   chart_colors: Record<string, string>;
   hidden_devices: string[];
   stale_alert_excluded_devices: string[];
+  pressure_offsets: Record<string, number>;
 }
 
 export interface SensorDeviceStatus {

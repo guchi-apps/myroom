@@ -79,6 +79,7 @@ import {
   saveChartColorsToServer,
   saveDisplayOrderToServer,
   saveHiddenDevicesToServer,
+  savePressureOffsetsToServer,
   saveStaleAlertExcludedToServer,
 } from "@/lib/ui-settings-client";
 
@@ -151,8 +152,10 @@ export function DeviceVisibilityPage() {
   );
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
+  const [pressureOffsets, setPressureOffsets] = useState<Record<string, number>>({});
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [inheritsDrafts, setInheritsDrafts] = useState<Record<number, number | null>>({});
+  const [pressureOffsetDrafts, setPressureOffsetDrafts] = useState<Record<number, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -198,6 +201,7 @@ export function DeviceVisibilityPage() {
       setHiddenKeys(settings.hiddenDeviceKeys);
       setChartColors(settings.chartColors);
       setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
+      setPressureOffsets(settings.pressureOffsets);
     } catch (err) {
       if (err instanceof AuthError) {
         setIsAuthenticated(false);
@@ -244,9 +248,11 @@ export function DeviceVisibilityPage() {
   useEffect(() => {
     const drafts: Record<string, string> = {};
     const inheritDrafts: Record<number, number | null> = {};
+    const offsetDrafts: Record<number, string> = {};
     for (const device of devices) {
       drafts[`device:${device.id}`] = device.name;
       inheritDrafts[device.id] = device.inherits_from ?? null;
+      offsetDrafts[device.id] = String(pressureOffsets[String(device.id)] ?? 0);
     }
     for (const unit of airconUnits) {
       drafts[`aircon:${unit.ac_id}`] = unit.name;
@@ -256,7 +262,8 @@ export function DeviceVisibilityPage() {
     }
     setNameDrafts(drafts);
     setInheritsDrafts(inheritDrafts);
-  }, [devices, airconUnits, outdoorLocation]);
+    setPressureOffsetDrafts(offsetDrafts);
+  }, [devices, airconUnits, outdoorLocation, pressureOffsets]);
 
   // 屋外編集シートを開いたとき、緯度・経度を初期化
   useEffect(() => {
@@ -448,9 +455,23 @@ export function DeviceVisibilityPage() {
       return;
     }
 
+    const offsetInput = pressureOffsetDrafts[deviceId]?.trim();
+    const offsetValue = offsetInput ? Number(offsetInput) : 0;
+    if (offsetInput && Number.isNaN(offsetValue)) {
+      setErrors((prev) => ({ ...prev, [key]: "気圧補正値には数値を入力してください" }));
+      return;
+    }
+
     setSavingKey(key);
     setErrors((prev) => ({ ...prev, [key]: "" }));
     try {
+      // 気圧補正値の保存を先に確定させる。updateDeviceName の setDevices が
+      // sensorDeviceIds の参照を変え、reloadSettings の再実行（設定の再取得）を
+      // 誘発するため、後に setDevices すると再取得が古い値で上書きしてしまう。
+      const nextOffsets = { ...pressureOffsets, [String(deviceId)]: offsetValue };
+      setPressureOffsets(nextOffsets);
+      await savePressureOffsetsToServer(nextOffsets);
+
       const saved = await updateDeviceName(
         deviceId,
         name,
@@ -459,6 +480,7 @@ export function DeviceVisibilityPage() {
       setDevices((prev) =>
         prev.map((device) => (device.id === deviceId ? saved : device))
       );
+
       setEditingTarget(null);
     } catch (err) {
       setErrors((prev) => ({
@@ -577,6 +599,25 @@ export function DeviceVisibilityPage() {
     return options;
   };
 
+  const renderPressureOffsetExtra = (deviceId: number) => (
+    <div className="space-y-2">
+      <Label htmlFor={`device:${deviceId}-pressure-offset`}>気圧の補正値 (hPa)</Label>
+      <Input
+        id={`device:${deviceId}-pressure-offset`}
+        inputMode="text"
+        value={pressureOffsetDrafts[deviceId] ?? "0"}
+        onChange={(e) =>
+          setPressureOffsetDrafts((prev) => ({ ...prev, [deviceId]: e.target.value }))
+        }
+        placeholder="0"
+        className="rounded-xl"
+      />
+      <p className="text-xs text-muted-foreground">
+        屋外の気圧と比較して大きくずれている場合に、表示・記録される気圧値へ加算する値を設定します。
+      </p>
+    </div>
+  );
+
   const renderOutdoorLocationExtra = () => (
     <>
       <div className="space-y-2">
@@ -667,6 +708,7 @@ export function DeviceVisibilityPage() {
           name={nameDrafts[key] ?? label}
           onNameChange={(value) => setDraft(key, value)}
           namePlaceholder="例: リビング"
+          extraContent={renderPressureOffsetExtra(deviceId)}
           chartColors={[
             {
               id: `${key}-color`,

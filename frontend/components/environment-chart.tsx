@@ -19,6 +19,8 @@ import {
   CHART_VIEW_RANGE_LABELS,
   ChartViewRange,
   deviceMetricKey,
+  deviceMetricMinKey,
+  deviceMetricMaxKey,
   deviceDht11TemperatureKey,
   deviceTargetMetricKey,
   formatAirconTargetTemperature,
@@ -35,6 +37,7 @@ import {
   computeDomainOffsetForSelectionTime,
   computeVisibleYDomain,
   buildAirconTargetChartSegments,
+  buildDailyMinMaxHistory,
   type AirconTargetChartSegment,
   downsampleMultiDeviceHistoryForChart,
   filterHistoryForDomain,
@@ -43,6 +46,7 @@ import {
   getAvailableChartMetrics,
   getChartTicksForDomain,
   getDeviceDht11TemperatureValueAtTime,
+  getDeviceMetricMinMaxAtTime,
   getDeviceMetricValueAtTime,
   getDeviceTargetMetricStateAtTime,
   getDeviceTargetMetricValueAtTime,
@@ -71,7 +75,7 @@ import {
   deviceDht11VisibilityKey,
   deviceMetricVisibilityKey,
   isChartLineVisible,
-  OUTDOOR_VISIBILITY_KEY,
+  outdoorMetricVisibilityKey,
   type ChartLineVisibilitySettings,
 } from "@/lib/chart-line-visibility";
 import { cn } from "@/lib/utils";
@@ -120,6 +124,8 @@ interface ChartSeriesRow {
   name: string;
   color: string;
   value: number | undefined;
+  minValue?: number;
+  maxValue?: number;
   visible: boolean;
   visibilityKey: string;
 }
@@ -260,7 +266,7 @@ export function EnvironmentChart({
   const showOutdoorLine =
     canShowOutdoor &&
     showOutdoorInOrder &&
-    isChartLineVisible(lineVisibility, OUTDOOR_VISIBILITY_KEY);
+    isChartLineVisible(lineVisibility, outdoorMetricVisibilityKey(chartMetric));
   const showTargetLine =
     showAirconTargetLine &&
     airconTargetDeviceId != null &&
@@ -319,6 +325,9 @@ export function EnvironmentChart({
 
   const [dragStartX, setDragStartX] = useState<number | null>(null);
   const [domainOffset, setDomainOffset] = useState(0);
+  const [metricDisplayMode, setMetricDisplayMode] = useState<"average" | "minmax">("average");
+  const showMinMaxToggle = viewRange !== "day";
+  const isMinMaxMode = showMinMaxToggle && metricDisplayMode === "minmax";
   const chartRef = useRef<HTMLDivElement>(null);
   const dragDomainRef = useRef(0);
   const rafRef = useRef<number | null>(null);
@@ -383,6 +392,12 @@ export function EnvironmentChart({
     [historyData, viewRange, domainOffset]
   );
 
+  const minMaxHistorySource = useMemo(() => {
+    if (!isMinMaxMode) return null;
+    if (viewRange === "year") return historyData;
+    return buildDailyMinMaxHistory(historyData, plottedDeviceIds, chartMetric);
+  }, [isMinMaxMode, viewRange, historyData, plottedDeviceIds, chartMetric]);
+
   useEffect(() => {
     if (currentDomain[0] === "dataMin" || !onVisibleDomainChange) return;
 
@@ -398,6 +413,23 @@ export function EnvironmentChart({
     [historyData, currentDomain]
   );
 
+  /** 最高/最低モードでは、横スクロール中も選択位置を最寄りの日の実データ点へスナップする（点の無い時刻を飛ばす） */
+  const effectiveSelectionTime = useMemo(() => {
+    if (!isMinMaxMode || selectionTime == null || !minMaxHistorySource?.length) {
+      return selectionTime;
+    }
+    let nearest = minMaxHistorySource[0].datetimeObj;
+    let bestDiff = Math.abs(nearest - selectionTime);
+    for (const point of minMaxHistorySource) {
+      const diff = Math.abs(point.datetimeObj - selectionTime);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        nearest = point.datetimeObj;
+      }
+    }
+    return nearest;
+  }, [isMinMaxMode, selectionTime, minMaxHistorySource]);
+
   const ticks = useMemo(() => {
     if (currentDomain[0] === "dataMin") return undefined;
     const [minT, maxT] = currentDomain;
@@ -407,16 +439,27 @@ export function EnvironmentChart({
   const visibleYDomain = useMemo(
     () =>
       computeVisibleYDomain(
-        historyData,
+        isMinMaxMode ? minMaxHistorySource ?? [] : historyData,
         currentDomain,
         chartMetric,
-        aggregated,
+        isMinMaxMode ? true : aggregated,
         plottedDeviceIds,
         showOutdoorLine,
-        targetDeviceIds,
-        plottedDht11DeviceIds
+        isMinMaxMode ? undefined : targetDeviceIds,
+        isMinMaxMode ? undefined : plottedDht11DeviceIds
       ),
-    [historyData, currentDomain, chartMetric, aggregated, plottedDeviceIds, showOutdoorLine, targetDeviceIds, plottedDht11DeviceIds]
+    [
+      isMinMaxMode,
+      minMaxHistorySource,
+      historyData,
+      currentDomain,
+      chartMetric,
+      aggregated,
+      plottedDeviceIds,
+      showOutdoorLine,
+      targetDeviceIds,
+      plottedDht11DeviceIds,
+    ]
   );
 
   const historySource = useMemo(() => {
@@ -431,6 +474,12 @@ export function EnvironmentChart({
 
   const chartPlotData = useMemo(() => {
     if (!historyData.length) return [];
+
+    if (isMinMaxMode) {
+      if (!minMaxHistorySource) return [];
+      const visible = filterHistoryForDomain(minMaxHistorySource, currentDomain);
+      return visible.length > 0 ? visible : minMaxHistorySource;
+    }
 
     const source = historySource;
     const base = aggregated
@@ -453,6 +502,9 @@ export function EnvironmentChart({
     );
   }, [
     historyData,
+    isMinMaxMode,
+    minMaxHistorySource,
+    currentDomain,
     historySource,
     chartMetric,
     aggregated,
@@ -464,7 +516,12 @@ export function EnvironmentChart({
   ]);
 
   const airconTargetSegments = useMemo(() => {
-    if (!showTargetLine || airconTargetDeviceId == null || chartMetric !== "temperature") {
+    if (
+      isMinMaxMode ||
+      !showTargetLine ||
+      airconTargetDeviceId == null ||
+      chartMetric !== "temperature"
+    ) {
       return [] as AirconTargetChartSegment[];
     }
 
@@ -520,6 +577,7 @@ export function EnvironmentChart({
 
     return segments;
   }, [
+    isMinMaxMode,
     showTargetLine,
     airconTargetDeviceId,
     chartMetric,
@@ -543,7 +601,7 @@ export function EnvironmentChart({
   ));
 
   const activeDeviceValues = useMemo(() => {
-    if (selectionTime == null) return [];
+    if (selectionTime == null || isMinMaxMode) return [];
     return orderedPlottedDeviceIds
       .map((deviceId) => ({
         deviceId,
@@ -557,7 +615,7 @@ export function EnvironmentChart({
         color: getDeviceChartColor(chartColors, deviceId),
       }))
       .filter((entry) => entry.value != null);
-  }, [selectionTime, orderedPlottedDeviceIds, deviceNames, chartMetric, chartPlotData, chartColors]);
+  }, [selectionTime, isMinMaxMode, orderedPlottedDeviceIds, deviceNames, chartMetric, chartPlotData, chartColors]);
 
   const activeDht11Values = useMemo(() => {
     if (selectionTime == null || chartMetric !== "temperature") return [];
@@ -580,6 +638,35 @@ export function EnvironmentChart({
     orderedPlottedDht11DeviceIds,
     deviceNames,
     chartPlotData,
+    chartColors,
+  ]);
+
+  const activeDeviceMinMaxValues = useMemo(() => {
+    if (!isMinMaxMode || effectiveSelectionTime == null || !minMaxHistorySource) return [];
+    return orderedPlottedDeviceIds
+      .map((deviceId) => {
+        const { min, max } = getDeviceMetricMinMaxAtTime(
+          minMaxHistorySource,
+          deviceId,
+          chartMetric,
+          effectiveSelectionTime
+        );
+        return {
+          deviceId,
+          name: deviceNames[deviceId] ?? `デバイス ${deviceId}`,
+          min,
+          max,
+          color: getDeviceChartColor(chartColors, deviceId),
+        };
+      })
+      .filter((entry) => entry.min != null || entry.max != null);
+  }, [
+    isMinMaxMode,
+    effectiveSelectionTime,
+    minMaxHistorySource,
+    orderedPlottedDeviceIds,
+    chartMetric,
+    deviceNames,
     chartColors,
   ]);
 
@@ -619,12 +706,15 @@ export function EnvironmentChart({
         if (!hasMetric && !hasDht11) continue;
 
         if (hasMetric) {
+          const minMaxEntry = isMinMaxMode
+            ? activeDeviceMinMaxValues.find((entry) => entry.deviceId === deviceId)
+            : undefined;
           rows.push({
             id: `device-${deviceId}`,
             name: deviceNames[deviceId] ?? `デバイス ${deviceId}`,
             color: getDeviceChartColor(chartColors, deviceId),
             value:
-              selectionTime == null
+              isMinMaxMode || selectionTime == null
                 ? undefined
                 : getDeviceMetricValueAtTime(
                     historySource,
@@ -632,12 +722,14 @@ export function EnvironmentChart({
                     chartMetric,
                     selectionTime
                   ),
+            minValue: minMaxEntry?.min,
+            maxValue: minMaxEntry?.max,
             visible: isDeviceLineVisible(deviceId),
             visibilityKey: deviceMetricVisibilityKey(deviceId, chartMetric),
           });
         }
 
-        if (hasDht11) {
+        if (hasDht11 && !isMinMaxMode) {
           rows.push({
             id: `device-dht11-${deviceId}`,
             name: `${deviceNames[deviceId] ?? `デバイス ${deviceId}`} (DHT11)`,
@@ -659,6 +751,7 @@ export function EnvironmentChart({
         }
 
         if (
+          !isMinMaxMode &&
           deviceId === airconTargetDeviceId &&
           showAirconTargetLine &&
           airconTargetDeviceId != null
@@ -681,8 +774,8 @@ export function EnvironmentChart({
           name: formatOutdoorApiLabel(outdoorLocationName),
           color: outdoorLineColor,
           value: activeOutdoor,
-          visible: isChartLineVisible(lineVisibility, OUTDOOR_VISIBILITY_KEY),
-          visibilityKey: OUTDOOR_VISIBILITY_KEY,
+          visible: isChartLineVisible(lineVisibility, outdoorMetricVisibilityKey(chartMetric)),
+          visibilityKey: outdoorMetricVisibilityKey(chartMetric),
         });
       }
     }
@@ -697,6 +790,8 @@ export function EnvironmentChart({
     selectionTime,
     historySource,
     isDeviceLineVisible,
+    isMinMaxMode,
+    activeDeviceMinMaxValues,
     airconTargetDeviceId,
     showAirconTargetLine,
     activeTargetState,
@@ -710,18 +805,38 @@ export function EnvironmentChart({
   ]);
 
   const selectionLabel =
-    selectionTime != null
-      ? formatActivePointLabel(selectionTime, viewRange)
+    effectiveSelectionTime != null
+      ? formatActivePointLabel(effectiveSelectionTime, viewRange, isMinMaxMode)
       : "";
 
+  const activeMinMaxDotEntries = useMemo(() => {
+    if (!isMinMaxMode) return [];
+    return activeDeviceMinMaxValues.flatMap((entry) => [
+      {
+        deviceId: entry.deviceId,
+        seriesKey: `minmax-max-${entry.deviceId}`,
+        name: `${entry.name}（最高）`,
+        value: entry.max,
+        color: entry.color,
+      },
+      {
+        deviceId: entry.deviceId,
+        seriesKey: `minmax-min-${entry.deviceId}`,
+        name: `${entry.name}（最低）`,
+        value: entry.min,
+        color: entry.color,
+      },
+    ]);
+  }, [isMinMaxMode, activeDeviceMinMaxValues]);
+
   const activeDots = useMemo(() => {
-    if (selectionTime == null) return [];
-    return [...activeDeviceValues, ...activeDht11Values]
+    if (effectiveSelectionTime == null) return [];
+    return [...activeDeviceValues, ...activeDht11Values, ...activeMinMaxDotEntries]
       .map((entry) => {
         const plotPosition = computePlotPosition(
           currentDomain,
           visibleYDomain,
-          selectionTime,
+          effectiveSelectionTime,
           entry.value
         );
         return plotPosition?.yRatio != null
@@ -729,7 +844,14 @@ export function EnvironmentChart({
           : null;
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry != null);
-  }, [activeDeviceValues, activeDht11Values, currentDomain, selectionTime, visibleYDomain]);
+  }, [
+    activeDeviceValues,
+    activeDht11Values,
+    activeMinMaxDotEntries,
+    currentDomain,
+    effectiveSelectionTime,
+    visibleYDomain,
+  ]);
 
   const unit = METRIC_UNITS[chartMetric];
 
@@ -737,6 +859,9 @@ export function EnvironmentChart({
     if (historyData.length && currentDomain[0] !== "dataMin") {
       const t = getSelectionTime(historyData, currentDomain);
       if (t != null) preservedSelectionTimeRef.current = t;
+    }
+    if (range === "day") {
+      setMetricDisplayMode("average");
     }
     onViewRangeChange(range);
   };
@@ -781,8 +906,8 @@ export function EnvironmentChart({
   };
 
   const selectionXRatio = useMemo(
-    () => computeSelectionXRatio(currentDomain, selectionTime),
-    [currentDomain, selectionTime]
+    () => computeSelectionXRatio(currentDomain, effectiveSelectionTime),
+    [currentDomain, effectiveSelectionTime]
   );
 
   const plotWidthExpr = `(100% - ${PLOT_INSET.left + PLOT_INSET.right}px)`;
@@ -881,7 +1006,19 @@ export function EnvironmentChart({
                   className={cn("shrink-0 text-lg font-bold", !row.visible && "opacity-40")}
                   style={{ color: row.color }}
                 >
-                  {formatSeriesRowValue(row, chartMetric, unit)}
+                  {row.minValue != null || row.maxValue != null ? (
+                    <>
+                      <span className="text-xs font-normal">最高</span>
+                      {formatMetricValue(row.maxValue, chartMetric)}
+                      {unit}
+                      {" / "}
+                      <span className="text-xs font-normal">最低</span>
+                      {formatMetricValue(row.minValue, chartMetric)}
+                      {unit}
+                    </>
+                  ) : (
+                    formatSeriesRowValue(row, chartMetric, unit)
+                  )}
                 </p>
                 <button
                   type="button"
@@ -951,7 +1088,7 @@ export function EnvironmentChart({
         ) : (
           <ResponsiveContainer width="100%" height="100%" className="pointer-events-none">
             <ComposedChart
-              key={`${chartMetric}-${viewRange}-${plottedDeviceIds.join("-")}-${plottedDht11DeviceIds.join("-")}-${showOutdoorLine}-${showTargetLine}`}
+              key={`${chartMetric}-${viewRange}-${plottedDeviceIds.join("-")}-${plottedDht11DeviceIds.join("-")}-${showOutdoorLine}-${showTargetLine}-${isMinMaxMode}`}
               data={chartPlotData}
               margin={{ top: PLOT_INSET.top, right: PLOT_INSET.right, left: 0, bottom: 0 }}
             >
@@ -961,7 +1098,7 @@ export function EnvironmentChart({
                 type="number"
                 domain={currentDomain}
                 ticks={ticks}
-                tickFormatter={(t) => formatChartAxisDate(t, viewRange)}
+                tickFormatter={(t) => formatChartAxisDate(t, viewRange, isMinMaxMode)}
                 tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                 axisLine={false}
                 tickLine={false}
@@ -996,20 +1133,47 @@ export function EnvironmentChart({
                 />
               )}
               {referenceLines}
-              {orderedPlottedDeviceIds.map((deviceId) => (
-                <Line
-                  key={deviceId}
-                  type="linear"
-                  dataKey={deviceMetricKey(deviceId, chartMetric)}
-                  stroke={getDeviceChartColor(chartColors, deviceId)}
-                  strokeWidth={1.5}
-                  dot={false}
-                  name={deviceNames[deviceId] ?? `デバイス ${deviceId}`}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-              ))}
-              {chartMetric === "temperature" &&
+              {isMinMaxMode
+                ? orderedPlottedDeviceIds.flatMap((deviceId) => [
+                    <Line
+                      key={`${deviceId}-max`}
+                      type="linear"
+                      dataKey={deviceMetricMaxKey(deviceId, chartMetric)}
+                      stroke={getDeviceChartColor(chartColors, deviceId)}
+                      strokeWidth={1.5}
+                      dot={false}
+                      name={`${deviceNames[deviceId] ?? `デバイス ${deviceId}`}（最高）`}
+                      isAnimationActive={false}
+                      connectNulls
+                    />,
+                    <Line
+                      key={`${deviceId}-min`}
+                      type="linear"
+                      dataKey={deviceMetricMinKey(deviceId, chartMetric)}
+                      stroke={getDeviceChartColor(chartColors, deviceId)}
+                      strokeWidth={1.5}
+                      strokeDasharray="6 4"
+                      dot={false}
+                      name={`${deviceNames[deviceId] ?? `デバイス ${deviceId}`}（最低）`}
+                      isAnimationActive={false}
+                      connectNulls
+                    />,
+                  ])
+                : orderedPlottedDeviceIds.map((deviceId) => (
+                    <Line
+                      key={deviceId}
+                      type="linear"
+                      dataKey={deviceMetricKey(deviceId, chartMetric)}
+                      stroke={getDeviceChartColor(chartColors, deviceId)}
+                      strokeWidth={1.5}
+                      dot={false}
+                      name={deviceNames[deviceId] ?? `デバイス ${deviceId}`}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                  ))}
+              {!isMinMaxMode &&
+                chartMetric === "temperature" &&
                 orderedPlottedDht11DeviceIds.map((deviceId) => (
                   <Line
                     key={`dht11-${deviceId}`}
@@ -1102,6 +1266,30 @@ export function EnvironmentChart({
             </button>
           ))}
         </div>
+        {showMinMaxToggle && (
+          <div className="mt-2 flex rounded-lg border bg-muted p-0.5">
+            {(
+              [
+                { mode: "average", label: "平均" },
+                { mode: "minmax", label: "最高・最低" },
+              ] as const
+            ).map(({ mode, label }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setMetricDisplayMode(mode)}
+                className={cn(
+                  "flex-1 rounded-md px-3 py-1 text-xs font-bold transition-all",
+                  metricDisplayMode === mode
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <p className="mt-2 text-center text-[10px] text-muted-foreground">
           左右にドラッグして表示期間を変更
         </p>

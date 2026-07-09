@@ -84,6 +84,7 @@ class UiSettingsUpdate(BaseModel):
     chart_colors: Optional[Dict[str, str]] = None
     hidden_devices: Optional[List[str]] = None
     stale_alert_excluded_devices: Optional[List[str]] = None
+    pressure_offsets: Optional[Dict[str, float]] = None
 
 class AirconData(BaseModel):
     datetime: str
@@ -281,7 +282,9 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
             "outdoor_pressure": outdoor["pressure"] if outdoor else None,
         }
         if device == 1:
-            payload["pressure"] = round(1013.0 + random.uniform(-1, 1), 1)
+            payload["pressure"] = round(
+                1013.0 + random.uniform(-1, 1) + _get_pressure_offset(device, db), 1
+            )
             payload["illuminance"] = round(450.0 + random.uniform(-80, 80), 1)
         else:
             payload["co2"] = round(530 + random.uniform(-20, 20))
@@ -308,7 +311,7 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
         "temperature": record.temperature,
         "temperature_dht11": record.temperature_dht11,
         "humidity": record.humidity,
-        "pressure": record.pressure if record.pressure else None,
+        "pressure": _normalize_pressure_hpa(record.pressure, _get_pressure_offset(device, db)),
         "co2": record.co2,
         "illuminance": record.illuminance,
         "outdoor_temperature": outdoor["temperature"] if outdoor else None,
@@ -588,13 +591,14 @@ def get_daily_stats(
     
     if not records:
         return []
-        
+
+    pressure_offset = _get_pressure_offset(device, db)
     data = [{
         "datetime": r.datetime,
         "temperature": r.temperature,
         "temperature_dht11": r.temperature_dht11,
         "humidity": r.humidity,
-        "pressure": r.pressure if r.pressure else None,
+        "pressure": _normalize_pressure_hpa(r.pressure, pressure_offset),
         "co2": r.co2,
         "illuminance": r.illuminance,
     } for r in records]
@@ -802,22 +806,29 @@ def _resolve_history_window(
     return start_time, end_time, effective_range
 
 
-def _normalize_pressure_hpa(pressure: Optional[int]) -> Optional[float]:
+def _get_pressure_offset(device_id: int, db: Optional[Session]) -> float:
+    offsets = ui_settings.get_settings(db).get("pressure_offsets", {})
+    try:
+        return float(offsets.get(str(device_id), 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _normalize_pressure_hpa(pressure: Optional[int], offset: float = 0.0) -> Optional[float]:
     if pressure is None:
         return None
-    if pressure > 5000:
-        return round(pressure / 100.0, 1)
-    return float(pressure)
+    base = pressure / 100.0 if pressure > 5000 else float(pressure)
+    return round(base + offset, 1)
 
 
-def _format_record_row(record: database.SensorRecord) -> dict:
+def _format_record_row(record: database.SensorRecord, offset: float = 0.0) -> dict:
     return {
         "datetime": record.datetime.strftime("%Y-%m-%d %H:%M:%S"),
         "device_id": record.device_id,
         "temperature": record.temperature,
         "temperature_dht11": record.temperature_dht11,
         "humidity": record.humidity,
-        "pressure": _normalize_pressure_hpa(record.pressure),
+        "pressure": _normalize_pressure_hpa(record.pressure, offset),
         "co2": record.co2,
         "illuminance": record.illuminance,
     }
@@ -863,6 +874,7 @@ def get_sensor_records(
         rows.sort(key=lambda item: item["datetime"], reverse=True)
         total = len(rows)
         page = rows[offset : offset + limit]
+        pressure_offset = _get_pressure_offset(device, db)
         records = [
             {
                 "datetime": row["datetime"].strftime("%Y-%m-%d %H:%M:%S"),
@@ -870,7 +882,7 @@ def get_sensor_records(
                 "temperature": row.get("temperature"),
                 "temperature_dht11": row.get("temperature_dht11"),
                 "humidity": row.get("humidity"),
-                "pressure": row.get("pressure"),
+                "pressure": _normalize_pressure_hpa(row.get("pressure"), pressure_offset),
                 "co2": row.get("co2"),
                 "illuminance": row.get("illuminance"),
             }
@@ -896,8 +908,9 @@ def get_sensor_records(
         .limit(limit)
         .all()
     )
+    pressure_offset = _get_pressure_offset(device, db)
     return {
-        "records": [_format_record_row(row) for row in rows],
+        "records": [_format_record_row(row, pressure_offset) for row in rows],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -1002,7 +1015,12 @@ def get_history(
                 "co2": r.co2,
                 "illuminance": r.illuminance,
             })
-    
+
+    pressure_offset = _get_pressure_offset(device, db)
+    for rec in records_raw:
+        if rec.get("pressure") is not None:
+            rec["pressure"] = _normalize_pressure_hpa(rec["pressure"], pressure_offset)
+
     # Fetch outdoor history
     outdoor_map = _build_outdoor_map(start_time, end_time, db)
 

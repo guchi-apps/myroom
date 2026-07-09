@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Signaly CI / デプロイ通知スクリプト（GitHub Actions 用）
 #
-# 手順の詳細: ../_docs/DESIGN_GUIDE.md（CI / デプロイ通知セクション）
+# 手順の詳細: ../_docs/README.md（CI / デプロイ通知セクション）
 # 各アプリの .github/scripts/ にコピーして使用する。
 #
 # Requires: SIGNALY_WEBHOOK_URL, NOTIFY_STATUS (success|failure|cancelled)

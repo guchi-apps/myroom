@@ -30,6 +30,10 @@ export function deviceDht11VisibilityKey(deviceId: number): string {
   return `device-dht11:${deviceId}`;
 }
 
+export function outdoorMetricVisibilityKey(metric: ChartMetric): string {
+  return `${OUTDOOR_VISIBILITY_KEY}:${metric}`;
+}
+
 export function buildDefaultChartLineVisibility(
   sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
 ): ChartLineVisibilitySettings {
@@ -45,7 +49,9 @@ export function buildDefaultChartLineVisibility(
   for (const metric of CHART_METRICS) {
     settings[deviceMetricVisibilityKey(AIRCON_CHART_DEVICE_ID, metric)] = true;
   }
-  settings[OUTDOOR_VISIBILITY_KEY] = false;
+  for (const metric of CHART_METRICS) {
+    settings[outdoorMetricVisibilityKey(metric)] = false;
+  }
   settings[AIRCON_TARGET_VISIBILITY_KEY] = true;
 
   return settings;

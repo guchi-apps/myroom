@@ -51,6 +51,7 @@ export async function loadUiSettingsFromServer(
   chartColors: ChartColorSettings;
   hiddenDeviceKeys: Set<string>;
   staleAlertExcludedKeys: Set<string>;
+  pressureOffsets: Record<string, number>;
 }> {
   discardLegacyLocalStorage();
   const settings = await fetchUiSettings();
@@ -71,6 +72,7 @@ export async function loadUiSettingsFromServer(
     chartColors: normalizeChartColors(settings.chart_colors),
     hiddenDeviceKeys: normalizeHiddenDeviceKeys(settings.hidden_devices, sensorDeviceIds),
     staleAlertExcludedKeys: new Set(staleAlertExcluded),
+    pressureOffsets: settings.pressure_offsets ?? {},
   };
 }
 
@@ -90,11 +92,18 @@ export async function saveStaleAlertExcludedToServer(keys: Set<string>): Promise
   await updateUiSettings({ stale_alert_excluded_devices: [...keys] });
 }
 
+export async function savePressureOffsetsToServer(
+  offsets: Record<string, number>
+): Promise<void> {
+  await updateUiSettings({ pressure_offsets: offsets });
+}
+
 export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS) {
   return {
     displayOrder: buildDefaultDisplayOrder(sensorDeviceIds),
     chartColors: buildDefaultChartColors(sensorDeviceIds),
     hiddenDeviceKeys: new Set<string>(),
     staleAlertExcludedKeys: new Set<string>(),
+    pressureOffsets: {} as Record<string, number>,
   };
 }

@@ -34,6 +34,15 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.3.0",
+    date: "2026-07-10",
+    changes: [
+      "グラフ（週・月・年表示）で、日ごとの最高値・最低値を表示する切り替えを追加",
+      "ログイン画面のパスワード入力欄に、表示・非表示を切り替えるボタンを追加",
+      "アプリ起動直後にグラフの表示が切り替わってしまう不具合を修正",
+    ],
+  },
+  {
     version: "3.2.0",
     date: "2026-06-29",
     changes: [
