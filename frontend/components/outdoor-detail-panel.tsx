@@ -5,12 +5,13 @@ import { X } from "lucide-react";
 import { EnvironmentChart } from "@/components/environment-chart";
 import type { ChartColorSettings } from "@/lib/chart-colors";
 import {
-  OUTDOOR_VISIBILITY_KEY,
+  outdoorMetricVisibilityKey,
   type ChartLineVisibilitySettings,
 } from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import { useOutdoorChartHistory } from "@/lib/use-outdoor-chart-history";
 import {
+  CHART_METRICS,
   formatOutdoorApiLabel,
   type ChartMetric,
   type ChartViewRange,
@@ -53,11 +54,14 @@ export function OutdoorDetailPanel({
     setViewRange("day");
   }, [open]);
 
-  // パネルを開いた際は outdoor ラインを常に表示する（グローバル設定に関わらず）
-  const lineVisibility = useMemo(
-    () => ({ ...lineVisibilityProp, [OUTDOOR_VISIBILITY_KEY]: true }),
-    [lineVisibilityProp]
-  );
+  // パネルを開いた際は outdoor ラインを常に表示する(グローバル設定に関わらず)
+  const lineVisibility = useMemo(() => {
+    const next = { ...lineVisibilityProp };
+    for (const metric of CHART_METRICS) {
+      next[outdoorMetricVisibilityKey(metric)] = true;
+    }
+    return next;
+  }, [lineVisibilityProp]);
 
   const {
     historyData,

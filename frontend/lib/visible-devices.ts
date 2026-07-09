@@ -7,6 +7,7 @@ import {
   deviceDht11VisibilityKey,
   deviceMetricVisibilityKey,
   deviceVisibilityKey,
+  outdoorMetricVisibilityKey,
   OUTDOOR_VISIBILITY_KEY,
 } from "@/lib/chart-line-visibility";
 import {
@@ -227,7 +228,9 @@ export function applyHiddenDevicesToLineVisibility<T extends Record<string, bool
     }
   }
   if (hiddenKeys.has(OUTDOOR_VISIBILITY_KEY)) {
-    merged[OUTDOOR_VISIBILITY_KEY as keyof T] = false as T[keyof T];
+    for (const metric of CHART_METRICS) {
+      merged[outdoorMetricVisibilityKey(metric) as keyof T] = false as T[keyof T];
+    }
   }
   if (!isAirconRoomVisible(hiddenKeys)) {
     for (const metric of CHART_METRICS) {

@@ -22,6 +22,7 @@ import {
 } from "@/lib/visible-devices";
 import { deviceDht11VisibilityKey } from "@/lib/chart-line-visibility";
 import { buildDefaultChartLineVisibility } from "@/lib/chart-line-visibility";
+import { outdoorMetricVisibilityKey } from "@/lib/chart-line-visibility";
 import { AIRCON_CHART_DEVICE_ID, getSensorDeviceIds } from "@/lib/types";
 
 describe("visible-devices", () => {
@@ -97,6 +98,16 @@ describe("visible-devices", () => {
     const merged = applyHiddenDevicesToLineVisibility(defaults, hidden, [1, 2]);
     expect(merged[deviceDht11VisibilityKey(1)]).toBe(false);
     expect(merged[deviceDht11VisibilityKey(2)]).toBe(true);
+  });
+
+  it("hides all outdoor metric chart lines when outdoor is hidden from the dashboard", () => {
+    const hidden = new Set(["outdoor"]);
+    const defaults = buildDefaultChartLineVisibility([1, 2]);
+    const merged = applyHiddenDevicesToLineVisibility(defaults, hidden, [1, 2]);
+
+    expect(merged[outdoorMetricVisibilityKey("temperature")]).toBe(false);
+    expect(merged[outdoorMetricVisibilityKey("humidity")]).toBe(false);
+    expect(merged[outdoorMetricVisibilityKey("pressure")]).toBe(false);
   });
 
   it("toggles visibility for a target", () => {
