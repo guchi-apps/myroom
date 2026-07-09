@@ -60,6 +60,8 @@ export function useChartHistory(
   const offlineMode = options?.offlineMode ?? false;
   const offlineHistoryRef = useRef<HistoryPoint[] | null>(null);
   offlineHistoryRef.current = offlineHistory;
+  const devicesRef = useRef<readonly DeviceInfo[]>(devices);
+  devicesRef.current = devices;
 
   const [historyData, setHistoryData] = useState<HistoryPoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -79,7 +81,7 @@ export function useChartHistory(
 
   const fetchMergedWindow = useCallback(
     async (start: Date, end: Date) => {
-      const fetchIds = expandDeviceIdsForHistory(deviceIds, devices);
+      const fetchIds = expandDeviceIdsForHistory(deviceIds, devicesRef.current);
       const [sensorChunks, airconChunk] = await Promise.all([
         Promise.all(
           fetchIds.map((deviceId) =>
@@ -94,7 +96,7 @@ export function useChartHistory(
         fetchIds.map((deviceId, index) => [deviceId, sensorChunks[index]])
       ) as Record<number, HistoryPoint[]>;
       let merged = mergeMultiDeviceHistory(byDevice);
-      merged = applyAllDeviceInheritance(merged, deviceIds, devices);
+      merged = applyAllDeviceInheritance(merged, deviceIds, devicesRef.current);
 
       if (airconChunk.length) {
         merged = mergeAirconIntoHistory(merged, airconChunk, airconChartDeviceId);
@@ -102,7 +104,7 @@ export function useChartHistory(
 
       return merged;
     },
-    [deviceIds, devices, viewRange, airconAcId, airconChartDeviceId]
+    [deviceIds, viewRange, airconAcId, airconChartDeviceId]
   );
 
   const resetAndLoad = useCallback(async () => {
