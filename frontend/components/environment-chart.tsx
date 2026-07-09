@@ -151,11 +151,6 @@ function formatSeriesRowValue(
   if (row.id === "aircon-target") {
     return formatAirconTargetTemperature(row.value);
   }
-  if (row.minValue != null || row.maxValue != null) {
-    const maxText = row.maxValue != null ? formatMetricValue(row.maxValue, metric) : "--";
-    const minText = row.minValue != null ? formatMetricValue(row.minValue, metric) : "--";
-    return `最高${maxText}${unit} / 最低${minText}${unit}`;
-  }
   if (row.value == null) {
     return `--${unit}`;
   }
@@ -418,6 +413,23 @@ export function EnvironmentChart({
     [historyData, currentDomain]
   );
 
+  /** 最高/最低モードでは、横スクロール中も選択位置を最寄りの日の実データ点へスナップする（点の無い時刻を飛ばす） */
+  const effectiveSelectionTime = useMemo(() => {
+    if (!isMinMaxMode || selectionTime == null || !minMaxHistorySource?.length) {
+      return selectionTime;
+    }
+    let nearest = minMaxHistorySource[0].datetimeObj;
+    let bestDiff = Math.abs(nearest - selectionTime);
+    for (const point of minMaxHistorySource) {
+      const diff = Math.abs(point.datetimeObj - selectionTime);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        nearest = point.datetimeObj;
+      }
+    }
+    return nearest;
+  }, [isMinMaxMode, selectionTime, minMaxHistorySource]);
+
   const ticks = useMemo(() => {
     if (currentDomain[0] === "dataMin") return undefined;
     const [minT, maxT] = currentDomain;
@@ -630,14 +642,14 @@ export function EnvironmentChart({
   ]);
 
   const activeDeviceMinMaxValues = useMemo(() => {
-    if (!isMinMaxMode || selectionTime == null || !minMaxHistorySource) return [];
+    if (!isMinMaxMode || effectiveSelectionTime == null || !minMaxHistorySource) return [];
     return orderedPlottedDeviceIds
       .map((deviceId) => {
         const { min, max } = getDeviceMetricMinMaxAtTime(
           minMaxHistorySource,
           deviceId,
           chartMetric,
-          selectionTime
+          effectiveSelectionTime
         );
         return {
           deviceId,
@@ -650,7 +662,7 @@ export function EnvironmentChart({
       .filter((entry) => entry.min != null || entry.max != null);
   }, [
     isMinMaxMode,
-    selectionTime,
+    effectiveSelectionTime,
     minMaxHistorySource,
     orderedPlottedDeviceIds,
     chartMetric,
@@ -793,8 +805,8 @@ export function EnvironmentChart({
   ]);
 
   const selectionLabel =
-    selectionTime != null
-      ? formatActivePointLabel(selectionTime, viewRange, isMinMaxMode)
+    effectiveSelectionTime != null
+      ? formatActivePointLabel(effectiveSelectionTime, viewRange, isMinMaxMode)
       : "";
 
   const activeMinMaxDotEntries = useMemo(() => {
@@ -818,13 +830,13 @@ export function EnvironmentChart({
   }, [isMinMaxMode, activeDeviceMinMaxValues]);
 
   const activeDots = useMemo(() => {
-    if (selectionTime == null) return [];
+    if (effectiveSelectionTime == null) return [];
     return [...activeDeviceValues, ...activeDht11Values, ...activeMinMaxDotEntries]
       .map((entry) => {
         const plotPosition = computePlotPosition(
           currentDomain,
           visibleYDomain,
-          selectionTime,
+          effectiveSelectionTime,
           entry.value
         );
         return plotPosition?.yRatio != null
@@ -837,7 +849,7 @@ export function EnvironmentChart({
     activeDht11Values,
     activeMinMaxDotEntries,
     currentDomain,
-    selectionTime,
+    effectiveSelectionTime,
     visibleYDomain,
   ]);
 
@@ -894,8 +906,8 @@ export function EnvironmentChart({
   };
 
   const selectionXRatio = useMemo(
-    () => computeSelectionXRatio(currentDomain, selectionTime),
-    [currentDomain, selectionTime]
+    () => computeSelectionXRatio(currentDomain, effectiveSelectionTime),
+    [currentDomain, effectiveSelectionTime]
   );
 
   const plotWidthExpr = `(100% - ${PLOT_INSET.left + PLOT_INSET.right}px)`;
@@ -994,7 +1006,19 @@ export function EnvironmentChart({
                   className={cn("shrink-0 text-lg font-bold", !row.visible && "opacity-40")}
                   style={{ color: row.color }}
                 >
-                  {formatSeriesRowValue(row, chartMetric, unit)}
+                  {row.minValue != null || row.maxValue != null ? (
+                    <>
+                      <span className="text-xs font-normal">最高</span>
+                      {formatMetricValue(row.maxValue, chartMetric)}
+                      {unit}
+                      {" / "}
+                      <span className="text-xs font-normal">最低</span>
+                      {formatMetricValue(row.minValue, chartMetric)}
+                      {unit}
+                    </>
+                  ) : (
+                    formatSeriesRowValue(row, chartMetric, unit)
+                  )}
                 </p>
                 <button
                   type="button"
@@ -1116,20 +1140,23 @@ export function EnvironmentChart({
                       type="linear"
                       dataKey={deviceMetricMaxKey(deviceId, chartMetric)}
                       stroke={getDeviceChartColor(chartColors, deviceId)}
-                      strokeWidth={0}
-                      dot={{ r: 3, strokeWidth: 0, fill: getDeviceChartColor(chartColors, deviceId) }}
+                      strokeWidth={1.5}
+                      dot={false}
                       name={`${deviceNames[deviceId] ?? `デバイス ${deviceId}`}（最高）`}
                       isAnimationActive={false}
+                      connectNulls
                     />,
                     <Line
                       key={`${deviceId}-min`}
                       type="linear"
                       dataKey={deviceMetricMinKey(deviceId, chartMetric)}
                       stroke={getDeviceChartColor(chartColors, deviceId)}
-                      strokeWidth={0}
-                      dot={{ r: 3, strokeWidth: 1, fill: "var(--card)", stroke: getDeviceChartColor(chartColors, deviceId) }}
+                      strokeWidth={1.5}
+                      strokeDasharray="6 4"
+                      dot={false}
                       name={`${deviceNames[deviceId] ?? `デバイス ${deviceId}`}（最低）`}
                       isAnimationActive={false}
+                      connectNulls
                     />,
                   ])
                 : orderedPlottedDeviceIds.map((deviceId) => (
