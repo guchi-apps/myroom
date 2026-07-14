@@ -1185,7 +1185,10 @@ export function computeVisibleYDomain(
 
     if (metric === "temperature" && targetDeviceIds?.length) {
       for (const deviceId of targetDeviceIds) {
-        collectNumericValues(values, getDeviceTargetMetricValue(point, deviceId));
+        const record = point as unknown as Record<string, unknown>;
+        if (isAirconPowerOff(record[deviceAirconPowerKey(deviceId)])) continue;
+        const resolved = resolveAirconTargetChartPoint(point, deviceId);
+        if (resolved != null) collectNumericValues(values, resolved.value);
       }
     }
 
