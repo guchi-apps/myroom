@@ -77,6 +77,8 @@ jobs:
 
       - name: Install dependencies and Build Frontend
         working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.GOOGLE_CLIENT_ID }}
         run: |
           npm ci
           npm run build
@@ -112,7 +114,9 @@ jobs:
 
       - name: Restart Backend Service
         env:
-          APP_PASSWORD: ${{ env.APP_PASSWORD }}
+          JWT_SECRET_KEY: ${{ env.JWT_SECRET_KEY }}
+          GOOGLE_CLIENT_ID: ${{ env.GOOGLE_CLIENT_ID }}
+          ALLOWED_GOOGLE_EMAILS: ${{ env.ALLOWED_GOOGLE_EMAILS }}
           LOGIN_WEBHOOK_URL: ${{ env.LOGIN_WEBHOOK_URL }}
           SENSOR_WEBHOOK_URL: ${{ env.SENSOR_WEBHOOK_URL }}
           VAPID_PRIVATE_KEY: ${{ env.VAPID_PRIVATE_KEY }}
@@ -125,7 +129,9 @@ jobs:
           DB_NAME: ${{ env.DB_NAME }}
         run: |
           b64() { printf '%s' "$1" | base64 -w 0; }
-          APP_PASSWORD_B64=$(b64 "$APP_PASSWORD")
+          JWT_SECRET_KEY_B64=$(b64 "$JWT_SECRET_KEY")
+          GOOGLE_CLIENT_ID_B64=$(b64 "$GOOGLE_CLIENT_ID")
+          ALLOWED_GOOGLE_EMAILS_B64=$(b64 "$ALLOWED_GOOGLE_EMAILS")
           LOGIN_WEBHOOK_URL_B64=$(b64 "$LOGIN_WEBHOOK_URL")
           SENSOR_WEBHOOK_URL_B64=$(b64 "$SENSOR_WEBHOOK_URL")
           VAPID_PRIVATE_KEY_B64=$(b64 "$VAPID_PRIVATE_KEY")
@@ -153,7 +159,9 @@ jobs:
               printf '%s=%s\n' "\$key" "\$value" >> .env
             }
 
-            sync_env_var APP_PASSWORD '${APP_PASSWORD_B64}'
+            sync_env_var JWT_SECRET_KEY '${JWT_SECRET_KEY_B64}'
+            sync_env_var GOOGLE_CLIENT_ID '${GOOGLE_CLIENT_ID_B64}'
+            sync_env_var ALLOWED_GOOGLE_EMAILS '${ALLOWED_GOOGLE_EMAILS_B64}'
             sync_env_var LOGIN_WEBHOOK_URL '${LOGIN_WEBHOOK_URL_B64}'
             sync_env_var SENSOR_WEBHOOK_URL '${SENSOR_WEBHOOK_URL_B64}'
             sync_env_var VAPID_PRIVATE_KEY '${VAPID_PRIVATE_KEY_B64}'

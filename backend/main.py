@@ -9,7 +9,7 @@ import datetime
 import random
 from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, signaly_notify, sensor_monitor, ui_settings
-from .auth import create_access_token, get_current_user
+from .auth import create_access_token, get_current_user, verify_google_id_token
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
@@ -76,8 +76,8 @@ class BulkDeleteRecordsRequest(BaseModel):
     device: int
     datetimes: List[str]
 
-class LoginRequest(BaseModel):
-    password: str
+class GoogleAuthRequest(BaseModel):
+    credential: str
 
 class UiSettingsUpdate(BaseModel):
     display_order: Optional[List[str]] = None
@@ -327,12 +327,6 @@ async def health_check():
     return {"status": "ok", "db_mock": database.DB_MOCK}
 
 
-def _verify_app_password(password: str) -> None:
-    app_password = os.getenv("APP_PASSWORD", "admin")
-    if password != app_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-
 @app.get("/api/sensors/status")
 def get_sensors_status(
     db: Session = Depends(database.get_db),
@@ -347,11 +341,9 @@ def get_sensors_status(
     }
 
 
-@app.post("/api/login")
-async def login(body: LoginRequest, request: Request):
-    app_password = os.getenv("APP_PASSWORD", "admin")
-    if body.password != app_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
+@app.post("/api/auth/google")
+async def auth_google(body: GoogleAuthRequest, request: Request):
+    email = verify_google_id_token(body.credential)
 
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
@@ -363,10 +355,10 @@ async def login(body: LoginRequest, request: Request):
 
     user_agent = request.headers.get("User-Agent", "unknown")
     timestamp = get_now_jst().strftime("%Y-%m-%d %H:%M:%S")
-    signaly_notify.send_login_notification(timestamp, client_ip, user_agent)
+    signaly_notify.send_login_notification(timestamp, client_ip, user_agent, email)
     return {
         "status": "ok",
-        "access_token": create_access_token(),
+        "access_token": create_access_token(sub=email),
         "token_type": "bearer",
     }
 

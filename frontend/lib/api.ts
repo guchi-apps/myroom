@@ -68,11 +68,11 @@ async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response>
   return res;
 }
 
-export async function login(password: string): Promise<boolean> {
-  const res = await fetch("/api/login", {
+export async function loginWithGoogle(credential: string): Promise<boolean> {
+  const res = await fetch("/api/auth/google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ credential }),
   });
   if (!res.ok) return false;
   const data = (await res.json()) as { access_token?: string };

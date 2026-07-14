@@ -26,7 +26,7 @@ import {
   fetchOutdoorLocation,
   fetchAirconUnits,
   fetchSensorsStatus,
-  login,
+  loginWithGoogle,
 } from "@/lib/api";
 import {
   buildDashboardOfflineSnapshot,
@@ -729,8 +729,8 @@ export function MyRoomDashboard() {
     return () => clearInterval(interval);
   }, [isAuthenticated, layoutReady, fetchData]);
 
-  const handleLogin = async (password: string) => {
-    const ok = await login(password);
+  const handleLogin = async (credential: string) => {
+    const ok = await loginWithGoogle(credential);
     if (ok) {
       setIsAuthenticated(true);
       return true;

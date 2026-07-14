@@ -9,8 +9,11 @@ def test_health_head(client):
     assert response.status_code == 200
 
 
-def test_login_returns_access_token(client):
-    response = client.post("/api/login", json={"password": "admin"})
+def test_login_returns_access_token(client, monkeypatch):
+    monkeypatch.setattr(
+        "backend.main.verify_google_id_token", lambda credential: "allowed@example.com"
+    )
+    response = client.post("/api/auth/google", json={"credential": "dummy"})
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
@@ -19,9 +22,15 @@ def test_login_returns_access_token(client):
     assert data["access_token"]
 
 
-def test_login_rejects_invalid_password(client):
-    response = client.post("/api/login", json={"password": "wrong"})
-    assert response.status_code == 401
+def test_login_rejects_unauthorized_account(client, monkeypatch):
+    def _deny(credential):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="このGoogleアカウントではログインできません")
+
+    monkeypatch.setattr("backend.main.verify_google_id_token", _deny)
+    response = client.post("/api/auth/google", json={"credential": "dummy"})
+    assert response.status_code == 403
 
 
 def test_latest_requires_auth(client):

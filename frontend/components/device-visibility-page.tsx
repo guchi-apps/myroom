@@ -23,7 +23,7 @@ import {
   fetchAirconUnits,
   fetchDevices,
   fetchOutdoorLocation,
-  login,
+  loginWithGoogle,
   searchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
@@ -308,8 +308,8 @@ export function DeviceVisibilityPage() {
       });
   }, []);
 
-  const handleLogin = async (password: string) => {
-    const ok = await login(password);
+  const handleLogin = async (credential: string) => {
+    const ok = await loginWithGoogle(credential);
     if (ok) {
       setIsAuthenticated(true);
       return true;

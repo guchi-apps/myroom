@@ -15,8 +15,10 @@ DB_PASSWORD=op://apps/DB/db-password
 DB_MOCK=false
 
 # --- 認証 ---
-APP_PASSWORD=op://apps/MyRoom/app-password
 JWT_SECRET_KEY=op://apps/MyRoom/jwt-secret-key
+GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
+ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
 
 # --- Web Push ---
 VAPID_PUBLIC_KEY=op://apps/MyRoom/vapid-public-key

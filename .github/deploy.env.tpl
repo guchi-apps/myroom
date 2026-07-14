@@ -1,6 +1,8 @@
 # 1Password secret references for GitHub Actions deploy.
 # Vault: apps — MyRoom / Server / DB (deploy vars) + githubaction-sshkey (SSH key). See README.md.
-APP_PASSWORD=op://apps/MyRoom/app-password
+JWT_SECRET_KEY=op://apps/MyRoom/jwt-secret-key
+GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
+ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
 LOGIN_WEBHOOK_URL=op://apps/MyRoom/login-webhook-url
 SENSOR_WEBHOOK_URL=op://apps/MyRoom/sensor-webhook-url
 SIGNALY_WEBHOOK_URL=op://apps/MyRoom/ci-webhook-url
