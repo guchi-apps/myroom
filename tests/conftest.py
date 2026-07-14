@@ -3,6 +3,7 @@ import os
 
 os.environ["DB_MOCK"] = "true"
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
+os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
 
 import pytest
 from fastapi.testclient import TestClient

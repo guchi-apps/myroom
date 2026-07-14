@@ -26,7 +26,6 @@ import {
   fetchOutdoorLocation,
   fetchAirconUnits,
   fetchSensorsStatus,
-  loginWithGoogle,
 } from "@/lib/api";
 import {
   buildDashboardOfflineSnapshot,
@@ -74,11 +73,8 @@ import {
   getLocationName,
   isPredecessorDevice,
 } from "@/lib/device-inheritance";
-import {
-  AuthError,
-  clearAuthToken,
-  isAuthenticated as hasStoredAuthToken,
-} from "@/lib/auth";
+import { AuthError, clearAuthToken } from "@/lib/auth";
+import { useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
@@ -374,7 +370,7 @@ function DeviceCard({
 }
 
 export function MyRoomDashboard() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, setIsAuthenticated, handleLogin } = useAuthState();
   const [latestData, setLatestData] = useState<LatestData | null>(null);
   const [latestByDevice, setLatestByDevice] = useState<Record<number, LatestData | null>>(
     {}
@@ -502,12 +498,6 @@ export function MyRoomDashboard() {
     return names;
   }, [devices, sensorDeviceIds, airconChartTitle]);
 
-  useEffect(() => {
-    if (hasStoredAuthToken()) {
-      setIsAuthenticated(true);
-    }
-  }, []);
-
   const reloadUiSettings = useCallback(async () => {
     try {
       const settings = await loadUiSettingsFromServer(sensorDeviceIds);
@@ -520,7 +510,7 @@ export function MyRoomDashboard() {
         setIsAuthenticated(false);
       }
     }
-  }, [sensorDeviceIds]);
+  }, [sensorDeviceIds, setIsAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -571,7 +561,7 @@ export function MyRoomDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setIsAuthenticated]);
 
   useEffect(() => {
     const reloadVisibility = () => {
@@ -658,6 +648,7 @@ export function MyRoomDashboard() {
       visibleSensorDeviceIds,
       devices,
       applyOfflineSnapshot,
+      setIsAuthenticated,
     ]
   );
 
@@ -728,15 +719,6 @@ export function MyRoomDashboard() {
     const interval = setInterval(() => fetchData(), 30000);
     return () => clearInterval(interval);
   }, [isAuthenticated, layoutReady, fetchData]);
-
-  const handleLogin = async (credential: string) => {
-    const ok = await loginWithGoogle(credential);
-    if (ok) {
-      setIsAuthenticated(true);
-      return true;
-    }
-    return false;
-  };
 
   const handleLogout = () => {
     setIsAuthenticated(false);

@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "168"))
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is required")
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+if not GOOGLE_CLIENT_ID:
+    raise RuntimeError("GOOGLE_CLIENT_ID environment variable is required")
+
 ALLOWED_GOOGLE_EMAILS = {
     email.strip().lower()
     for email in os.getenv("ALLOWED_GOOGLE_EMAILS", "").split(",")
@@ -25,19 +33,17 @@ ALLOWED_GOOGLE_EMAILS = {
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
-
-def get_secret_key() -> str:
-    secret = os.getenv("JWT_SECRET_KEY")
-    if not secret:
-        raise RuntimeError("JWT_SECRET_KEY environment variable is required")
-    return secret
+# google-auth re-fetches Google's public certs over the network on every
+# verification call; reusing one Request (and its underlying session) across
+# calls at least avoids paying for a fresh TCP/TLS handshake each login.
+_google_auth_request = google_requests.Request()
 
 
 def verify_google_id_token(credential: str) -> str:
     try:
         payload = google_id_token.verify_oauth2_token(
             credential,
-            google_requests.Request(),
+            _google_auth_request,
             GOOGLE_CLIENT_ID,
             clock_skew_in_seconds=10,
         )
@@ -49,7 +55,14 @@ def verify_google_id_token(credential: str) -> str:
         ) from exc
 
     email = str(payload.get("email", "")).lower()
-    if not payload.get("email_verified") or email not in ALLOWED_GOOGLE_EMAILS:
+    if not payload.get("email_verified"):
+        logger.warning("Google login rejected: email not verified (%s)", email)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="このGoogleアカウントではログインできません",
+        )
+    if email not in ALLOWED_GOOGLE_EMAILS:
+        logger.warning("Google login rejected: email not in allowlist (%s)", email)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="このGoogleアカウントではログインできません",
@@ -63,12 +76,12 @@ def create_access_token(sub: str, expires_hours: Optional[int] = None) -> str:
         "sub": sub,
         "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=hours),
     }
-    return jwt.encode(payload, get_secret_key(), algorithm=ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 
 def verify_token(token: str) -> Dict[str, Any]:
     try:
-        return jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

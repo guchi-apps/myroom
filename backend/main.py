@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -343,7 +344,7 @@ def get_sensors_status(
 
 @app.post("/api/auth/google")
 async def auth_google(body: GoogleAuthRequest, request: Request):
-    email = verify_google_id_token(body.credential)
+    email = await run_in_threadpool(verify_google_id_token, body.credential)
 
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:

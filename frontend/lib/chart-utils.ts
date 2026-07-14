@@ -359,6 +359,11 @@ export interface AirconTargetChartSegment {
   points: AirconTargetChartPoint[];
 }
 
+function isAirconOffForPoint(point: HistoryPoint, deviceId: number): boolean {
+  const record = point as unknown as Record<string, unknown>;
+  return isAirconPowerOff(record[deviceAirconPowerKey(deviceId)]);
+}
+
 function resolveAirconTargetChartPoint(
   point: HistoryPoint,
   deviceId: number
@@ -391,7 +396,6 @@ export function buildAirconTargetChartSegments(
   deviceId: number,
   maxPoints = 320
 ): AirconTargetChartSegment[] {
-  const powerKey = deviceAirconPowerKey(deviceId);
   const sorted = [...historyData].sort((a, b) => a.datetimeObj - b.datetimeObj);
   const segments: AirconTargetChartSegment[] = [];
   let currentPoints: AirconTargetChartPoint[] = [];
@@ -406,8 +410,7 @@ export function buildAirconTargetChartSegments(
   };
 
   for (const point of sorted) {
-    const record = point as unknown as Record<string, unknown>;
-    if (isAirconPowerOff(record[powerKey])) {
+    if (isAirconOffForPoint(point, deviceId)) {
       flush();
       continue;
     }
@@ -462,12 +465,10 @@ function downsampleTargetSeriesForDevice(
   maxPoints: number
 ) {
   const targetKey = deviceTargetMetricKey(deviceId);
-  const powerKey = deviceAirconPowerKey(deviceId);
   const series: MetricSeriesPoint[] = [];
 
   for (const point of historyData) {
-    const record = point as unknown as Record<string, unknown>;
-    if (isAirconPowerOff(record[powerKey])) continue;
+    if (isAirconOffForPoint(point, deviceId)) continue;
 
     const value = getDeviceTargetMetricValue(point, deviceId);
     if (value == null) continue;
@@ -1185,8 +1186,7 @@ export function computeVisibleYDomain(
 
     if (metric === "temperature" && targetDeviceIds?.length) {
       for (const deviceId of targetDeviceIds) {
-        const record = point as unknown as Record<string, unknown>;
-        if (isAirconPowerOff(record[deviceAirconPowerKey(deviceId)])) continue;
+        if (isAirconOffForPoint(point, deviceId)) continue;
         const resolved = resolveAirconTargetChartPoint(point, deviceId);
         if (resolved != null) collectNumericValues(values, resolved.value);
       }
