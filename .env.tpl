@@ -1,4 +1,4 @@
-# ローカル開発用 .env テンプレート（op:// 参照のみ記載 — 実値は含めない）
+# ローカル開発用 .env テンプレート（1Password のシークレット参照のみ記載 — 実値は含めない）
 #
 # 使い方:
 #   op run --env-file=.env.tpl -- uvicorn backend.main:app --reload --port 8000
@@ -15,8 +15,10 @@ DB_PASSWORD=op://apps/DB/db-password
 DB_MOCK=false
 
 # --- 認証 ---
-APP_PASSWORD=op://apps/MyRoom/app-password
 JWT_SECRET_KEY=op://apps/MyRoom/jwt-secret-key
+GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
+ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
 
 # --- Web Push ---
 VAPID_PUBLIC_KEY=op://apps/MyRoom/vapid-public-key

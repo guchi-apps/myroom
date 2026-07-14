@@ -6,6 +6,7 @@ import {
   clampDomainOffset,
   computeChartDomain,
   computeDomainOffsetForSelectionTime,
+  computeVisibleYDomain,
   downsampleHistoryForChart,
   downsampleMultiDeviceHistoryForChart,
   filterHistoryForDomain,
@@ -451,5 +452,62 @@ describe("buildAirconTargetChartSeries", () => {
       },
     ]);
     expect(getDeviceTargetMetricStateAtTime(history, 3, 1500)).toBe(0);
+  });
+});
+
+describe("computeVisibleYDomain", () => {
+  it("includes the automatic target's room-temperature dashed line even when the device's own line is hidden", () => {
+    const history = mergeAirconIntoHistory(
+      [],
+      [
+        {
+          datetimeObj: 1000,
+          temperature: 35,
+          target_temperature: 0,
+          power: "ON",
+        },
+      ],
+      3
+    );
+
+    const [min, max] = computeVisibleYDomain(
+      history,
+      [0, 2000],
+      "temperature",
+      false,
+      [],
+      false,
+      [3]
+    ) as [number, number];
+
+    expect(max).toBeGreaterThanOrEqual(35);
+    expect(min).toBeLessThanOrEqual(35);
+  });
+
+  it("excludes the target device's room temperature while the aircon is off", () => {
+    const history = mergeAirconIntoHistory(
+      [],
+      [
+        {
+          datetimeObj: 1000,
+          temperature: 35,
+          target_temperature: 0,
+          power: "OFF",
+        },
+      ],
+      3
+    );
+
+    const [min, max] = computeVisibleYDomain(
+      history,
+      [0, 2000],
+      "temperature",
+      false,
+      [],
+      false,
+      [3]
+    ) as [number, number] | ["auto", "auto"];
+
+    expect([min, max]).toEqual(["auto", "auto"]);
   });
 });

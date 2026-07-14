@@ -2,7 +2,8 @@ import datetime
 import os
 
 os.environ["DB_MOCK"] = "true"
-os.environ.setdefault("APP_PASSWORD", "admin")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
+os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,10 +31,10 @@ def data_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def auth_headers(client):
-    response = client.post("/api/login", json={"password": os.environ["APP_PASSWORD"]})
-    assert response.status_code == 200
-    token = response.json()["access_token"]
+def auth_headers():
+    from backend.auth import create_access_token
+
+    token = create_access_token(sub="test@example.com")
     return {"Authorization": f"Bearer {token}"}
 
 

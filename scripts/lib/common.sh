@@ -63,6 +63,19 @@ start_frontend() {
   wait_for_port 5173 "Frontend"
 }
 
+expose_lan() {
+  # WSL2 以外（native Linux / macOS 等）では LAN 公開の対象外なので、
+  # ファイルの有無ではなく実行環境そのものを見て静かにスキップする。
+  if ! grep -qi microsoft /proc/version 2>/dev/null; then
+    return 0
+  fi
+  if [[ ! -x "${ROOT_DIR}/scripts/expose-lan.sh" ]]; then
+    echo "警告: scripts/expose-lan.sh に実行権限がありません（chmod +x scripts/expose-lan.sh）。スマホからのアクセス設定をスキップします。" >&2
+    return 0
+  fi
+  "${ROOT_DIR}/scripts/expose-lan.sh" || echo "（スマホからのアクセスは今回スキップされました。再試行: ./scripts/expose-lan.sh）"
+}
+
 print_urls() {
   echo ""
   echo "Ready:"
@@ -97,6 +110,7 @@ run_dev_stack() {
   setup_frontend_deps
   start_backend
   start_frontend
+  expose_lan
   print_urls
   wait "$BACKEND_PID" "$FRONTEND_PID"
 }

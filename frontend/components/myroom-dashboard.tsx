@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   ChevronRight,
-  Send,
   Droplets,
   Gauge,
   RefreshCw,
@@ -19,7 +18,6 @@ import { LoginScreen } from "@/components/login-screen";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
-import { WebhookTest } from "@/components/webhook-test";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +26,6 @@ import {
   fetchOutdoorLocation,
   fetchAirconUnits,
   fetchSensorsStatus,
-  login,
 } from "@/lib/api";
 import {
   buildDashboardOfflineSnapshot,
@@ -76,11 +73,8 @@ import {
   getLocationName,
   isPredecessorDevice,
 } from "@/lib/device-inheritance";
-import {
-  AuthError,
-  clearAuthToken,
-  isAuthenticated as hasStoredAuthToken,
-} from "@/lib/auth";
+import { AuthError, clearAuthToken } from "@/lib/auth";
+import { useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
@@ -376,7 +370,7 @@ function DeviceCard({
 }
 
 export function MyRoomDashboard() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, setIsAuthenticated, handleLogin } = useAuthState();
   const [latestData, setLatestData] = useState<LatestData | null>(null);
   const [latestByDevice, setLatestByDevice] = useState<Record<number, LatestData | null>>(
     {}
@@ -394,7 +388,6 @@ export function MyRoomDashboard() {
   const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
-  const [webhookTestOpen, setWebhookTestOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
@@ -505,12 +498,6 @@ export function MyRoomDashboard() {
     return names;
   }, [devices, sensorDeviceIds, airconChartTitle]);
 
-  useEffect(() => {
-    if (hasStoredAuthToken()) {
-      setIsAuthenticated(true);
-    }
-  }, []);
-
   const reloadUiSettings = useCallback(async () => {
     try {
       const settings = await loadUiSettingsFromServer(sensorDeviceIds);
@@ -523,7 +510,7 @@ export function MyRoomDashboard() {
         setIsAuthenticated(false);
       }
     }
-  }, [sensorDeviceIds]);
+  }, [sensorDeviceIds, setIsAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -574,7 +561,7 @@ export function MyRoomDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setIsAuthenticated]);
 
   useEffect(() => {
     const reloadVisibility = () => {
@@ -661,6 +648,7 @@ export function MyRoomDashboard() {
       visibleSensorDeviceIds,
       devices,
       applyOfflineSnapshot,
+      setIsAuthenticated,
     ]
   );
 
@@ -702,26 +690,28 @@ export function MyRoomDashboard() {
     const handleOnline = () => {
       setIsOfflineMode(false);
       setOfflineSnapshot(null);
-      void fetchData({ showChartLoading: true, reloadHistory: true });
+      void fetchData({ showChartLoading: true });
+      void refreshLatest();
     };
 
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [isAuthenticated, fetchData]);
+  }, [isAuthenticated, fetchData, refreshLatest]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void fetchData({ showChartLoading: true, reloadHistory: true });
+        void fetchData({ showChartLoading: true });
+        void refreshLatest();
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () =>
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [isAuthenticated, fetchData]);
+  }, [isAuthenticated, fetchData, refreshLatest]);
 
   useEffect(() => {
     if (!isAuthenticated || !layoutReady) return;
@@ -729,15 +719,6 @@ export function MyRoomDashboard() {
     const interval = setInterval(() => fetchData(), 30000);
     return () => clearInterval(interval);
   }, [isAuthenticated, layoutReady, fetchData]);
-
-  const handleLogin = async (password: string) => {
-    const ok = await login(password);
-    if (ok) {
-      setIsAuthenticated(true);
-      return true;
-    }
-    return false;
-  };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
@@ -889,15 +870,6 @@ export function MyRoomDashboard() {
               <p className="section-subtitle">最終更新: {lastUpdated}</p>
             </div>
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setWebhookTestOpen(true)}
-                disabled={isOfflineMode}
-                className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="通知テスト"
-              >
-                <Send className="size-5" strokeWidth={1.75} />
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -1110,11 +1082,6 @@ export function MyRoomDashboard() {
           onClose={() => setOutdoorPanelOpen(false)}
         />
       )}
-
-      <WebhookTest
-        open={webhookTestOpen}
-        onClose={() => setWebhookTestOpen(false)}
-      />
 
       <VersionHistoryDialog
         open={versionHistoryOpen}

@@ -39,8 +39,6 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-旧 Streamlit UI (`frontend/app.py`) を使う場合のみ: `pip install -r requirements-streamlit.txt`（`cmake` 等が必要になることがあります）。
-
 初回のみ、ルートに `.env` を用意してください（DB接続情報・パスワードなど）。  
 起動スクリプトは **環境変数 `DB_MOCK` でモードを上書き**するため、`.env` の `DB_MOCK` 値を毎回書き換える必要はありません。
 
@@ -90,6 +88,18 @@ SSHトンネルだけ別ターミナルで維持したい場合:
 
 ```bash
 ./scripts/start_tunnel.sh
+```
+
+### スマホなど同一 LAN の端末から見る場合
+
+開発サーバー自体は起動時から `0.0.0.0` で待ち受けていますが、WSL2 は既定で Windows とは別ネットワーク（NAT）のため、そのままでは同じ Wi-Fi 上のスマホから届きません。`./scripts/start.sh` 実行時に Windows 側のポート転送を自動設定します（**管理者権限の確認（UAC）が毎回表示されます**）。
+
+表示される `http://<WindowsのIPアドレス>:5173` にスマホからアクセスできます。UAC をキャンセルしてもバックエンド・フロントエンドの起動自体は継続します（スマホからのアクセスのみ不可）。
+
+WSL を再起動すると WSL 側の IP が変わり転送が切れます。次回 `./scripts/start.sh` 実行時に自動で更新されますが、サーバーを再起動せず再設定だけしたい場合は単独で実行できます。
+
+```bash
+./scripts/expose-lan.sh
 ```
 
 ### 手動で起動する場合
@@ -299,8 +309,8 @@ python3 migrate_db.py   # aircon テーブルを作成
 - **死活監視用 API**: `/api/health` が `GET` / `HEAD` で `200 OK` を返す
 - **ログイン管理**:
   - ダッシュボードのデータ取得 API は **JWT 認証必須**（`Authorization: Bearer <token>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
-  - デフォルトパスワード: `admin`（ローカル開発時）
-  - 本番: 1Password の `app-password` を `APP_PASSWORD` としてサーバー `.env` に同期
+  - ログインは Google アカウントで行い、許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
+  - 本番: 1Password の `jwt-secret-key` / `google-client-id` / `allowed-google-emails` をそれぞれ `JWT_SECRET_KEY` / `GOOGLE_CLIENT_ID` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期
   - ログイン成功時: Signaly（1Password の `login-webhook-url`）へ通知
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
   - GitHub Actions（CI / デプロイ）の成功・失敗: Signaly へ通知
@@ -310,7 +320,7 @@ python3 migrate_db.py   # aircon テーブルを作成
 | メソッド | パス | 説明 |
 |----------|------|------|
 | GET/HEAD | `/api/health` | 死活監視 |
-| POST | `/api/login` | ログイン（JWT 発行、成功時に Signaly 通知） |
+| POST | `/api/auth/google` | Google ログイン（JWT 発行、成功時に Signaly 通知） |
 | GET | `/api/latest?device=1` | 最新の屋内＋屋外データ（要認証） |
 | GET | `/api/history?range=day&device=1` | 履歴（`range`: day/week/month/year、または `start`/`end`、要認証） |
 | GET | `/api/daily-stats?device=1` | 日次統計（最近の記録、要認証） |
@@ -358,16 +368,6 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 デプロイ時（GitHub Actions）も `migrate_db.py` が自動実行されます。
 
-### 気圧単位の変換
-
-過去に `Pa` 単位（101300 等）で保存されていたデータがある場合:
-
-```bash
-python3 migrate_pressure_to_hpa.py
-```
-
-`hPa > 5000` の条件に基づき、安全に一括変換します。
-
 ## 本番環境へのデプロイ
 
 ### 1. 1Password の設定
@@ -382,7 +382,9 @@ python3 migrate_pressure_to_hpa.py
 
 | フィールド名 | 内容 |
 |-------------|------|
-| `app-password` | 画面ログイン用パスワード（`APP_PASSWORD` としてサーバー `.env` に同期） |
+| `jwt-secret-key` | JWT 署名用のランダムな秘密鍵（`JWT_SECRET_KEY` としてサーバー `.env` に同期） |
+| `google-client-id` | Google OAuth クライアント ID（`GOOGLE_CLIENT_ID` としてサーバー `.env` に、`NEXT_PUBLIC_GOOGLE_CLIENT_ID` としてフロントエンドのビルドに同期） |
+| `allowed-google-emails` | ログインを許可する Google アカウントのメールアドレス（カンマ区切り、`ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期） |
 | `login-webhook-url` | ログイン通知用 Signaly Webhook URL（`LOGIN_WEBHOOK_URL` として同期） |
 | `sensor-webhook-url` | センサー異常・復旧通知用 Signaly Webhook URL（`SENSOR_WEBHOOK_URL` として同期） |
 | `vapid-private-key` | Web Push 用 VAPID 秘密鍵 PEM（`VAPID_PRIVATE_KEY` として同期） |
@@ -476,7 +478,9 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 
 | 環境変数 | 1Password アイテム | フィールド |
 |----------|-------------------|-----------|
-| `APP_PASSWORD` | MyRoom | `app-password` |
+| `JWT_SECRET_KEY` | MyRoom | `jwt-secret-key` |
+| `GOOGLE_CLIENT_ID` | MyRoom | `google-client-id` |
+| `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
 | `LOGIN_WEBHOOK_URL` | MyRoom | `login-webhook-url` |
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
 | `VAPID_PRIVATE_KEY` | MyRoom | `vapid-private-key` |
@@ -495,7 +499,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. 1Password から `APP_PASSWORD` / `LOGIN_WEBHOOK_URL` / `SENSOR_WEBHOOK_URL` / `VAPID_*` / DB 接続情報をサーバー `.env` に同期
+4. 1Password から `JWT_SECRET_KEY` / `GOOGLE_CLIENT_ID` / `ALLOWED_GOOGLE_EMAILS` / `LOGIN_WEBHOOK_URL` / `SENSOR_WEBHOOK_URL` / `VAPID_*` / DB 接続情報をサーバー `.env` に同期
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成
@@ -553,11 +557,3 @@ git push origin develop
 ```
 
 同じバージョン番号で再デプロイする場合は、先にバージョンを上げてから `main` にマージする必要があります（タグが既に別コミットを指していると workflow がエラーになります）。
-
-## CI/CD の既知の課題
-
-> 2026-06-29 時点で確認された課題です。対応が完了したら削除または更新してください。
-
-| 優先度 | 課題 | 対象ファイル |
-|--------|------|-------------|
-| 低 | サーバー上の PM2 再起動に `npx pm2` を使用している。PM2 はグローバルインストール済みのため `pm2` を直接呼ぶよう統一する（`car` / `portfolio` の実装に合わせる） | `.github/workflows/deploy.yml` |

@@ -68,11 +68,11 @@ async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response>
   return res;
 }
 
-export async function login(password: string): Promise<boolean> {
-  const res = await fetch("/api/login", {
+export async function loginWithGoogle(credential: string): Promise<boolean> {
+  const res = await fetch("/api/auth/google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ credential }),
   });
   if (!res.ok) return false;
   const data = (await res.json()) as { access_token?: string };
@@ -334,19 +334,6 @@ export async function deleteSensorRecordsBulk(
 
 export async function fetchSensorsStatus(): Promise<SensorsStatusResponse> {
   return fetchJson<SensorsStatusResponse>("/api/sensors/status");
-}
-
-export async function sendTestSignalyNotification(
-  type: "login" | "sensor-stale" | "sensor-recovered"
-): Promise<void> {
-  const res = await fetchWithAuth(`/api/signaly/test/${type}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail || `Request failed: ${res.status}`);
-  }
 }
 
 export interface LatestBatchResult {

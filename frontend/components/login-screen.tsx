@@ -1,10 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Lock } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
+import { Lock } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -14,26 +12,19 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+
 interface LoginScreenProps {
-  onLogin: (password: string) => Promise<boolean>;
+  onLogin: (credential: string) => Promise<boolean>;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
 
-  const handleLogin = async () => {
-    setLoading(true);
+  const handleSuccess = async (credential: string) => {
     setError("");
-    try {
-      if (await onLogin(password)) {
-        return;
-      }
-      setError("パスワードを入力してください");
-    } finally {
-      setLoading(false);
+    if (!(await onLogin(credential))) {
+      setError("このGoogleアカウントではログインできません");
     }
   };
 
@@ -48,44 +39,29 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           <CardDescription>お部屋の状態をモニタリング</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="password">パスワード</Label>
-            <div className="relative">
-              <Input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                className="rounded-xl border-border bg-background pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((prev) => !prev)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showPassword ? "パスワードを非表示にする" : "パスワードを表示する"}
-                tabIndex={-1}
-              >
-                {showPassword ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </button>
-            </div>
+          <div className="flex justify-center">
+            {GOOGLE_CLIENT_ID ? (
+              <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+                <GoogleLogin
+                  onSuccess={(response) => {
+                    if (response.credential) {
+                      void handleSuccess(response.credential);
+                    }
+                  }}
+                  onError={() => setError("Googleログインに失敗しました")}
+                />
+              </GoogleOAuthProvider>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Googleログインが設定されていません
+              </p>
+            )}
           </div>
           {error && (
             <p className={cn("rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive")}>
               {error}
             </p>
           )}
-          <Button
-            className="h-12 w-full rounded-xl bg-foreground text-base text-background hover:bg-foreground/90"
-            onClick={handleLogin}
-            disabled={loading}
-          >
-            {loading ? "ログイン中..." : "ログイン"}
-          </Button>
         </CardContent>
       </Card>
     </div>

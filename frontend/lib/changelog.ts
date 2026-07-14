@@ -34,6 +34,16 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.3.1",
+    date: "2026-07-14",
+    changes: [
+      "パスワードでのログインを廃止し、Googleアカウントでログインする方式に変更",
+      "通知のテスト送信ボタンを削除",
+      "アプリがバックグラウンドから復帰・オンライン復帰した際に、グラフの表示位置が最新へ強制的に移動してしまう不具合を修正",
+      "エアコンの自動設定時に、設定温度を示す点線がグラフからはみ出すことがある不具合を修正",
+    ],
+  },
+  {
     version: "3.3.0",
     date: "2026-07-10",
     changes: [

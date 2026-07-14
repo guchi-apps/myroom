@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -9,7 +10,7 @@ import datetime
 import random
 from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, signaly_notify, sensor_monitor, ui_settings
-from .auth import create_access_token, get_current_user
+from .auth import create_access_token, get_current_user, verify_google_id_token
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
@@ -76,8 +77,8 @@ class BulkDeleteRecordsRequest(BaseModel):
     device: int
     datetimes: List[str]
 
-class LoginRequest(BaseModel):
-    password: str
+class GoogleAuthRequest(BaseModel):
+    credential: str
 
 class UiSettingsUpdate(BaseModel):
     display_order: Optional[List[str]] = None
@@ -327,12 +328,6 @@ async def health_check():
     return {"status": "ok", "db_mock": database.DB_MOCK}
 
 
-def _verify_app_password(password: str) -> None:
-    app_password = os.getenv("APP_PASSWORD", "admin")
-    if password != app_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-
 @app.get("/api/sensors/status")
 def get_sensors_status(
     db: Session = Depends(database.get_db),
@@ -347,44 +342,9 @@ def get_sensors_status(
     }
 
 
-@app.post("/api/signaly/test/login")
-def test_signaly_login(_: dict = Depends(get_current_user)):
-    now_jst = datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-    signaly_notify.send_login_notification(
-        timestamp=f"{now_jst} JST",
-        client_ip="127.0.0.1",
-        user_agent="MyRoom Webhook Test",
-    )
-    return {"status": "ok"}
-
-
-@app.post("/api/signaly/test/sensor-stale")
-def test_signaly_sensor_stale(_: dict = Depends(get_current_user)):
-    signaly_notify.send_sensor_stale_notification(
-        device_name="テストデバイス",
-        device_id=0,
-        last_seen=None,
-        age_minutes=None,
-        threshold_minutes=30,
-    )
-    return {"status": "ok"}
-
-
-@app.post("/api/signaly/test/sensor-recovered")
-def test_signaly_sensor_recovered(_: dict = Depends(get_current_user)):
-    signaly_notify.send_sensor_recovered_notification(
-        device_name="テストデバイス",
-        device_id=0,
-        last_seen=None,
-    )
-    return {"status": "ok"}
-
-
-@app.post("/api/login")
-async def login(body: LoginRequest, request: Request):
-    app_password = os.getenv("APP_PASSWORD", "admin")
-    if body.password != app_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
+@app.post("/api/auth/google")
+async def auth_google(body: GoogleAuthRequest, request: Request):
+    email = await run_in_threadpool(verify_google_id_token, body.credential)
 
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
@@ -396,10 +356,10 @@ async def login(body: LoginRequest, request: Request):
 
     user_agent = request.headers.get("User-Agent", "unknown")
     timestamp = get_now_jst().strftime("%Y-%m-%d %H:%M:%S")
-    signaly_notify.send_login_notification(timestamp, client_ip, user_agent)
+    signaly_notify.send_login_notification(timestamp, client_ip, user_agent, email)
     return {
         "status": "ok",
-        "access_token": create_access_token(),
+        "access_token": create_access_token(sub=email),
         "token_type": "bearer",
     }
 

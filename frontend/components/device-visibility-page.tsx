@@ -23,7 +23,6 @@ import {
   fetchAirconUnits,
   fetchDevices,
   fetchOutdoorLocation,
-  login,
   searchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
@@ -84,7 +83,8 @@ import {
 } from "@/lib/ui-settings-client";
 
 export const STALE_ALERT_EXCLUDED_CHANGED_EVENT = "stalealertexcluded_changed";
-import { AuthError, clearAuthToken, isAuthenticated as hasStoredAuthToken } from "@/lib/auth";
+import { AuthError, clearAuthToken } from "@/lib/auth";
+import { useAuthState } from "@/lib/use-auth";
 
 type EditableTarget =
   | { kind: "device"; item: Extract<DisplayOrderItem, { type: "device" }> }
@@ -142,7 +142,7 @@ function getAirconListTracks(
 }
 
 export function DeviceVisibilityPage() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, setIsAuthenticated, handleLogin } = useAuthState();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [airconUnits, setAirconUnits] = useState<AirconUnitInfo[]>([]);
   const [outdoorLocation, setOutdoorLocation] = useState<OutdoorLocation | null>(null);
@@ -207,7 +207,7 @@ export function DeviceVisibilityPage() {
         setIsAuthenticated(false);
       }
     }
-  }, [sensorDeviceIds]);
+  }, [sensorDeviceIds, setIsAuthenticated]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -226,12 +226,6 @@ export function DeviceVisibilityPage() {
       setOutdoorLocation(null);
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (hasStoredAuthToken()) {
-      setIsAuthenticated(true);
     }
   }, []);
 
@@ -306,16 +300,7 @@ export function DeviceVisibilityPage() {
       .catch((err) => {
         if (err instanceof AuthError) setIsAuthenticated(false);
       });
-  }, []);
-
-  const handleLogin = async (password: string) => {
-    const ok = await login(password);
-    if (ok) {
-      setIsAuthenticated(true);
-      return true;
-    }
-    return false;
-  };
+  }, [setIsAuthenticated]);
 
   const handleHiddenKeyVisibilityChange = (
     key: string,
