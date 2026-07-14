@@ -336,19 +336,6 @@ export async function fetchSensorsStatus(): Promise<SensorsStatusResponse> {
   return fetchJson<SensorsStatusResponse>("/api/sensors/status");
 }
 
-export async function sendTestSignalyNotification(
-  type: "login" | "sensor-stale" | "sensor-recovered"
-): Promise<void> {
-  const res = await fetchWithAuth(`/api/signaly/test/${type}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail || `Request failed: ${res.status}`);
-  }
-}
-
 export interface LatestBatchResult {
   latestByDevice: Record<number, LatestData | null>;
   loadStatusByDevice: Record<number, DeviceDataLoadStatus>;

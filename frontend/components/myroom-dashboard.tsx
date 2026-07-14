@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   ChevronRight,
-  Send,
   Droplets,
   Gauge,
   RefreshCw,
@@ -19,7 +18,6 @@ import { LoginScreen } from "@/components/login-screen";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
-import { WebhookTest } from "@/components/webhook-test";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -394,7 +392,6 @@ export function MyRoomDashboard() {
   const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
-  const [webhookTestOpen, setWebhookTestOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
@@ -893,15 +890,6 @@ export function MyRoomDashboard() {
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setWebhookTestOpen(true)}
-                disabled={isOfflineMode}
-                className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="通知テスト"
-              >
-                <Send className="size-5" strokeWidth={1.75} />
-              </button>
-              <button
-                type="button"
                 onClick={() => {
                   if (isOfflineMode) return;
                   fetchData({ showChartLoading: true });
@@ -1112,11 +1100,6 @@ export function MyRoomDashboard() {
           onClose={() => setOutdoorPanelOpen(false)}
         />
       )}
-
-      <WebhookTest
-        open={webhookTestOpen}
-        onClose={() => setWebhookTestOpen(false)}
-      />
 
       <VersionHistoryDialog
         open={versionHistoryOpen}
