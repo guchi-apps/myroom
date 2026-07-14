@@ -702,26 +702,28 @@ export function MyRoomDashboard() {
     const handleOnline = () => {
       setIsOfflineMode(false);
       setOfflineSnapshot(null);
-      void fetchData({ showChartLoading: true, reloadHistory: true });
+      void fetchData({ showChartLoading: true });
+      void refreshLatest();
     };
 
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [isAuthenticated, fetchData]);
+  }, [isAuthenticated, fetchData, refreshLatest]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void fetchData({ showChartLoading: true, reloadHistory: true });
+        void fetchData({ showChartLoading: true });
+        void refreshLatest();
       }
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () =>
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [isAuthenticated, fetchData]);
+  }, [isAuthenticated, fetchData, refreshLatest]);
 
   useEffect(() => {
     if (!isAuthenticated || !layoutReady) return;
