@@ -39,8 +39,6 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-旧 Streamlit UI (`frontend/app.py`) を使う場合のみ: `pip install -r requirements-streamlit.txt`（`cmake` 等が必要になることがあります）。
-
 初回のみ、ルートに `.env` を用意してください（DB接続情報・パスワードなど）。  
 起動スクリプトは **環境変数 `DB_MOCK` でモードを上書き**するため、`.env` の `DB_MOCK` 値を毎回書き換える必要はありません。
 
@@ -370,16 +368,6 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 デプロイ時（GitHub Actions）も `migrate_db.py` が自動実行されます。
 
-### 気圧単位の変換
-
-過去に `Pa` 単位（101300 等）で保存されていたデータがある場合:
-
-```bash
-python3 migrate_pressure_to_hpa.py
-```
-
-`hPa > 5000` の条件に基づき、安全に一括変換します。
-
 ## 本番環境へのデプロイ
 
 ### 1. 1Password の設定
@@ -569,11 +557,3 @@ git push origin develop
 ```
 
 同じバージョン番号で再デプロイする場合は、先にバージョンを上げてから `main` にマージする必要があります（タグが既に別コミットを指していると workflow がエラーになります）。
-
-## CI/CD の既知の課題
-
-> 2026-06-29 時点で確認された課題です。対応が完了したら削除または更新してください。
-
-| 優先度 | 課題 | 対象ファイル |
-|--------|------|-------------|
-| 低 | サーバー上の PM2 再起動に `npx pm2` を使用している。PM2 はグローバルインストール済みのため `pm2` を直接呼ぶよう統一する（`car` / `portfolio` の実装に合わせる） | `.github/workflows/deploy.yml` |

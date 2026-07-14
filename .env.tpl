@@ -1,4 +1,4 @@
-# ローカル開発用 .env テンプレート（op:// 参照のみ記載 — 実値は含めない）
+# ローカル開発用 .env テンプレート（1Password のシークレット参照のみ記載 — 実値は含めない）
 #
 # 使い方:
 #   op run --env-file=.env.tpl -- uvicorn backend.main:app --reload --port 8000
