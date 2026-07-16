@@ -394,6 +394,9 @@ python3 aircon_to_myroom.py --list-units
 # 取得のみ（POST しない）
 python3 aircon_to_myroom.py --dry-run --debug
 
+# 未加工の API レスポンス（JSON）を確認（電気代など未対応フィールドの調査用）
+python3 aircon_to_myroom.py --dump-raw
+
 # 本番 POST
 python3 aircon_to_myroom.py
 ```

@@ -333,6 +333,7 @@ export function EnvironmentChart({
   const rafRef = useRef<number | null>(null);
   const preservedSelectionTimeRef = useRef<number | null>(null);
   const lastScrolledEpochRef = useRef(-1);
+  const dataMaxTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     dragDomainRef.current = domainOffset;
@@ -354,7 +355,36 @@ export function EnvironmentChart({
         : getMaxPositiveDomainOffset(viewRange);
     dragDomainRef.current = nextOffset;
     setDomainOffset(nextOffset);
+    dataMaxTimeRef.current = historyData.length
+      ? historyData[historyData.length - 1].datetimeObj
+      : null;
   }, [viewRange, historyEpoch]);
+
+  /**
+   * domainOffset は historyData 末尾時刻からの相対値のため、バックグラウンド更新などで
+   * 新しいデータが継ぎ足されて末尾時刻が進むと、offset が同じでも表示域全体が未来方向へ
+   * ずれてしまう（＝閲覧中の時刻が勝手に最新へ近づいていく）。最新追従中でない限り、
+   * 進んだ分だけ offset を戻して閲覧中の絶対時刻を据え置く。
+   */
+  useEffect(() => {
+    if (dragStartX !== null || !historyData.length) return;
+
+    const dataMaxTime = historyData[historyData.length - 1].datetimeObj;
+    const prevDataMaxTime = dataMaxTimeRef.current;
+    dataMaxTimeRef.current = dataMaxTime;
+    if (prevDataMaxTime == null) return;
+
+    const delta = dataMaxTime - prevDataMaxTime;
+    if (delta <= 0) return;
+
+    const maxPositiveOffset = getMaxPositiveDomainOffset(viewRange);
+    const isFollowingLive = dragDomainRef.current >= maxPositiveOffset - 1000;
+    if (isFollowingLive) return;
+
+    const nextOffset = dragDomainRef.current - delta;
+    dragDomainRef.current = nextOffset;
+    setDomainOffset(nextOffset);
+  }, [historyData, viewRange, dragStartX]);
 
   useEffect(() => {
     if (!availableMetrics.length) return;

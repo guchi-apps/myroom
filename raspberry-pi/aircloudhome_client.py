@@ -111,6 +111,20 @@ class AirCloudHomeClient:
                 devices.append(AirCloudDevice.from_api(raw, int(family_id)))
         return devices
 
+    def get_raw_devices(self) -> List[Dict[str, Any]]:
+        """未加工の idu-list レスポンスをそのまま返す（電気代など未対応フィールドの調査用）。"""
+        self._ensure_valid_token()
+        raw_devices: List[Dict[str, Any]] = []
+        for family in self._get_family_groups():
+            family_id = family.get("familyId")
+            if not family_id:
+                continue
+            for raw in self._get_idu_list(int(family_id)):
+                entry = dict(raw)
+                entry["_familyId"] = family_id
+                raw_devices.append(entry)
+        return raw_devices
+
     def _ensure_valid_token(self) -> None:
         if self._is_access_token_valid():
             return
