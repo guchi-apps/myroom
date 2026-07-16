@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -148,6 +149,11 @@ def load_config() -> argparse.Namespace:
         action="store_true",
         help="List available units and exit",
     )
+    parser.add_argument(
+        "--dump-raw",
+        action="store_true",
+        help="Print raw idu-list API response (JSON) and exit; for investigating unmapped fields",
+    )
 
     args = parser.parse_args()
     if not args.email or not args.password:
@@ -160,6 +166,10 @@ def main() -> int:
         args = load_config()
 
         with AirCloudHomeClient(args.email, args.password, timeout=args.http_timeout) as client:
+            if args.dump_raw:
+                raw_devices = client.get_raw_devices()
+                print(json.dumps(raw_devices, ensure_ascii=False, indent=2))
+                return 0
             devices = client.get_devices()
 
         if args.list_units:
