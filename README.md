@@ -12,7 +12,6 @@
 myroom/
 ├── backend/           # FastAPI API
 ├── frontend/          # Next.js UI（開発: port 5173）
-├── raspberry-pi/      # SwitchBot CO2 センサー → MyRoom 連携
 ├── data/              # 実行時設定（gitignore 対象）
 │   ├── devices.json           # デバイス表示名
 │   └── outdoor_location.json  # 屋外地点
@@ -258,8 +257,8 @@ curl -X POST "https://myroom.gucchii.com/api/sensor?device=2" \
 - **SwitchBot 複数台**: Raspberry Pi の `sensors.json` に MAC と `device_id` を列挙（1回の BLE スキャンでまとめて POST）。新しい `device_id` は初回 POST で自動登録され、ダッシュボードにも自動表示
 - CO2 値は UI のセンサーカードに ppm として表示
 
-**Raspberry Pi のセットアップ**（WinSCP、SSH、BLE/`btmon`、systemd、トラブルシューティング）は  
-**[`raspberry-pi/README.md`](raspberry-pi/README.md)** に手順をまとめています。
+**Raspberry Pi 上のスクリプト・セットアップ手順**（WinSCP、SSH、BLE/`btmon`、systemd、トラブルシューティング）は  
+[m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。`myroom-api/README.md` を参照してください。
 
 ### エアコン（白くまくんアプリ / AirCloud Home + Raspberry Pi）
 
@@ -279,18 +278,18 @@ curl -X POST "https://myroom.gucchii.com/api/sensor?device=2" \
 | API（最新状態 GET） | https://myroom.gucchii.com/api/aircon/latest |
 
 ```bash
-# 5分ごとに取得・送信（Pi 上）
+# 5分ごとに取得・送信（Pi 上、myroom-api/ 配下）
 python3 aircon_to_myroom.py
 
 # 登録済みユニット一覧
 python3 aircon_to_myroom.py --list-units
 
 # 自動実行（systemd タイマー・5分間隔）
-sudo ./raspberry-pi/install.sh
+sudo ./install.sh
 sudo systemctl start aircon-myroom.timer
 ```
 
-詳細は [raspberry-pi/README.md](raspberry-pi/README.md) を参照。
+Raspberry Pi 上のスクリプトは [m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
 
 取得できる主な項目: 室温、設定温度、運転モード、電源 ON/OFF、風量・風向、オンライン状態など（詳細は下記参照）。
 

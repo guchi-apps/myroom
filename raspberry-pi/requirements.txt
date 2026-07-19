@@ -1,3 +1,0 @@
-# Pi Zero W: bleak / dbus-fast のビルド不要（BlueZ btmon を使用）
-requests>=2.28.0,<2.32
-python-dotenv>=0.19.0,<1.0
