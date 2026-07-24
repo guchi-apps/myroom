@@ -92,9 +92,23 @@ const METRIC_ICONS = {
 
 const VIEW_RANGES: ChartViewRange[] = ["day", "week", "month", "year"];
 
-/** ComposedChart margin + YAxis width + container padding（オーバーレイ位置合わせ用） */
-const PLOT_INSET = { left: 36, right: 6, top: 28, bottom: 22 };
+const CHART_MARGIN = { top: 28, right: 6, left: 0, bottom: 0 };
 const Y_AXIS_WIDTH = 32;
+/** recharts の XAxis デフォルト height（明示指定していないため既定値を使用） */
+const X_AXIS_HEIGHT = 30;
+
+/**
+ * ComposedChart のプロット領域（margin + 軸の幅・高さ）を表す。選択位置の線・点は
+ * recharts の外側に自前で重ねて描画しているため、ここが実際の margin/軸サイズと
+ * ずれると線と点の表示位置が食い違う。CHART_MARGIN・Y_AXIS_WIDTH・X_AXIS_HEIGHT から
+ * 導出することで実際のグラフ設定と同期させる。
+ */
+const PLOT_INSET = {
+  left: CHART_MARGIN.left + Y_AXIS_WIDTH,
+  right: CHART_MARGIN.right,
+  top: CHART_MARGIN.top,
+  bottom: CHART_MARGIN.bottom + X_AXIS_HEIGHT,
+};
 
 interface EnvironmentChartProps {
   historyData: HistoryPoint[];
@@ -1120,7 +1134,7 @@ export function EnvironmentChart({
             <ComposedChart
               key={`${chartMetric}-${viewRange}-${plottedDeviceIds.join("-")}-${plottedDht11DeviceIds.join("-")}-${showOutdoorLine}-${showTargetLine}-${isMinMaxMode}`}
               data={chartPlotData}
-              margin={{ top: PLOT_INSET.top, right: PLOT_INSET.right, left: 0, bottom: 0 }}
+              margin={CHART_MARGIN}
             >
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--chart-grid)" />
               <XAxis
