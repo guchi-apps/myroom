@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.3.3",
+    date: "2026-07-24",
+    changes: [
+      "グラフで選択した時刻の縦線・点の表示位置が実際の折れ線とわずかにずれていた不具合を修正",
+    ],
+  },
+  {
     version: "3.3.1",
     date: "2026-07-14",
     changes: [
