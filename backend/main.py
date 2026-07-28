@@ -1,5 +1,4 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
-from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -10,7 +9,7 @@ import datetime
 import random
 from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, signaly_notify, sensor_monitor, ui_settings
-from .auth import create_access_token, get_current_user, verify_google_id_token
+from .auth import get_current_user
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
@@ -76,9 +75,6 @@ class AirconNameUpdate(BaseModel):
 class BulkDeleteRecordsRequest(BaseModel):
     device: int
     datetimes: List[str]
-
-class GoogleAuthRequest(BaseModel):
-    credential: str
 
 class UiSettingsUpdate(BaseModel):
     display_order: Optional[List[str]] = None
@@ -342,26 +338,9 @@ def get_sensors_status(
     }
 
 
-@app.post("/api/auth/google")
-async def auth_google(body: GoogleAuthRequest, request: Request):
-    email = await run_in_threadpool(verify_google_id_token, body.credential)
-
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        client_ip = forwarded_for.split(",")[0].strip()
-    elif request.client:
-        client_ip = request.client.host
-    else:
-        client_ip = "unknown"
-
-    user_agent = request.headers.get("User-Agent", "unknown")
-    timestamp = get_now_jst().strftime("%Y-%m-%d %H:%M:%S")
-    signaly_notify.send_login_notification(timestamp, client_ip, user_agent, email)
-    return {
-        "status": "ok",
-        "access_token": create_access_token(sub=email),
-        "token_type": "bearer",
-    }
+@app.get("/api/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return {"email": user.get("email")}
 
 
 @app.get("/api/outdoor-location")
@@ -1195,5 +1174,11 @@ if os.path.exists(frontend_dist):
         requested_file = os.path.join(frontend_dist, full_path)
         if os.path.isfile(requested_file):
             return FileResponse(requested_file)
+
+        # Next.jsの静的エクスポートは "/auth/callback" のようなクリーンURLを
+        # "auth/callback.html" として出力するため、拡張子付きでも解決を試みる。
+        html_file = f"{requested_file}.html"
+        if os.path.isfile(html_file):
+            return FileResponse(html_file)
 
         return FileResponse(os.path.join(frontend_dist, "index.html"))

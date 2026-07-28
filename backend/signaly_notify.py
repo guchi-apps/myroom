@@ -6,7 +6,6 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-LOGIN_WEBHOOK_URL = os.getenv("LOGIN_WEBHOOK_URL", "").strip()
 SENSOR_WEBHOOK_URL = os.getenv("SENSOR_WEBHOOK_URL", "").strip()
 
 
@@ -16,23 +15,6 @@ def _post(webhook_url: str, payload: dict) -> None:
         response.raise_for_status()
     except requests.RequestException as exc:
         logger.warning("Failed to send Signaly notification: %s", exc)
-
-
-def send_login_notification(timestamp: str, client_ip: str, user_agent: str, email: str) -> None:
-    if not LOGIN_WEBHOOK_URL:
-        logger.debug("LOGIN_WEBHOOK_URL not set; skipping Signaly notification")
-        return
-
-    _post(LOGIN_WEBHOOK_URL, {
-        "title": "🔐 MyRoom ログイン",
-        "color": "#57f287",
-        "fields": [
-            {"name": "日時 (JST)", "value": timestamp, "inline": False},
-            {"name": "アカウント", "value": email, "inline": True},
-            {"name": "IP", "value": client_ip, "inline": True},
-            {"name": "User-Agent", "value": user_agent[:500], "inline": False},
-        ],
-    })
 
 
 def send_sensor_stale_notification(

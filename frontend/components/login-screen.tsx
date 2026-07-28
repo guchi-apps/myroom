@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
 import { Lock } from "lucide-react";
 import {
   Card,
@@ -10,21 +9,29 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase-client";
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
-
-interface LoginScreenProps {
-  onLogin: (credential: string) => Promise<boolean>;
+function getInitialError(): string {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return params.get("authError") === "forbidden"
+    ? "このGoogleアカウントではログインできません"
+    : "";
 }
 
-export function LoginScreen({ onLogin }: LoginScreenProps) {
-  const [error, setError] = useState("");
+export function LoginScreen() {
+  const [error, setError] = useState(getInitialError);
 
-  const handleSuccess = async (credential: string) => {
+  const handleClick = async () => {
     setError("");
-    if (!(await onLogin(credential))) {
-      setError("このGoogleアカウントではログインできません");
+    const { error: signInError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+    if (signInError) {
+      setError("Googleログインに失敗しました");
     }
   };
 
@@ -40,22 +47,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex justify-center">
-            {GOOGLE_CLIENT_ID ? (
-              <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-                <GoogleLogin
-                  onSuccess={(response) => {
-                    if (response.credential) {
-                      void handleSuccess(response.credential);
-                    }
-                  }}
-                  onError={() => setError("Googleログインに失敗しました")}
-                />
-              </GoogleOAuthProvider>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Googleログインが設定されていません
-              </p>
-            )}
+            <Button onClick={handleClick}>Googleでログイン</Button>
           </div>
           {error && (
             <p className={cn("rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive")}>
