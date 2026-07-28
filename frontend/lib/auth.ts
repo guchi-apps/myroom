@@ -1,24 +1,4 @@
-const AUTH_TOKEN_KEY = "app_auth_token";
-
-export function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null;
-  const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  return token?.trim() ? token : null;
-}
-
-export function setAuthToken(token: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
-}
-
-export function clearAuthToken(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-}
-
-export function isAuthenticated(): boolean {
-  return getAuthToken() != null;
-}
+import { supabase } from "@/lib/supabase-client";
 
 export class AuthError extends Error {
   constructor(message = "Authentication required") {
@@ -27,8 +7,12 @@ export class AuthError extends Error {
   }
 }
 
-export function authHeaders(): HeadersInit {
-  const token = getAuthToken();
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}` };
+export async function getAccessToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
+export async function authHeaders(): Promise<HeadersInit> {
+  const token = await getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }

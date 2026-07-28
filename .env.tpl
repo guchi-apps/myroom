@@ -14,17 +14,11 @@ DB_USER=op://apps/DB/db-user
 DB_PASSWORD=op://apps/DB/db-password
 DB_MOCK=false
 
-# --- 認証 ---
-JWT_SECRET_KEY=op://apps/MyRoom/jwt-secret-key
-GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
+# --- 認証（Supabaseは複数アプリ共通プロジェクトのため共有アイテムを参照） ---
+SUPABASE_URL=op://apps/Supabase/url
+NEXT_PUBLIC_SUPABASE_URL=op://apps/Supabase/url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/publishable-key
 ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
-NEXT_PUBLIC_GOOGLE_CLIENT_ID=op://apps/MyRoom/google-client-id
-
-# --- Web Push ---
-VAPID_PUBLIC_KEY=op://apps/MyRoom/vapid-public-key
-VAPID_PRIVATE_KEY=op://apps/MyRoom/vapid-private-key
-VAPID_SUBJECT=op://apps/MyRoom/vapid-subject
 
 # --- 通知 ---
-LOGIN_WEBHOOK_URL=op://apps/MyRoom/login-webhook-url
 SENSOR_WEBHOOK_URL=op://apps/MyRoom/sensor-webhook-url

@@ -2,8 +2,8 @@ import datetime
 import os
 
 os.environ["DB_MOCK"] = "true"
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
-os.environ.setdefault("GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
+os.environ.setdefault("ALLOWED_GOOGLE_EMAILS", "test@example.com")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,10 +32,7 @@ def data_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def auth_headers():
-    from backend.auth import create_access_token
-
-    token = create_access_token(sub="test@example.com")
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": "Bearer test-token"}
 
 
 @pytest.fixture
@@ -87,3 +84,15 @@ def client(data_dir, mock_weather):
 
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def authed_client(client):
+    from backend.auth import get_current_user
+    from backend.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: {"email": "test@example.com"}
+    try:
+        yield client
+    finally:
+        del app.dependency_overrides[get_current_user]

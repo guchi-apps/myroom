@@ -1,26 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { loginWithGoogle } from "@/lib/api";
-import { isAuthenticated as hasStoredAuthToken } from "@/lib/auth";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase-client";
 
 export function useAuthState() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    if (hasStoredAuthToken()) {
-      setIsAuthenticated(true);
-    }
+    supabase.auth.getSession().then(({ data }) => {
+      setIsAuthenticated(data.session != null);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(session != null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleLogin = useCallback(async (credential: string) => {
-    const ok = await loginWithGoogle(credential);
-    if (ok) {
-      setIsAuthenticated(true);
-      return true;
-    }
-    return false;
-  }, []);
-
-  return { isAuthenticated, setIsAuthenticated, handleLogin };
+  return { isAuthenticated, setIsAuthenticated };
 }

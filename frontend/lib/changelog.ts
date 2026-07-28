@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.3.4",
+    date: "2026-07-29",
+    changes: [
+      "スマホ画面下部の指標切り替え表示を見やすく調整し、画面上部の重複した切り替え表示を非表示に",
+    ],
+  },
+  {
     version: "3.3.3",
     date: "2026-07-24",
     changes: [

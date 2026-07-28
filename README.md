@@ -304,13 +304,14 @@ python3 migrate_db.py   # aircon テーブルを作成
 - **最近の記録**: 直近7日分から表示し、「もっと見る」で追加読み込み
 - **モバイルアプリ対応 (PWA)**: ホーム画面に追加して全画面起動可能。専用アプリアイコン設定済み
 - **オフライン表示**: ネットワーク切断時、IndexedDB に保存した最新値と直近24時間のグラフを表示
-- **センサー未到達通知**: API 側で鮮度を監視し、Signaly / Web Push（PWA）で通知。ダッシュボードに警告表示
+- **センサー未到達通知**: API 側で鮮度を監視し、Signaly で通知。ダッシュボードに警告表示
 - **死活監視用 API**: `/api/health` が `GET` / `HEAD` で `200 OK` を返す
 - **ログイン管理**:
-  - ダッシュボードのデータ取得 API は **JWT 認証必須**（`Authorization: Bearer <token>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
-  - ログインは Google アカウントで行い、許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
-  - 本番: 1Password の `jwt-secret-key` / `google-client-id` / `allowed-google-emails` をそれぞれ `JWT_SECRET_KEY` / `GOOGLE_CLIENT_ID` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期
-  - ログイン成功時: Signaly（1Password の `login-webhook-url`）へ通知
+  - ダッシュボードのデータ取得 API は **認証必須**（`Authorization: Bearer <Supabaseアクセストークン>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
+  - ログインは Supabase Auth 経由の Google 認証で行う（複数の自作アプリ共通の Supabase プロジェクトを使用）。許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
+  - バックエンドは Supabase の JWKS（`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`）を取得・キャッシュし、リクエストごとに JWT を自前検証する（Supabase への問い合わせは発生しない）
+  - 本番: 1Password 共有アイテム `Supabase` の `url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` とフロントエンドビルドに同期
+  - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番ドメインおよびローカル開発用の `/auth/callback` を**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
   - GitHub Actions（CI / デプロイ）の成功・失敗: Signaly へ通知
 
@@ -319,7 +320,7 @@ python3 migrate_db.py   # aircon テーブルを作成
 | メソッド | パス | 説明 |
 |----------|------|------|
 | GET/HEAD | `/api/health` | 死活監視 |
-| POST | `/api/auth/google` | Google ログイン（JWT 発行、成功時に Signaly 通知） |
+| GET | `/api/auth/me` | ログイン確認（Supabaseセッションの許可判定、要認証） |
 | GET | `/api/latest?device=1` | 最新の屋内＋屋外データ（要認証） |
 | GET | `/api/history?range=day&device=1` | 履歴（`range`: day/week/month/year、または `start`/`end`、要認証） |
 | GET | `/api/daily-stats?device=1` | 日次統計（最近の記録、要認証） |
@@ -339,9 +340,6 @@ python3 migrate_db.py   # aircon テーブルを作成
 | PUT | `/api/outdoor-location` | 屋外地点の更新（要認証） |
 | GET | `/api/outdoor-location/search?q=大阪` | 地名検索（要認証） |
 | GET | `/api/sensors/status` | センサー鮮度ステータス（要認証） |
-| GET | `/api/push/vapid-public-key` | Web Push 用 VAPID 公開鍵（要認証） |
-| POST/DELETE | `/api/push/subscribe` | プッシュ通知の購読登録・解除（要認証） |
-| POST | `/api/push/test` | プッシュ通知のテスト送信（要認証） |
 
 ## 設定ファイル
 
@@ -377,28 +375,21 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 保管庫名 `apps` に、次のアイテムを作成してください。
 
+**アイテム `Supabase`**（セキュアノート等・複数の自作アプリで共通利用）
+
+| フィールド名 | 内容 |
+|-------------|------|
+| `url` | Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
+| `publishable-key` | Supabase の Publishable key（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` としてフロントエンドのビルドに同期。フロントに公開してよい値） |
+
 **アイテム `MyRoom`**（セキュアノート等）
 
 | フィールド名 | 内容 |
 |-------------|------|
-| `jwt-secret-key` | JWT 署名用のランダムな秘密鍵（`JWT_SECRET_KEY` としてサーバー `.env` に同期） |
-| `google-client-id` | Google OAuth クライアント ID（`GOOGLE_CLIENT_ID` としてサーバー `.env` に、`NEXT_PUBLIC_GOOGLE_CLIENT_ID` としてフロントエンドのビルドに同期） |
 | `allowed-google-emails` | ログインを許可する Google アカウントのメールアドレス（カンマ区切り、`ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期） |
-| `login-webhook-url` | ログイン通知用 Signaly Webhook URL（`LOGIN_WEBHOOK_URL` として同期） |
 | `sensor-webhook-url` | センサー異常・復旧通知用 Signaly Webhook URL（`SENSOR_WEBHOOK_URL` として同期） |
-| `vapid-private-key` | Web Push 用 VAPID 秘密鍵 PEM（`VAPID_PRIVATE_KEY` として同期） |
-| `vapid-public-key` | Web Push 用 VAPID 公開鍵（`VAPID_PUBLIC_KEY` として同期。`scripts/generate_vapid_keys.py` の `VAPID_PUBLIC_KEY` 行） |
-| `vapid-subject` | Web Push 用 VAPID subject（`VAPID_SUBJECT` として同期。例: `mailto:you@example.com`） |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
-
-**VAPID 鍵の初回登録**（PWA プッシュ通知用・1 回だけ）:
-
-```bash
-./venv/bin/python scripts/generate_vapid_keys.py
-```
-
-出力の `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` を、上記フィールド `vapid-private-key` / `vapid-public-key` / `vapid-subject` にそれぞれ保存してください。秘密鍵は **PEM 形式のまま**（`-----BEGIN PRIVATE KEY-----` から改行付きで）貼り付けます。次回以降のデプロイでサーバー `.env` に自動同期されます。
 
 **アイテム `Server`**（セキュアノート等）
 
@@ -441,8 +432,6 @@ op read "op://apps/githubaction-sshkey/private_key?ssh-format=openssh"
 |---------------|------|
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account のトークン（これだけ GitHub に残す） |
 
-以前 GitHub Secrets に登録していた `VITE_APP_PASSWORD` / `SSH_PRIVATE_KEY` / `HOST` などは、1Password へ移行後に削除できます。
-
 #### 1-3. 本番サーバーの初期セットアップ
 
 デプロイは `github-user` など **sudo 権限のないユーザー** で SSH 接続します。サーバー管理者が初回のみ次を入れておくとスムーズです。
@@ -477,14 +466,9 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 
 | 環境変数 | 1Password アイテム | フィールド |
 |----------|-------------------|-----------|
-| `JWT_SECRET_KEY` | MyRoom | `jwt-secret-key` |
-| `GOOGLE_CLIENT_ID` | MyRoom | `google-client-id` |
+| `SUPABASE_URL` | Supabase | `url` |
 | `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
-| `LOGIN_WEBHOOK_URL` | MyRoom | `login-webhook-url` |
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
-| `VAPID_PRIVATE_KEY` | MyRoom | `vapid-private-key` |
-| `VAPID_PUBLIC_KEY` | MyRoom | `vapid-public-key` |
-| `VAPID_SUBJECT` | MyRoom | `vapid-subject` |
 | `DB_NAME` | MyRoom | `db-name` |
 | `DB_USER` | DB | `db-user` |
 | `DB_PASSWORD` | DB | `db-password` |
@@ -498,7 +482,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. 1Password から `JWT_SECRET_KEY` / `GOOGLE_CLIENT_ID` / `ALLOWED_GOOGLE_EMAILS` / `LOGIN_WEBHOOK_URL` / `SENSOR_WEBHOOK_URL` / `VAPID_*` / DB 接続情報をサーバー `.env` に同期
+4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / DB 接続情報をサーバー `.env` に同期
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成

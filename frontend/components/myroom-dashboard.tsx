@@ -73,7 +73,8 @@ import {
   getLocationName,
   isPredecessorDevice,
 } from "@/lib/device-inheritance";
-import { AuthError, clearAuthToken } from "@/lib/auth";
+import { AuthError } from "@/lib/auth";
+import { supabase } from "@/lib/supabase-client";
 import { useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
@@ -370,7 +371,7 @@ function DeviceCard({
 }
 
 export function MyRoomDashboard() {
-  const { isAuthenticated, setIsAuthenticated, handleLogin } = useAuthState();
+  const { isAuthenticated, setIsAuthenticated } = useAuthState();
   const [latestData, setLatestData] = useState<LatestData | null>(null);
   const [latestByDevice, setLatestByDevice] = useState<Record<number, LatestData | null>>(
     {}
@@ -722,7 +723,7 @@ export function MyRoomDashboard() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
-    clearAuthToken();
+    void supabase.auth.signOut();
   };
 
   const mergedDailyStatsByDevice = useMemo(
@@ -807,7 +808,7 @@ export function MyRoomDashboard() {
   };
 
   if (!isAuthenticated) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen />;
   }
 
   const getDeviceInfo = (deviceId: number): DeviceInfo =>

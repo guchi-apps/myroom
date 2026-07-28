@@ -24,12 +24,8 @@ import {
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
 import { toApiDateTime, type AirconHistoryPoint } from "@/lib/history-loader";
 import { expandDeviceIdsForHistory } from "@/lib/device-inheritance";
-import {
-  authHeaders,
-  AuthError,
-  clearAuthToken,
-  setAuthToken,
-} from "@/lib/auth";
+import { authHeaders, AuthError } from "@/lib/auth";
+import { supabase } from "@/lib/supabase-client";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -37,7 +33,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     res = await fetch(url, {
       ...init,
       headers: {
-        ...authHeaders(),
+        ...(await authHeaders()),
         ...(init?.headers ?? {}),
       },
     });
@@ -46,7 +42,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new TypeError(`${message} (${url})`);
   }
   if (res.status === 401) {
-    clearAuthToken();
+    await supabase.auth.signOut();
     throw new AuthError();
   }
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -57,28 +53,15 @@ async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response>
   const res = await fetch(url, {
     ...init,
     headers: {
-      ...authHeaders(),
+      ...(await authHeaders()),
       ...(init?.headers ?? {}),
     },
   });
   if (res.status === 401) {
-    clearAuthToken();
+    await supabase.auth.signOut();
     throw new AuthError();
   }
   return res;
-}
-
-export async function loginWithGoogle(credential: string): Promise<boolean> {
-  const res = await fetch("/api/auth/google", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credential }),
-  });
-  if (!res.ok) return false;
-  const data = (await res.json()) as { access_token?: string };
-  if (!data.access_token) return false;
-  setAuthToken(data.access_token);
-  return true;
 }
 
 export async function fetchUiSettings(): Promise<UiSettings> {
