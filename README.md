@@ -305,7 +305,7 @@ python3 migrate_db.py   # aircon テーブルを作成
 - **最近の記録**: 直近7日分から表示し、「もっと見る」で追加読み込み
 - **モバイルアプリ対応 (PWA)**: ホーム画面に追加して全画面起動可能。専用アプリアイコン設定済み
 - **オフライン表示**: ネットワーク切断時、IndexedDB に保存した最新値と直近24時間のグラフを表示
-- **センサー未到達通知**: API 側で鮮度を監視し、Signaly / Web Push（PWA）で通知。ダッシュボードに警告表示
+- **センサー未到達通知**: API 側で鮮度を監視し、Signaly で通知。ダッシュボードに警告表示
 - **死活監視用 API**: `/api/health` が `GET` / `HEAD` で `200 OK` を返す
 - **ログイン管理**:
   - ダッシュボードのデータ取得 API は **認証必須**（`Authorization: Bearer <Supabaseアクセストークン>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
@@ -341,9 +341,6 @@ python3 migrate_db.py   # aircon テーブルを作成
 | PUT | `/api/outdoor-location` | 屋外地点の更新（要認証） |
 | GET | `/api/outdoor-location/search?q=大阪` | 地名検索（要認証） |
 | GET | `/api/sensors/status` | センサー鮮度ステータス（要認証） |
-| GET | `/api/push/vapid-public-key` | Web Push 用 VAPID 公開鍵（要認証） |
-| POST/DELETE | `/api/push/subscribe` | プッシュ通知の購読登録・解除（要認証） |
-| POST | `/api/push/test` | プッシュ通知のテスト送信（要認証） |
 
 ## 設定ファイル
 
@@ -392,19 +389,8 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 |-------------|------|
 | `allowed-google-emails` | ログインを許可する Google アカウントのメールアドレス（カンマ区切り、`ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期） |
 | `sensor-webhook-url` | センサー異常・復旧通知用 Signaly Webhook URL（`SENSOR_WEBHOOK_URL` として同期） |
-| `vapid-private-key` | Web Push 用 VAPID 秘密鍵 PEM（`VAPID_PRIVATE_KEY` として同期） |
-| `vapid-public-key` | Web Push 用 VAPID 公開鍵（`VAPID_PUBLIC_KEY` として同期。`scripts/generate_vapid_keys.py` の `VAPID_PUBLIC_KEY` 行） |
-| `vapid-subject` | Web Push 用 VAPID subject（`VAPID_SUBJECT` として同期。例: `mailto:you@example.com`） |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
-
-**VAPID 鍵の初回登録**（PWA プッシュ通知用・1 回だけ）:
-
-```bash
-./venv/bin/python scripts/generate_vapid_keys.py
-```
-
-出力の `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` を、上記フィールド `vapid-private-key` / `vapid-public-key` / `vapid-subject` にそれぞれ保存してください。秘密鍵は **PEM 形式のまま**（`-----BEGIN PRIVATE KEY-----` から改行付きで）貼り付けます。次回以降のデプロイでサーバー `.env` に自動同期されます。
 
 **アイテム `Server`**（セキュアノート等）
 
@@ -447,8 +433,6 @@ op read "op://apps/githubaction-sshkey/private_key?ssh-format=openssh"
 |---------------|------|
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account のトークン（これだけ GitHub に残す） |
 
-以前 GitHub Secrets に登録していた `VITE_APP_PASSWORD` / `SSH_PRIVATE_KEY` / `HOST` などは、1Password へ移行後に削除できます。
-
 #### 1-3. 本番サーバーの初期セットアップ
 
 デプロイは `github-user` など **sudo 権限のないユーザー** で SSH 接続します。サーバー管理者が初回のみ次を入れておくとスムーズです。
@@ -486,9 +470,6 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 | `SUPABASE_URL` | Supabase | `url` |
 | `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
-| `VAPID_PRIVATE_KEY` | MyRoom | `vapid-private-key` |
-| `VAPID_PUBLIC_KEY` | MyRoom | `vapid-public-key` |
-| `VAPID_SUBJECT` | MyRoom | `vapid-subject` |
 | `DB_NAME` | MyRoom | `db-name` |
 | `DB_USER` | DB | `db-user` |
 | `DB_PASSWORD` | DB | `db-password` |
@@ -502,7 +483,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `VAPID_*` / DB 接続情報をサーバー `.env` に同期
+4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / DB 接続情報をサーバー `.env` に同期
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成

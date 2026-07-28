@@ -20,10 +20,5 @@ NEXT_PUBLIC_SUPABASE_URL=op://apps/Supabase/url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/publishable-key
 ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
 
-# --- Web Push ---
-VAPID_PUBLIC_KEY=op://apps/MyRoom/vapid-public-key
-VAPID_PRIVATE_KEY=op://apps/MyRoom/vapid-private-key
-VAPID_SUBJECT=op://apps/MyRoom/vapid-subject
-
 # --- 通知 ---
 SENSOR_WEBHOOK_URL=op://apps/MyRoom/sensor-webhook-url
