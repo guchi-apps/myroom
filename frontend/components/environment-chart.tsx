@@ -987,7 +987,7 @@ export function EnvironmentChart({
                 "gap-1 text-xs sm:text-sm",
                 active && "text-[var(--metric-color)]",
                 options?.square &&
-                  "h-full rounded-none py-0 bg-transparent shadow-none data-[state=active]:rounded-none data-[state=active]:bg-background data-[state=active]:shadow-none"
+                  "h-full !items-start rounded-none pt-2.5 pb-0 bg-transparent shadow-none data-[state=active]:rounded-none data-[state=active]:bg-background data-[state=active]:shadow-none"
               )}
               style={
                 active
@@ -1006,7 +1006,7 @@ export function EnvironmentChart({
 
   return (
     <div className="climate-card flex flex-col gap-0 overflow-hidden p-0">
-      <div className="px-2 pt-4">
+      <div className={cn("px-2 pt-4", pinMetricTabsOnMobile && "hidden sm:block")}>
         {renderMetricTabs()}
       </div>
 
@@ -1331,7 +1331,7 @@ export function EnvironmentChart({
           aria-label="指標の選択"
         >
           <div className="mx-auto max-w-[480px] border-t border-border bg-muted/95 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] backdrop-blur-sm dark:shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
-            {renderMetricTabs("h-[60px]", { square: true })}
+            {renderMetricTabs("h-20", { square: true })}
             <div
               className="pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+0.5rem))]"
               aria-hidden
