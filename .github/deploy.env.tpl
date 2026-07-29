@@ -1,6 +1,6 @@
 # 1Password secret references for GitHub Actions deploy.
 # Vault: apps — MyRoom / Server / DB (deploy vars) + Supabase (共通プロジェクト) + githubaction-sshkey (SSH key). See README.md.
-SUPABASE_URL=op://apps/Supabase/url
+SUPABASE_URL=op://apps/Supabase/project-url
 SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/publishable-key
 ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
 SENSOR_WEBHOOK_URL=op://apps/MyRoom/sensor-webhook-url

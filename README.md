@@ -321,7 +321,7 @@ python3 migrate_db.py   # aircon テーブルを作成
   - ダッシュボードのデータ取得 API は **認証必須**（`Authorization: Bearer <Supabaseアクセストークン>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
   - ログインは Supabase Auth 経由の Google 認証で行う（複数の自作アプリ共通の Supabase プロジェクトを使用）。許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
   - バックエンドは Supabase の JWKS（`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`）を取得・キャッシュし、リクエストごとに JWT を自前検証する（Supabase への問い合わせは発生しない）
-  - 本番: 1Password 共有アイテム `Supabase` の `url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドに自動同期（`.github/deploy.env.tpl` / `deploy.yml`）
+  - 本番: 1Password 共有アイテム `Supabase` の `project-url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドに自動同期（`.github/deploy.env.tpl` / `deploy.yml`）
   - ローカル開発: 本番と誤って同じ Supabase プロジェクトを操作しないよう、同アイテムの `dev-project-url` / `dev-publishable-key`（開発用の別 Supabase プロジェクト）を使用。バックエンドは `.env.tpl` 経由（`SUPABASE_URL`）で自動反映されるが、**フロントエンドは自動同期されない**ため `frontend/.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を手動で書き込む必要がある（値は 1Password アプリから直接コピー。詳細は下記「2. フロントエンド」参照）
   - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番用プロジェクトには本番ドメインの、開発用プロジェクトにはローカル開発用の `/auth/callback` を、それぞれ**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
@@ -391,7 +391,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 | フィールド名 | 内容 |
 |-------------|------|
-| `url` | 本番用 Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
+| `project-url` | 本番用 Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
 | `publishable-key` | 本番用 Supabase の Publishable key（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` としてフロントエンドのビルドに同期。フロントに公開してよい値） |
 | `dev-project-url` | ローカル開発用 Supabase プロジェクトの URL（本番と誤操作しないよう分離）。バックエンドは `.env.tpl` 経由でローカルの `.env` の `SUPABASE_URL` に自動反映。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_URL` に手動でコピー |
 | `dev-publishable-key` | ローカル開発用 Supabase の Publishable key。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` に手動でコピー（`.env.tpl` には含まれない） |
@@ -480,7 +480,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 
 | 環境変数 | 1Password アイテム | フィールド |
 |----------|-------------------|-----------|
-| `SUPABASE_URL` | Supabase | `url` |
+| `SUPABASE_URL` | Supabase | `project-url` |
 | `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
 | `DB_NAME` | MyRoom | `db-name` |
