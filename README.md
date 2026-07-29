@@ -93,10 +93,7 @@ SSHトンネルだけ別ターミナルで維持したい場合:
 
 開発サーバー自体は起動時から `0.0.0.0` で待ち受けていますが、WSL2 は既定で Windows とは別ネットワーク（NAT）のため、そのままでは同じ Wi-Fi 上のスマホから届きません。`./scripts/start.sh` 実行時に Windows 側のポート転送を自動設定します（**管理者権限の確認（UAC）が毎回表示されます**）。
 
-表示される `http://<WindowsのIPアドレス>.sslip.io:5173` にスマホからアクセスできます。UAC をキャンセルしてもバックエンド・フロントエンドの起動自体は継続します（スマホからのアクセスのみ不可）。
-
-- **Google ログインを試す場合は sslip.io 経由の URL を使う**: Supabase Auth（GoTrue）は `redirectTo` のホスト名が生の IP アドレスだと、Redirect URLs にどう登録してもログインが無条件で失敗する仕様がある。`<IP>.sslip.io` は DNS 解決すると同じ IP を返すワイルドカード DNS のため、TCP 接続は変わらず LAN 内で完結する
-- 開発用 Supabase プロジェクトの Authentication → URL Configuration → Redirect URLs に `http://<WindowsのIPアドレス>.sslip.io:5173/auth/callback` を**完全一致**で登録しておく（ポート部分を `*` にしたパターンと混在させると許可リスト全体が効かなくなることがあるため避ける）
+表示される `http://<WindowsのIPアドレス>:5173` にスマホからアクセスできます。UAC をキャンセルしてもバックエンド・フロントエンドの起動自体は継続します（スマホからのアクセスのみ不可）。
 
 WSL を再起動すると WSL 側の IP が変わり転送が切れます。次回 `./scripts/start.sh` 実行時に自動で更新されますが、サーバーを再起動せず再設定だけしたい場合は単独で実行できます。
 
@@ -128,14 +125,6 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 #### 3. フロントエンド (Next.js)
-
-Google 認証を使う場合、初回のみ `frontend/.env.local` を作成してください（`.gitignore` 対象。1Password アプリから値を直接コピーし、`.env.tpl` 経由では同期されません）。
-
-```bash
-# frontend/.env.local
-NEXT_PUBLIC_SUPABASE_URL=<1Password「Supabase」アイテムの dev-project-url>
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<同 dev-publishable-key>
-```
 
 **バックエンド起動後**に:
 
@@ -321,9 +310,8 @@ python3 migrate_db.py   # aircon テーブルを作成
   - ダッシュボードのデータ取得 API は **認証必須**（`Authorization: Bearer <Supabaseアクセストークン>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
   - ログインは Supabase Auth 経由の Google 認証で行う（複数の自作アプリ共通の Supabase プロジェクトを使用）。許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
   - バックエンドは Supabase の JWKS（`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`）を取得・キャッシュし、リクエストごとに JWT を自前検証する（Supabase への問い合わせは発生しない）
-  - 本番: 1Password 共有アイテム `Supabase` の `url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドに自動同期（`.github/deploy.env.tpl` / `deploy.yml`）
-  - ローカル開発: 本番と誤って同じ Supabase プロジェクトを操作しないよう、同アイテムの `dev-project-url` / `dev-publishable-key`（開発用の別 Supabase プロジェクト）を使用。バックエンドは `.env.tpl` 経由（`SUPABASE_URL`）で自動反映されるが、**フロントエンドは自動同期されない**ため `frontend/.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を手動で書き込む必要がある（値は 1Password アプリから直接コピー。詳細は下記「2. フロントエンド」参照）
-  - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番用プロジェクトには本番ドメインの、開発用プロジェクトにはローカル開発用の `/auth/callback` を、それぞれ**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
+  - 本番: 1Password 共有アイテム `Supabase` の `url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` とフロントエンドビルドに同期
+  - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番ドメインおよびローカル開発用の `/auth/callback` を**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
   - GitHub Actions（CI / デプロイ）の成功・失敗: Signaly へ通知
 
@@ -391,10 +379,8 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 | フィールド名 | 内容 |
 |-------------|------|
-| `url` | 本番用 Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
-| `publishable-key` | 本番用 Supabase の Publishable key（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` としてフロントエンドのビルドに同期。フロントに公開してよい値） |
-| `dev-project-url` | ローカル開発用 Supabase プロジェクトの URL（本番と誤操作しないよう分離）。バックエンドは `.env.tpl` 経由でローカルの `.env` の `SUPABASE_URL` に自動反映。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_URL` に手動でコピー |
-| `dev-publishable-key` | ローカル開発用 Supabase の Publishable key。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` に手動でコピー（`.env.tpl` には含まれない） |
+| `url` | Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
+| `publishable-key` | Supabase の Publishable key（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` としてフロントエンドのビルドに同期。フロントに公開してよい値） |
 
 **アイテム `MyRoom`**（セキュアノート等）
 

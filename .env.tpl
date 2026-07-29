@@ -14,10 +14,10 @@ DB_USER=op://apps/DB/db-user
 DB_PASSWORD=op://apps/DB/db-password
 DB_MOCK=false
 
-# --- 認証（バックエンド用。Supabaseは複数アプリ共通プロジェクトのため共有アイテムを参照。開発用フィールドを使用） ---
-# NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY はフロントエンド専用のためここには含めない。
-# frontend/.env.local を直接編集して管理する（README「1Password の設定」参照）。
-SUPABASE_URL=op://apps/Supabase/dev-project-url
+# --- 認証（Supabaseは複数アプリ共通プロジェクトのため共有アイテムを参照） ---
+SUPABASE_URL=op://apps/Supabase/url
+NEXT_PUBLIC_SUPABASE_URL=op://apps/Supabase/url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/publishable-key
 ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
 
 # --- 通知 ---
