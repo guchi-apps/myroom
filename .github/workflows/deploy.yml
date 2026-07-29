@@ -134,7 +134,7 @@ jobs:
           DB_PORT_B64=$(b64 "$DB_PORT")
           DB_NAME_B64=$(b64 "$DB_NAME")
           DB_MOCK_B64=$(b64 "false")
-          ssh -p "${SSH_PORT}" "${USERNAME}@${HOST}" << EOF
+          ssh -p "${SSH_PORT}" "${USERNAME}@${HOST}" bash -s << EOF
             set -e
             echo "Current directory: \$(pwd)"
             cd ${TARGET_DIR}
