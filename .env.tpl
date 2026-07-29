@@ -14,10 +14,10 @@ DB_USER=op://apps/DB/db-user
 DB_PASSWORD=op://apps/DB/db-password
 DB_MOCK=false
 
-# --- 認証（Supabaseは複数アプリ共通プロジェクトのため共有アイテムを参照） ---
-SUPABASE_URL=op://apps/Supabase/url
-NEXT_PUBLIC_SUPABASE_URL=op://apps/Supabase/url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/publishable-key
+# --- 認証（Supabaseは複数アプリ共通プロジェクトのため共有アイテムを参照。開発用フィールドを使用） ---
+SUPABASE_URL=op://apps/Supabase/dev-project-url
+NEXT_PUBLIC_SUPABASE_URL=op://apps/Supabase/dev-project-url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=op://apps/Supabase/dev-publishable-key
 ALLOWED_GOOGLE_EMAILS=op://apps/MyRoom/allowed-google-emails
 
 # --- 通知 ---
