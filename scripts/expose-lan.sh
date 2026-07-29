@@ -48,6 +48,10 @@ LAN_IP="$(cat "${LAN_IP_OUT_WSL}" 2>/dev/null | tr -d '\r\n')"
 
 if [[ -n "${LAN_IP}" ]]; then
   echo "スマホから開発環境を見る場合はこちら（同じ Wi-Fi 上で）:"
-  echo "  http://${LAN_IP}:5173"
-  echo "  http://${LAN_IP}:8000"
+  echo "  http://${LAN_IP}.sslip.io:5173"
+  echo "  http://${LAN_IP}.sslip.io:8000"
+  echo ""
+  echo "注意: 生の IP アドレス（http://${LAN_IP}:5173）では Google ログインが必ず失敗します。"
+  echo "      Supabase ダッシュボードの Redirect URLs に"
+  echo "      http://${LAN_IP}.sslip.io:5173/auth/callback を完全一致で登録してください。"
 fi
