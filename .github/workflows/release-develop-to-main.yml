@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   release:
-    uses: guchi-apps/issue-deck/.github/workflows/reusable-release-develop-to-main.yml@workflows/v14
+    uses: guchi-apps/issue-deck/.github/workflows/reusable-release-develop-to-main.yml@workflows/v15
     with:
       # ルートのpackage.jsonはバージョン管理用scriptだけで version を持たない。実体は
       # frontend/package.json（deploy.yml も ./frontend/package.json を読む）。
