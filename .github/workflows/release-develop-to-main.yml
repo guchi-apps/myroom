@@ -1,0 +1,56 @@
+name: Release develop to main
+
+# develop→mainのリリース（バージョンbump PR・develop→mainのPR作成）を行う。
+# **本体は guchi-apps/issue-deck にあり、ここはトリガー定義だけの薄いcaller**
+# （guchi-apps/issue-deck#1181）。
+#
+# バンプPRはCI通過後にdevelopへ自動マージする。バンプPRがdevelopへマージされてバージョンが
+# 変わると、push(develop, paths)で本ワークフローが再度起動し、develop→mainのPRを自動作成する。
+# **develop→mainの実際のマージは自動マージ不可カテゴリに該当するため人間が手動で行う。**
+#
+# バンプPRの作成は人間の確認なしに走るため、scheduleでの自動起動はしない。
+on:
+  workflow_dispatch: {}
+  # バンプPRがdevelopへマージされバージョンが変わったときに再起動して、develop→mainのPRを
+  # 自動作成する。通常のフィーチャーpushでは変わらないため起動しない。
+  push:
+    branches: [develop]
+    paths:
+      - frontend/package.json
+
+concurrency:
+  group: release-develop-to-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: guchi-apps/issue-deck/.github/workflows/reusable-release-develop-to-main.yml@workflows/v15
+    with:
+      # ルートのpackage.jsonはバージョン管理用scriptだけで version を持たない。実体は
+      # frontend/package.json（deploy.yml も ./frontend/package.json を読む）。
+      version-file: frontend/package.json
+      # npm version はルートに package.json が無いと使えないため --prefix で対象を指定する。
+      #
+      # **--ignore-scripts が要る。** 共有ワークフローはバージョンbumpのために依存関係を
+      # インストールしない。そのまま npm version を実行すると preversion
+      # （`npm run typecheck && npm test`）が node_modules の無い状態で走り、tsc が
+      # `Cannot find module 'next'` 等で全滅する（#123で実際に踏んだ）。品質確認はbump PR上の
+      # CIで行われるため、bump時点で重ねて走らせる必要はない。
+      #
+      # ただし --ignore-scripts は更新履歴を追記する version フックも止めてしまうので、
+      # その中身（scripts/version-changelog.mjs）を明示的に実行して補う。このスクリプトは
+      # Node標準モジュールだけを使い __dirname 基準でパスを解決するため、依存関係が無くても
+      # リポジトリルートから実行できる。**ただしバージョン番号を npm_package_version
+      # 環境変数から読む（npm lifecycle 経由で実行される前提の作り）ため、直接実行する
+      # ときは明示的に渡す必要がある。** フックが行う git add は、共有ワークフローが
+      # bumpコミット前に git add -A するため不要。
+      bump-command: npm version "$NEW_VERSION" --no-git-tag-version --prefix frontend --ignore-scripts && npm_package_version="$NEW_VERSION" node frontend/scripts/version-changelog.mjs
+    secrets: inherit
+    # **呼ばれる側の権限はcallerの付与範囲を超えられない。** issues が write なのは、
+    # 呼ばれる側の notify-failure ジョブがリリース対象issueへ失敗を通知するため。
+    # read にすると startup_failure になり、ジョブが1つも作られずログも残らない。
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
