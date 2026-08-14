@@ -10,6 +10,7 @@ data/aircon.json
 data/ui_settings.json
 data/push_subscriptions.json
 data/sensor_alert_state.json
+data/garbage_notify_state.json
 __pycache__/
 *.pyc
 venv/

@@ -15,6 +15,7 @@ import {
   CHART_METRICS,
   DASHBOARD_SENSOR_DEVICE_IDS,
 } from "@/lib/types";
+import { LIFE_CARDS } from "@/lib/dashboard-sections";
 
 export { AIRCON_TARGET_VISIBILITY_KEY } from "@/lib/chart-line-visibility";
 
@@ -39,6 +40,10 @@ export function buildAllDashboardTargetKeys(
   keys.add("outdoor");
   keys.add(AIRCON_ROOM_HIDDEN_KEY);
   keys.add(AIRCON_TARGET_VISIBILITY_KEY);
+  // 暮らしセクションのカード（display_order には混ぜず、表示・非表示だけ共通で持つ）
+  for (const card of LIFE_CARDS) {
+    keys.add(card.key);
+  }
   return keys;
 }
 

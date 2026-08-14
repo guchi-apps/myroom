@@ -2,17 +2,22 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+import asyncio
+import contextlib
+import logging
 import os
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, garbage, garbage_notify, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # JST Timezone
 JST = datetime.timezone(datetime.timedelta(hours=9))
@@ -21,7 +26,37 @@ def get_now_jst():
     return datetime.datetime.now(JST).replace(tzinfo=None) # Use naive JST to match DB
 
 
-app = FastAPI(title="MyRoom API")
+#: ゴミの日通知の確認間隔。garbage_notify 側が「通知する時刻か」「送信済みか」を見るため、
+#: ここは取りこぼさない程度に細かければよい。
+GARBAGE_NOTIFY_INTERVAL_SECONDS = 300
+
+
+async def _garbage_notify_loop() -> None:
+    """ゴミの日の前日通知。本番のデプロイは PM2 でこのプロセスだけを動かすため、
+    systemd タイマーではなくバックエンド内で回す（別途の手作業が要らない）。"""
+    while True:
+        try:
+            await asyncio.to_thread(garbage_notify.run_notify)
+        except Exception:  # 通知の失敗で API を落とさない
+            logger.exception("Garbage notification check failed")
+        await asyncio.sleep(GARBAGE_NOTIFY_INTERVAL_SECONDS)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = None
+    if not database.DB_MOCK:
+        task = asyncio.create_task(_garbage_notify_loop())
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+app = FastAPI(title="MyRoom API", lifespan=lifespan)
 
 # Allow CORS for Streamlit (Mocking mainly, but good practice)
 app.add_middleware(
@@ -336,6 +371,12 @@ def get_sensors_status(
         "healthy": len(stale_devices) == 0,
         "devices": statuses,
     }
+
+
+@app.get("/api/garbage")
+def get_garbage_schedule(_: dict = Depends(get_current_user)):
+    """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
+    return garbage.build_payload()
 
 
 @app.get("/api/auth/me")

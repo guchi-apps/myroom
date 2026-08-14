@@ -61,6 +61,7 @@ import {
   isPredecessorDevice,
 } from "@/lib/device-inheritance";
 import {
+  isHiddenKeyVisible,
   isTargetVisible,
   isAirconRoomVisible,
   isAirconTargetVisible,
@@ -72,6 +73,11 @@ import {
   AIRCON_TARGET_VISIBILITY_KEY,
   VISIBLE_DEVICES_CHANGED_EVENT,
 } from "@/lib/visible-devices";
+import {
+  DASHBOARD_SECTION_LABELS,
+  LIFE_CARDS,
+} from "@/lib/dashboard-sections";
+import { ChartLineVisibilityToggle } from "@/components/chart-line-visibility-toggle";
 import { deviceDht11VisibilityKey } from "@/lib/chart-line-visibility";
 import {
   loadUiSettingsFromServer,
@@ -845,7 +851,7 @@ export function DeviceVisibilityPage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <LayoutGrid className="size-5 text-muted-foreground" />
-              <h1 className="text-lg font-bold">デバイス</h1>
+              <h1 className="text-lg font-bold">ダッシュボードの表示</h1>
             </div>
             <p className="text-sm text-muted-foreground">
               表示名・色・表示順・ダッシュボードへの表示を管理します
@@ -857,10 +863,15 @@ export function DeviceVisibilityPage() {
           <p className="py-10 text-center text-sm text-muted-foreground">読み込み中...</p>
         ) : (
           <section className="space-y-3">
-            <p className="px-0.5 text-xs text-muted-foreground">
-              <span className="sm:hidden">矢印ボタンで順番を変更できます</span>
-              <span className="hidden sm:inline">左のグリップをドラッグして順番を変更できます</span>
-            </p>
+            <div className="px-0.5">
+              <h2 className="text-sm font-semibold">
+                {DASHBOARD_SECTION_LABELS.sensors}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                <span className="sm:hidden">矢印ボタンで順番を変更できます</span>
+                <span className="hidden sm:inline">左のグリップをドラッグして順番を変更できます</span>
+              </p>
+            </div>
             {displayedTargets.length > 0 ? (
               displayedTargets.map((item, index) => {
                 const key = draftKeyForItem(item, primaryAirconId);
@@ -903,6 +914,31 @@ export function DeviceVisibilityPage() {
                 登録済みのデバイスがありません
               </p>
             )}
+          </section>
+        )}
+
+        {!loading && (
+          <section className="space-y-3">
+            <div className="px-0.5">
+              <h2 className="text-sm font-semibold">
+                {DASHBOARD_SECTION_LABELS.life}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                計測値ではないカード。ダッシュボードでは1列で表示されます
+              </p>
+            </div>
+            {LIFE_CARDS.map((card) => (
+              <ChartLineVisibilityToggle
+                key={card.key}
+                id={`life-${card.key}-visible`}
+                label={card.label}
+                description="オフにするとダッシュボードの「暮らし」から非表示になります"
+                visible={isHiddenKeyVisible(hiddenKeys, card.key)}
+                onChange={(visible) =>
+                  handleHiddenKeyVisibilityChange(card.key, visible)
+                }
+              />
+            ))}
           </section>
         )}
       </div>
