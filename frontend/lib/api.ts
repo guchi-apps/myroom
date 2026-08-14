@@ -21,6 +21,7 @@ import {
   type ChartViewRange,
   type UiSettings,
 } from "@/lib/types";
+import type { GarbageSchedule } from "@/lib/garbage";
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
 import { toApiDateTime, type AirconHistoryPoint } from "@/lib/history-loader";
 import { expandDeviceIdsForHistory } from "@/lib/device-inheritance";
@@ -317,6 +318,10 @@ export async function deleteSensorRecordsBulk(
 
 export async function fetchSensorsStatus(): Promise<SensorsStatusResponse> {
   return fetchJson<SensorsStatusResponse>("/api/sensors/status");
+}
+
+export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
+  return fetchJson<GarbageSchedule>("/api/garbage");
 }
 
 export interface LatestBatchResult {

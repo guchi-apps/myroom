@@ -17,12 +17,14 @@ import {
 import { LoginScreen } from "@/components/login-screen";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
+import { GarbageCard } from "@/components/garbage-card";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { Button } from "@/components/ui/button";
 import {
   fetchDashboardData,
   fetchDevices,
+  fetchGarbageSchedule,
   fetchOutdoorLocation,
   fetchAirconUnits,
   fetchSensorsStatus,
@@ -60,9 +62,15 @@ import {
   getVisibleSensorDeviceIds,
   isAirconRoomVisible,
   isAirconTargetVisible,
+  isHiddenKeyVisible,
   applyHiddenDevicesToLineVisibility,
   VISIBLE_DEVICES_CHANGED_EVENT,
 } from "@/lib/visible-devices";
+import {
+  DASHBOARD_SECTION_LABELS,
+  GARBAGE_CARD_KEY,
+} from "@/lib/dashboard-sections";
+import type { GarbageSchedule } from "@/lib/garbage";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
 import {
   loadUiSettingsFromServer,
@@ -390,6 +398,8 @@ export function MyRoomDashboard() {
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
+  const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
+  const [garbageError, setGarbageError] = useState(false);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
   const [displayOrder, setDisplayOrder] = useState<DisplayOrderItem[]>(() =>
@@ -448,6 +458,8 @@ export function MyRoomDashboard() {
     () => filterDisplayOrderByVisibility(displayOrder, hiddenDeviceKeys),
     [displayOrder, hiddenDeviceKeys]
   );
+
+  const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
 
   const {
     historyData,
@@ -599,9 +611,10 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus] = await Promise.all([
+        const [data, sensorsStatus, garbage] = await Promise.all([
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
+          fetchGarbageSchedule().catch(() => null),
         ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
@@ -615,6 +628,9 @@ export function MyRoomDashboard() {
           setSensorStatuses(sensorsStatus.devices);
           setStaleAlertDismissed(false);
         }
+        // 取得できなかったときは直前の内容を残したまま、エラー表示だけを出す
+        if (garbage) setGarbageSchedule(garbage);
+        setGarbageError(garbage == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -911,13 +927,13 @@ export function MyRoomDashboard() {
 
         <section>
           <div className="mb-3 flex items-center justify-between px-0.5">
-            <h2 className="section-title">センサー</h2>
+            <h2 className="section-title">{DASHBOARD_SECTION_LABELS.sensors}</h2>
             <Link
               href="/devices"
               className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <Settings className="size-4" strokeWidth={1.75} />
-              デバイス設定
+              表示設定
             </Link>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -1010,6 +1026,21 @@ export function MyRoomDashboard() {
             })}
           </div>
         </section>
+
+        {garbageCardVisible && (
+          <section>
+            <div className="mb-3 px-0.5">
+              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
+            </div>
+            <div className="flex flex-col gap-3">
+              <GarbageCard
+                schedule={garbageSchedule}
+                loading={!dashboardDataLoaded && garbageSchedule == null}
+                error={garbageError && garbageSchedule == null}
+              />
+            </div>
+          </section>
+        )}
 
         <section>
           <div className="mb-3 px-0.5">

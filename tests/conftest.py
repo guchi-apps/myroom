@@ -27,6 +27,12 @@ def data_dir(tmp_path, monkeypatch):
         "backend.ui_settings.CONFIG_PATH",
         tmp_path / "ui_settings.json",
     )
+    # リポジトリに含まれる data/garbage.json は利用者が自分の収集日に書き換えるため、
+    # テストは常に tmp_path 側の定義を見る。
+    monkeypatch.setattr(
+        "backend.garbage.CONFIG_PATH",
+        tmp_path / "garbage.json",
+    )
     return tmp_path
 
 
