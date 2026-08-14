@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * npm version の lifecycle 用: APP_CHANGELOG 先頭に新バージョンの枠を追加する。
+ * npm version の lifecycle 用: APP_CHANGELOG 先頭に新バージョンのエントリを追加する。
+ *
+ * リリース自動化ワークフロー（release-develop-to-main.yml）は、developへ取り込まれた
+ * 差分から利用者向けの更新履歴を生成し、環境変数 RELEASE_CHANGELOG で渡してくる。
+ * 設定されていればその内容を changes へ反映する。未設定・空のとき（ローカルで
+ * `npm version` を叩いた場合など）は、従来どおり手で埋めるための枠だけを作る。
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,7 +14,27 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const changelogPath = join(__dirname, "../lib/changelog.ts");
 
-export function insertChangelogEntry(content, version, date) {
+export const CHANGELOG_PLACEHOLDER = "（変更内容を追記してください）";
+
+/**
+ * RELEASE_CHANGELOG の文面を changes 配列へ整形する。
+ * 生成される文面は箇条書き・段落のどちらもありうるため、行単位に分解し、
+ * 箇条書き記号と番号を落として1行1項目にそろえる。
+ */
+export function parseReleaseChangelog(raw) {
+  return (raw ?? "")
+    .split("\n")
+    .map((line) => line.trim().replace(/^(?:[-*・]|\d+[.)])\s*/, "").trim())
+    .filter((line) => line !== "");
+}
+
+// changes は生成された文面をそのまま埋め込むため、TypeScriptの文字列リテラルを
+// 壊さないようにエスケープする。
+function escapeForTs(value) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function insertChangelogEntry(content, version, date, changes = []) {
   if (content.includes(`version: "${version}"`)) {
     return { content, inserted: false };
   }
@@ -20,13 +45,14 @@ export function insertChangelogEntry(content, version, date) {
     throw new Error("APP_CHANGELOG marker not found in changelog.ts");
   }
 
+  const items = changes.length > 0 ? changes : [CHANGELOG_PLACEHOLDER];
   const insertAt = index + marker.length;
   const entry = `
   {
     version: "${version}",
     date: "${date}",
     changes: [
-      "（変更内容を追記してください）",
+${items.map((item) => `      "${escapeForTs(item)}",`).join("\n")}
     ],
   },`;
 
@@ -48,11 +74,13 @@ function main() {
     throw new Error("npm_package_version is not set (run via npm version)");
   }
 
+  const changes = parseReleaseChangelog(process.env.RELEASE_CHANGELOG);
   const original = readFileSync(changelogPath, "utf8");
   const { content, inserted } = insertChangelogEntry(
     original,
     version,
-    todayJst()
+    todayJst(),
+    changes
   );
 
   if (!inserted) {
@@ -61,7 +89,13 @@ function main() {
   }
 
   writeFileSync(changelogPath, content, "utf8");
-  console.log(`Added changelog stub for v${version}`);
+  if (changes.length > 0) {
+    console.log(
+      `Added changelog entry for v${version} (${changes.length} change(s))`
+    );
+  } else {
+    console.log(`Added changelog stub for v${version}`);
+  }
 }
 
 const isMain =
