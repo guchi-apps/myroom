@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.5.0",
+    date: "2026-08-15",
+    changes: [
+      "ゴミの収集日をダッシュボードで確認できるようになりました。収集前日の夜には通知でお知らせします。あわせて、ダッシュボードに表示する項目を設定画面から選べるようになりました。",
+    ],
+  },
+  {
     version: "3.4.1",
     date: "2026-08-15",
     changes: [
