@@ -4,6 +4,10 @@ import os
 os.environ["DB_MOCK"] = "true"
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("ALLOWED_GOOGLE_EMAILS", "test@example.com")
+# 開発機の .env に Notion の値が入っていても、テストから本物の Notion を叩かない。
+# python-dotenv は既にあるキーを上書きしないため、空文字を先に置いておけばよい。
+os.environ["GARBAGE_NOTION_TOKEN"] = ""
+os.environ["GARBAGE_NOTION_DATA_SOURCE_ID"] = ""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,6 +36,10 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.garbage.CONFIG_PATH",
         tmp_path / "garbage.json",
+    )
+    monkeypatch.setattr(
+        "backend.garbage_notion.STATE_PATH",
+        tmp_path / "garbage_notion_state.json",
     )
     return tmp_path
 
