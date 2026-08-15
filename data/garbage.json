@@ -1,0 +1,54 @@
+{
+  "_readme": [
+    "ゴミ収集日の定義。手で編集する前提のファイルで、リポジトリに含まれる（他の data/*.json は .gitignore 済みの実行時ファイル）。",
+    "rules の type は weekly（毎週）と monthly（第N曜日）の2種類。weekday は mon/tue/wed/thu/fri/sat/sun または 月〜日 で書ける。",
+    "monthly の weeks は 1〜5 と -1（最終週）が使える。例: 第2・第4水曜 -> {\"type\": \"monthly\", \"weekday\": \"wed\", \"weeks\": [2, 4]}",
+    "年末年始などの変則日程は exceptions に書く。cancel: true でその日の収集をすべて中止、cancel: [\"id\"] で品目を指定して中止、add: [\"id\"] で臨時収集を追加する。",
+    "notion は収集日を Notion のデータベースへ書き出す設定。実際に書き出すかは環境変数 GARBAGE_NOTION_TOKEN / GARBAGE_NOTION_DATA_SOURCE_ID の有無で決まる。properties は Notion 側でプロパティ名を変えている場合だけ書き換える。"
+  ],
+  "area": "茨木市（お住まいの地区の収集日に合わせて編集してください）",
+  "notify_hour": 20,
+  "categories": [
+    {
+      "id": "burnable",
+      "name": "普通ごみ",
+      "color": "#e67e22",
+      "note": "生ごみ・紙くずなど",
+      "rules": [
+        { "type": "weekly", "weekdays": ["tue", "fri"] }
+      ]
+    },
+    {
+      "id": "recyclable",
+      "name": "資源ごみ",
+      "color": "#1abc9c",
+      "note": "カン・ビン・ペットボトル",
+      "rules": [
+        { "type": "monthly", "weekday": "wed", "weeks": [2] }
+      ]
+    }
+  ],
+  "notion": {
+    "enabled": true,
+    "window_days": 60,
+    "category_value": "ゴミの日",
+    "properties": {
+      "title": "タイトル",
+      "date": "日付",
+      "category": "種類",
+      "memo": "メモ"
+    }
+  },
+  "exceptions": [
+    {
+      "date": "2026-12-31",
+      "cancel": true,
+      "note": "年末年始のため収集なし"
+    },
+    {
+      "date": "2027-01-01",
+      "cancel": true,
+      "note": "年末年始のため収集なし"
+    }
+  ]
+}

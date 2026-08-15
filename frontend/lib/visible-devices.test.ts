@@ -24,6 +24,7 @@ import { deviceDht11VisibilityKey } from "@/lib/chart-line-visibility";
 import { buildDefaultChartLineVisibility } from "@/lib/chart-line-visibility";
 import { outdoorMetricVisibilityKey } from "@/lib/chart-line-visibility";
 import { AIRCON_CHART_DEVICE_ID, getSensorDeviceIds } from "@/lib/types";
+import { GARBAGE_CARD_KEY } from "@/lib/dashboard-sections";
 
 describe("visible-devices", () => {
   it("includes real sensor device id 3", () => {
@@ -47,6 +48,7 @@ describe("visible-devices", () => {
         "device:9001",
         "airconTarget",
         "outdoor",
+        GARBAGE_CARD_KEY,
       ].sort()
     );
     expect(isTargetVisible(new Set(), { type: "device", deviceId: 2 })).toBe(true);
@@ -154,5 +156,20 @@ describe("visible-devices", () => {
     ).toBe(true);
 
     vi.unstubAllGlobals();
+  });
+
+  it("暮らしセクションのカードも表示・非表示の対象キーに含む", () => {
+    expect(buildAllDashboardTargetKeys([1, 2]).has(GARBAGE_CARD_KEY)).toBe(true);
+  });
+
+  it("暮らしセクションのカードの非表示設定は保存から復元される", () => {
+    const hidden = normalizeHiddenDeviceKeys([GARBAGE_CARD_KEY], [1, 2]);
+    expect(isHiddenKeyVisible(hidden, GARBAGE_CARD_KEY)).toBe(false);
+    expect(
+      isHiddenKeyVisible(
+        setHiddenKeyVisible(hidden, GARBAGE_CARD_KEY, true),
+        GARBAGE_CARD_KEY
+      )
+    ).toBe(true);
   });
 });
