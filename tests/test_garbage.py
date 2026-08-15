@@ -134,6 +134,64 @@ def test_invalid_rules_are_ignored(data_dir):
     assert categories_on(config, "2026-08-11") == []
 
 
+def test_collection_days_lists_every_collection_in_the_range(config):
+    days = garbage.collection_days(
+        config, datetime.date(2026, 8, 11), datetime.date(2026, 8, 25)
+    )
+
+    # 8/14（金）と 8/18（火）は例外で中止、8/16（日）は臨時収集
+    assert [day["date"].isoformat() for day in days] == [
+        "2026-08-11",
+        "2026-08-12",
+        "2026-08-16",
+        "2026-08-21",
+        "2026-08-25",
+    ]
+    assert [category["name"] for category in days[1]["categories"]] == ["資源ごみ"]
+    assert days[2]["notes"] == ["振替収集"]
+    assert days[0]["weekday"] == "火"
+
+
+def test_collection_days_includes_both_ends_of_the_range(config):
+    days = garbage.collection_days(
+        config, datetime.date(2026, 8, 11), datetime.date(2026, 8, 12)
+    )
+    assert [day["date"].isoformat() for day in days] == ["2026-08-11", "2026-08-12"]
+
+
+def test_notion_section_falls_back_to_defaults(data_dir):
+    write_config(data_dir, {**SAMPLE_CONFIG, "notion": {"window_days": 0, "properties": {"date": "  "}}})
+    notion = garbage.load_config()["notion"]
+
+    assert notion["enabled"] is True
+    assert notion["window_days"] == garbage.DEFAULT_NOTION_WINDOW_DAYS
+    assert notion["category_value"] == garbage.DEFAULT_NOTION_CATEGORY_VALUE
+    assert notion["properties"] == garbage.DEFAULT_NOTION_PROPERTIES
+
+
+def test_notion_section_can_be_overridden(data_dir):
+    write_config(
+        data_dir,
+        {
+            **SAMPLE_CONFIG,
+            "notion": {
+                "enabled": False,
+                "window_days": 30,
+                "category_value": "ごみ収集",
+                "properties": {"date": "Date"},
+            },
+        },
+    )
+    notion = garbage.load_config()["notion"]
+
+    assert notion["enabled"] is False
+    assert notion["window_days"] == 30
+    assert notion["category_value"] == "ごみ収集"
+    assert notion["properties"]["date"] == "Date"
+    # 指定しなかった項目は既定のまま
+    assert notion["properties"]["title"] == "タイトル"
+
+
 def test_api_returns_schedule(authed_client, data_dir):
     write_config(data_dir)
     response = authed_client.get("/api/garbage")

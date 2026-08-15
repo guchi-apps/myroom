@@ -364,6 +364,40 @@ python3 migrate_db.py   # aircon テーブルを作成
 - 同じ収集日に二重通知しないよう、送信済みの日付を `data/garbage_notify_state.json`（gitignore）に残します
 - カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
 
+#### Notion への書き出し（dayspan のカレンダー連携）
+
+収集日を Notion のデータベースへ書き出し、Notion を読むアプリ（dayspan など）のカレンダーから
+見えるようにします。**収集日の正はあくまで `data/garbage.json`** で、Notion 側を手で書き換えても
+次の同期で戻ります。
+
+```json
+"notion": {
+  "enabled": true,
+  "window_days": 60,
+  "category_value": "ゴミの日",
+  "properties": { "title": "タイトル", "date": "日付", "category": "種類", "memo": "メモ" }
+}
+```
+
+- 実装は `backend/garbage_notion.py`（同期）と `backend/notion_api.py`（Notion API の薄いラッパ）。
+  バックエンドが1時間ごとに呼び、1日1回だけ実行します。手動で試すときは
+  `python -m backend.garbage_notion --dry-run`（書き込まずに差分の件数だけ表示）
+- 環境変数 `GARBAGE_NOTION_TOKEN`（Notion のインテグレーショントークン）と
+  `GARBAGE_NOTION_DATA_SOURCE_ID` の両方が設定されているときだけ動きます。未設定なら何もしません
+- **持つのは `database_id` ではなく `data_source_id` です。** Notion API のバージョン `2025-09-03` 以降、
+  プロパティ定義とクエリの対象はデータベースではなくデータソースに変わり、`database_id` では読み書きできません
+- ページの粒度は「収集日 × 品目」で1件。今日から `window_days` 日先までを毎回まるごと計算し直し、
+  Notion 側の同じ期間を引いて差分（作成・更新・アーカイブ）を当てます。ページIDを手元に持たないため、
+  状態ファイルを失っても二重登録になりません。過ぎた収集日のページは検索対象に入らないので消えません
+- **select プロパティ「種類」に `category_value` を書き込み、これを目印に myroom が作ったページを見分けます。**
+  この目印が無いと人が手で作ったページと区別できず、`exceptions` で中止になった日のページを片付けられません。
+  そのため「種類」は必須で、見つからない場合は1件も書かずに中止します
+- プロパティ名は Notion 側で自由に付けられるため、`properties` の名前で当たらない場合は
+  「その型のプロパティが1つしか無ければそれ」という判定に落とします。複数あって絞れないときは中止します
+- 同期のきっかけは「日付が変わったこと」に加えて「`data/garbage.json` の内容が変わったこと」。
+  収集ルールを直したあと翌日まで反映されないのを避けるため、設定のハッシュを
+  `data/garbage_notion_state.json`（gitignore）に残して比べています
+
 ### その他
 
 - **最近の記録**: 直近7日分から表示し、「もっと見る」で追加読み込み
@@ -459,6 +493,8 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 |-------------|------|
 | `allowed-google-emails` | ログインを許可する Google アカウントのメールアドレス（カンマ区切り、`ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` に同期） |
 | `sensor-webhook-url` | センサー異常・復旧通知用 Signaly Webhook URL（`SENSOR_WEBHOOK_URL` として同期） |
+| `garbage-notion-token` | ゴミの日を書き出す Notion インテグレーションのトークン（`GARBAGE_NOTION_TOKEN` として同期） |
+| `garbage-notion-data-source-id` | 書き出し先の Notion データソースID（`GARBAGE_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
@@ -540,6 +576,8 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 | `SUPABASE_URL` | Supabase | `project-url` |
 | `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
+| `GARBAGE_NOTION_TOKEN` | MyRoom | `garbage-notion-token` |
+| `GARBAGE_NOTION_DATA_SOURCE_ID` | MyRoom | `garbage-notion-data-source-id` |
 | `DB_NAME` | MyRoom | `db-name` |
 | `DB_USER` | DB | `db-user` |
 | `DB_PASSWORD` | DB | `db-password` |
@@ -553,7 +591,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / DB 接続情報をサーバー `.env` に同期
+4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / DB 接続情報をサーバー `.env` に同期
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成

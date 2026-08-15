@@ -22,6 +22,18 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "data" / "garbage.json"
 DEFAULT_NOTIFY_HOUR = 20
 DEFAULT_COLOR = "#95a5a6"
 
+#: Notion へ書き出す期間（今日からの日数）
+DEFAULT_NOTION_WINDOW_DAYS = 60
+#: 「種類」プロパティへ入れる値。myroom が書いたページの目印になる
+DEFAULT_NOTION_CATEGORY_VALUE = "ゴミの日"
+#: 書き込み先のプロパティ名。Notion 側で名前を変えている場合だけ設定で上書きする
+DEFAULT_NOTION_PROPERTIES = {
+    "title": "タイトル",
+    "date": "日付",
+    "category": "種類",
+    "memo": "メモ",
+}
+
 #: 今日・明日より先の収集予定として返す最大件数
 UPCOMING_LIMIT = 3
 #: 予定を探す範囲（第N曜日ルールでも2か月あれば必ず1回は見つかる）
@@ -159,6 +171,37 @@ def _normalize_exception(raw: Any, category_ids: List[str]) -> Optional[Dict[str
     }
 
 
+def _normalize_notion(raw: Any) -> Dict[str, Any]:
+    """Notion への書き出し設定。未指定・壊れた値は既定へ落とす。"""
+    source = raw if isinstance(raw, dict) else {}
+
+    window_days = source.get("window_days", DEFAULT_NOTION_WINDOW_DAYS)
+    if (
+        isinstance(window_days, bool)
+        or not isinstance(window_days, int)
+        or not 1 <= window_days <= 365
+    ):
+        window_days = DEFAULT_NOTION_WINDOW_DAYS
+
+    properties = dict(DEFAULT_NOTION_PROPERTIES)
+    raw_properties = source.get("properties")
+    if isinstance(raw_properties, dict):
+        for field in properties:
+            name = raw_properties.get(field)
+            if isinstance(name, str) and name.strip():
+                properties[field] = name.strip()
+
+    return {
+        # 既定は有効。実際に書き出すかどうかは環境変数（トークン・データソースID）で決まる
+        "enabled": source.get("enabled", True) is not False,
+        "window_days": window_days,
+        "category_value": (
+            str(source.get("category_value") or "").strip() or DEFAULT_NOTION_CATEGORY_VALUE
+        ),
+        "properties": properties,
+    }
+
+
 def _empty_config() -> Dict[str, Any]:
     return {
         "configured": False,
@@ -166,6 +209,7 @@ def _empty_config() -> Dict[str, Any]:
         "notify_hour": DEFAULT_NOTIFY_HOUR,
         "categories": [],
         "exceptions": [],
+        "notion": _normalize_notion(None),
     }
 
 
@@ -202,6 +246,7 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
         "notify_hour": notify_hour,
         "categories": categories,
         "exceptions": exceptions,
+        "notion": _normalize_notion(raw.get("notion")),
     }
 
 
@@ -292,6 +337,37 @@ def build_day(config: Dict[str, Any], day: datetime.date, today: datetime.date) 
             exception["note"] for exception in _exceptions_on(config, day) if exception["note"]
         ],
     }
+
+
+def collection_days(
+    config: Dict[str, Any],
+    start: datetime.date,
+    end: datetime.date,
+) -> List[Dict[str, Any]]:
+    """start〜end（両端を含む）のうち、収集がある日を古い順に返す。
+
+    build_day() は「今日から何日後か」を出すために基準日を要る。期間をまとめて書き出す
+    用途では基準日が意味を持たないため、日付・曜日・品目・注記だけを返す別の入口にする。
+    """
+    days: List[Dict[str, Any]] = []
+    day = start
+    while day <= end:
+        categories = categories_on(config, day)
+        if categories:
+            days.append(
+                {
+                    "date": day,
+                    "weekday": weekday_label(day),
+                    "categories": categories,
+                    "notes": [
+                        exception["note"]
+                        for exception in _exceptions_on(config, day)
+                        if exception["note"]
+                    ],
+                }
+            )
+        day += datetime.timedelta(days=1)
+    return days
 
 
 def find_upcoming(

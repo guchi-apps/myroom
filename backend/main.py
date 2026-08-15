@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, garbage, garbage_notify, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from pydantic import BaseModel, model_validator
 
@@ -42,15 +42,31 @@ async def _garbage_notify_loop() -> None:
         await asyncio.sleep(GARBAGE_NOTIFY_INTERVAL_SECONDS)
 
 
+#: Notion への収集日の書き出し間隔。garbage_notion 側が「今日はもう同期したか」
+#: 「data/garbage.json が変わっていないか」を見るため、ここは粗くてよい。
+GARBAGE_NOTION_SYNC_INTERVAL_SECONDS = 3600
+
+
+async def _garbage_notion_sync_loop() -> None:
+    """収集日を Notion へ書き出す。通知と同じくバックエンド内で回す。"""
+    while True:
+        try:
+            await asyncio.to_thread(garbage_notion.run_sync)
+        except Exception:  # Notion 側の障害で API を落とさない
+            logger.exception("Garbage Notion sync failed")
+        await asyncio.sleep(GARBAGE_NOTION_SYNC_INTERVAL_SECONDS)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
-    task = None
+    tasks = []
     if not database.DB_MOCK:
-        task = asyncio.create_task(_garbage_notify_loop())
+        tasks.append(asyncio.create_task(_garbage_notify_loop()))
+        tasks.append(asyncio.create_task(_garbage_notion_sync_loop()))
     try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
