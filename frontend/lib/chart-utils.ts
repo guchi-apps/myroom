@@ -15,7 +15,7 @@ import {
   getDeviceDht11TemperatureValue,
   getDeviceTargetMetricValue,
   getDeviceTargetMetricRawValue,
-  isAirconAutoTarget,
+  getAirconAutoTargetOffset,
   isAirconPowerOff,
   AIRCON_TARGET_CHART_KEY,
 } from "@/lib/types";
@@ -354,7 +354,7 @@ export interface AirconTargetChartPoint {
 }
 
 export interface AirconTargetChartSegment {
-  /** true のとき設定温度 0（自動）で、室温と同じ値を点線表示する */
+  /** true のとき自動運転で、室温にシフト量を足した値を点線表示する */
   auto: boolean;
   points: AirconTargetChartPoint[];
 }
@@ -370,10 +370,12 @@ function resolveAirconTargetChartPoint(
 ): { value: number; auto: boolean } | null {
   const raw = getDeviceTargetMetricRawValue(point, deviceId);
   if (raw == null) return null;
-  if (isAirconAutoTarget(raw)) {
+  const autoOffset = getAirconAutoTargetOffset(raw);
+  if (autoOffset != null) {
+    // 自動運転の設定温度は室温からのシフト量なので、室温に足した位置へ引く
     const roomTemp = getDeviceMetricValue(point, deviceId, "temperature");
     if (roomTemp == null) return null;
-    return { value: roomTemp, auto: true };
+    return { value: roomTemp + autoOffset, auto: true };
   }
   const fixed = getDeviceTargetMetricValue(point, deviceId);
   if (fixed == null) return null;
