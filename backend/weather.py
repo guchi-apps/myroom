@@ -45,6 +45,9 @@ def _fetch_outdoor_weather(lat: float, lon: float) -> Optional[Dict[str, Any]]:
                 "temperature": current.get("temperature_2m"),
                 "humidity": current.get("relative_humidity_2m"),
                 "pressure": current.get("surface_pressure"),
+                # 観測時刻。`timezone=Asia/Tokyo` を渡しているのでJSTだがオフセットは付かない
+                # （例: "2026-08-19T21:00"）。オフセットの付与は受け取り側で行う。
+                "observed_at": current.get("time"),
             }
         print(f"Weather API error: {response.status_code} - {response.text}")
     except Exception as e:
