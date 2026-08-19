@@ -348,9 +348,36 @@ export function isAirconPowerOff(power: unknown): boolean {
   return typeof power === "string" && power.toUpperCase() === "OFF";
 }
 
-/** AirCloud Home が eco / 自動運転時に返す設定温度 0（0℃ ではない） */
+/**
+ * AirCloud Home が eco / 自動運転時に返す設定温度は、温度そのものではなく
+ * 室温からのシフト量（-3.0〜+3.0 程度、0 はシフトなし）。
+ * 固定の設定温度は 16〜32℃ の範囲にしかならないため、この閾値で切り分ける。
+ */
+export const AIRCON_AUTO_TARGET_OFFSET_LIMIT = 5;
+
+/** 設定温度がシフト量（自動運転）かどうか。0℃ の設定温度ではない */
 export function isAirconAutoTarget(value: unknown): boolean {
-  return typeof value === "number" && value === 0;
+  return (
+    typeof value === "number" &&
+    !Number.isNaN(value) &&
+    Math.abs(value) <= AIRCON_AUTO_TARGET_OFFSET_LIMIT
+  );
+}
+
+/** 自動運転時の室温からのシフト量。自動運転でなければ undefined */
+export function getAirconAutoTargetOffset(value: unknown): number | undefined {
+  return isAirconAutoTarget(value) ? (value as number) : undefined;
+}
+
+/** シフト量の表示（符号付き）。シフトなしのときは空文字 */
+export function formatAirconAutoTargetOffset(
+  offset: number,
+  options?: { withUnit?: boolean }
+): string {
+  if (offset === 0) return "";
+  const sign = offset > 0 ? "+" : "-";
+  const formatted = `${sign}${Math.abs(offset).toFixed(1)}`;
+  return options?.withUnit === false ? formatted : `${formatted}°C`;
 }
 
 export function getDeviceTargetMetricRawValue(
@@ -373,9 +400,37 @@ export function formatAirconTargetTemperature(
   options?: { withUnit?: boolean }
 ): string {
   if (value == null) return "--";
-  if (isAirconAutoTarget(value)) return "自動";
+  const offset = getAirconAutoTargetOffset(value);
+  if (offset != null) {
+    const offsetLabel = formatAirconAutoTargetOffset(offset, options);
+    return offsetLabel
+      ? `${AIRCON_MODE_LABELS.AUTO} ${offsetLabel}`
+      : AIRCON_MODE_LABELS.AUTO;
+  }
   const formatted = value.toFixed(1);
   return options?.withUnit === false ? formatted : `${formatted}°C`;
+}
+
+/**
+ * カードに出す「運転モード + 設定温度」。
+ * 自動運転はモード名と設定温度の表示がどちらも「自動」になるため、1つにまとめる。
+ */
+export function formatAirconModeTarget(
+  data: Pick<AirconData, "mode" | "power" | "target_temperature">
+): string {
+  const powerOff = isAirconPowerOff(data.power);
+  const modeLabel = powerOff ? "停止" : formatAirconMode(data.mode);
+  if (powerOff || data.target_temperature == null) return modeLabel;
+
+  const offset = getAirconAutoTargetOffset(data.target_temperature);
+  if (offset != null) {
+    const autoLabel = AIRCON_MODE_LABELS.AUTO;
+    const base = modeLabel === autoLabel ? autoLabel : `${modeLabel} ${autoLabel}`;
+    const offsetLabel = formatAirconAutoTargetOffset(offset);
+    return offsetLabel ? `${base} ${offsetLabel}` : base;
+  }
+
+  return `${modeLabel} ${formatAirconTargetTemperature(data.target_temperature)}`;
 }
 
 /** Recharts 用の設定温度系列キー */

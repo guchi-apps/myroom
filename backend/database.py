@@ -159,11 +159,14 @@ def generate_mock_aircon_history_for_range(
     end_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
     t = end_naive
     interval = datetime.timedelta(minutes=10)
-    target = 26.0
+    fixed_target = 26.0
 
     while t >= start_naive:
         if t.hour in (8, 9, 18, 19):
-            target = 24.0 if t.hour < 12 else 27.0
+            fixed_target = 24.0 if t.hour < 12 else 27.0
+        # 昼過ぎは自動運転（設定温度は室温からのシフト量 +1.0）にして、
+        # 固定設定温度と自動運転が混ざった状態をモックでも再現する
+        target = 1.0 if 13 <= t.hour < 17 else fixed_target
         power = "OFF" if t.hour < 6 or t.hour >= 23 else "ON"
         room = (
             22

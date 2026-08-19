@@ -87,10 +87,8 @@ import { useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
-  formatAirconMode,
-  formatAirconTargetTemperature,
+  formatAirconModeTarget,
   getSensorDeviceIds,
-  isAirconPowerOff,
   formatOutdoorApiLabel,
   pickOutdoorLatestSource,
   PRIMARY_SENSOR_DEVICE_ID,
@@ -238,12 +236,7 @@ function buildAirconMetrics(
     });
   }
   if (showTarget && (data.target_temperature != null || data.mode || data.power)) {
-    const powerOff = isAirconPowerOff(data.power);
-    const modeLabel = powerOff ? "停止" : formatAirconMode(data.mode);
-    const value =
-      !powerOff && data.target_temperature != null
-        ? `${modeLabel} ${formatAirconTargetTemperature(data.target_temperature)}`
-        : modeLabel;
+    const value = formatAirconModeTarget(data);
     metrics.push({
       key: "mode_target",
       icon: <Snowflake className="size-5" strokeWidth={1.75} style={{ color: accentColor }} />,

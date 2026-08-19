@@ -124,6 +124,28 @@ def test_aircon_history_year_returns_daily_aggregation(authed_client):
     assert any("target_temperature" in row for row in data)
 
 
+def test_aircon_history_year_excludes_auto_shift_from_target_average(authed_client):
+    """自動運転の設定温度は室温からのシフト量なので、年グラフの平均から外す。"""
+    response = authed_client.get("/api/aircon/history?range=year&ac_id=1")
+    assert response.status_code == 200
+    data = response.json()
+    targets = [row["target_temperature"] for row in data if "target_temperature" in row]
+    assert targets
+    # モックの固定設定温度は 24.0〜27.0。シフト量（1.0）が平均に混ざると 24.0 を割る
+    assert all(24.0 <= target <= 27.0 for target in targets)
+
+
+def test_is_aircon_auto_target_splits_shift_from_fixed_temperature():
+    from backend.main import _is_aircon_auto_target
+
+    assert _is_aircon_auto_target(0) is True
+    assert _is_aircon_auto_target(1.0) is True
+    assert _is_aircon_auto_target(-3.0) is True
+    assert _is_aircon_auto_target(16.0) is False
+    assert _is_aircon_auto_target(26.0) is False
+    assert _is_aircon_auto_target(None) is False
+
+
 def test_daily_stats_returns_list(authed_client):
     response = authed_client.get("/api/daily-stats?device=1")
     assert response.status_code == 200
