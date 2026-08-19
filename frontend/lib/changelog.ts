@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.7.0",
+    date: "2026-08-20",
+    changes: [
+      "エアコンが自動運転（eco含む）のとき、設定温度の表示が室温からのシフト量（例:「自動 +1.0°C」）で見られるようになりました。あわせて温度グラフでも、自動運転中の設定温度ラインが室温にシフト量を足した実際の位置に表示されるよう修正し、より実態に近いグラフになりました。また、年間グラフの設定温度の平均値に自動運転のシフト量が混ざって不正確になっていた不具合も修正しました。",
+    ],
+  },
+  {
     version: "3.6.0",
     date: "2026-08-19",
     changes: [
