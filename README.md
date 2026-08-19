@@ -176,7 +176,7 @@ npm run build
 
 | 対象 | 内容 |
 |------|------|
-| `tests/test_api.py` | API エンドポイント（health、latest、history、sensor、devices、屋外地点） |
+| `tests/test_api.py` | API エンドポイント（health、latest、history、sensor、devices、屋外地点、サーバー間参照用の内部API） |
 | `tests/test_config.py` | デバイス名・屋外地点の設定ファイル読み書き |
 | `frontend/lib/chart-utils.test.ts` | グラフ計算・快適度・履歴マージのユニットテスト |
 
@@ -442,6 +442,34 @@ python3 migrate_db.py   # aircon テーブルを作成
 | GET | `/api/outdoor-location/search?q=大阪` | 地名検索（要認証） |
 | GET | `/api/sensors/status` | センサー鮮度ステータス（要認証） |
 | GET | `/api/garbage` | ゴミの日（今日・明日・次の収集、要認証） |
+| GET | `/api/internal/room-state` | 部屋の状態のスナップショット（**サーバー間専用**・下記） |
+
+### サーバー間参照用の内部API
+
+`GET /api/internal/room-state` は、同じ VPS 上で動く [AIDE](https://github.com/guchi-apps/aide) の
+MCP ツール `aide_room_status` 向けの**読み取り専用**の口です。ログインセッションでは通らず、
+環境変数 `INTERNAL_API_KEY` と一致する `Authorization: Bearer <トークン>` だけを受け付けます。
+
+| 状況 | ステータス |
+|------|-----------|
+| トークンが一致 | 200 |
+| トークンが無い・一致しない | 401 |
+| `INTERNAL_API_KEY` が未設定 | 503 |
+
+```bash
+curl -s -H "Authorization: Bearer <トークン>" http://127.0.0.1:8000/api/internal/room-state
+```
+
+- 各センサーの最新値・鮮度判定（`SENSOR_STALE_MINUTES`）・屋外の現在値・エアコンの最新状態を
+  **1回にまとめて**返します。呼ぶ側に鮮度のしきい値判定を再実装させないことが目的です
+- 履歴・日別統計・記録の一覧は含みません
+- 画面向けAPIは snake_case ですが、**このAPIだけ camelCase** です（AIDE 側がその前提で実装済み）
+- 日時は日本時間のISO8601（オフセット付き）。**本番VPSのタイムゾーンはUTC**のため、オフセットを
+  省くと受け側で9時間ずれます
+- トークンは AIDE 側の `AIDE_MYROOM_TOKEN` と**同じ値**にします。片方だけ変えると 401 で静かに
+  連携が止まります
+- **書き込み・設定変更の口をここに足さないでください。** ユーザーJWTを介さない経路のため、
+  増やすほど「ログインしていない誰かが叩ける操作」が増えます
 
 ## 設定ファイル
 
@@ -495,6 +523,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `sensor-webhook-url` | センサー異常・復旧通知用 Signaly Webhook URL（`SENSOR_WEBHOOK_URL` として同期） |
 | `garbage-notion-token` | ゴミの日を書き出す Notion インテグレーションのトークン（`GARBAGE_NOTION_TOKEN` として同期） |
 | `garbage-notion-data-source-id` | 書き出し先の Notion データソースID（`GARBAGE_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
+| `internal-api-key` | サーバー間参照用APIのトークン（`INTERNAL_API_KEY` として同期）。AIDE 側の `op://apps/aide/myroom-token` と**同じ値**にする |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
@@ -578,6 +607,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 | `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
 | `GARBAGE_NOTION_TOKEN` | MyRoom | `garbage-notion-token` |
 | `GARBAGE_NOTION_DATA_SOURCE_ID` | MyRoom | `garbage-notion-data-source-id` |
+| `INTERNAL_API_KEY` | MyRoom | `internal-api-key` |
 | `DB_NAME` | MyRoom | `db-name` |
 | `DB_USER` | DB | `db-user` |
 | `DB_PASSWORD` | DB | `db-password` |
@@ -591,7 +621,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. 1Password から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / DB 接続情報をサーバー `.env` に同期
+4. GitHub の secret から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成

@@ -40,20 +40,25 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 
 `@claude` コメントを起点に、計画提示〜実装〜develop向けPR作成までを GitHub Actions 上で無人実行する。
 ワークフローの実体は `guchi-apps/issue-deck` にあり、このリポジトリの `.github/workflows/` には
-`uses:` で参照する薄い caller だけを置いている（`@workflows/v10`）。
+`uses:` で参照する薄い caller だけを置いている（タグは全 caller で揃える。現在は `@workflows/v23`）。
 
 | ファイル | 役割 |
 |---|---|
 | `claude-issue-dispatch.yml` | `@claude` 起点の無人実行（計画提示・実装・PR作成・質問応答） |
 | `issue-labels.yml` | Issueの進捗（Project Status）の状態遷移 |
+| `claude-conflict-resolve.yml` | develop向けPRが `develop` とコンフリクトした際の無人解消 |
 
 ### 無人実行で使える環境
 
-**`runtime-setup: minimal` を指定している。** 準備ステップは全てリポジトリルートで動くが、
+**`claude-issue-dispatch.yml` は `runtime-setup: minimal` を指定している。** 準備ステップは全てリポジトリルートで動くが、
 ルートに実質の依存が無いため意味が無い。**依存のインストールは実装エージェント自身が行う。**
 
 - フロントエンドを触るなら `cd frontend && npm ci`
 - バックエンドを触るなら `pip install -r requirements-dev.txt`
+
+`claude-conflict-resolve.yml` だけは `runtime-setup: node` + `install-dependencies: false` にしている
+（CI と同じ Node 20 のセットアップだけ行い、意味の無いルートでの `npm ci` は行わない）。
+こちらも依存のインストールはエージェント自身が `cd frontend && npm ci` から始める。
 
 **Python のバージョンは固定されない。** CI は `setup-python` で 3.11 に固定しているが、
 共有ワークフローに Python のプリセットは無く、実装ステップは**ランナー標準の Python** を使う。
