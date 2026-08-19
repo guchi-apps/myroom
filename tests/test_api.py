@@ -351,3 +351,86 @@ def test_ui_settings_get_and_update(authed_client):
     fetched = authed_client.get("/api/ui-settings").json()
     assert fetched["display_order"][0] == "device:2"
     assert "device:2" in fetched["hidden_devices"]
+
+
+# --- サーバー間参照用の内部API（AIDE 連携 / #161） ---
+
+
+def test_internal_room_state_requires_configured_key(client, no_internal_api_key):
+    """INTERNAL_API_KEY が未設定なら 503。401（値が違う）と切り分けられること。"""
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": "Bearer anything"},
+    )
+    assert response.status_code == 503
+
+
+def test_internal_room_state_rejects_missing_token(client, internal_api_key):
+    response = client.get("/api/internal/room-state")
+    assert response.status_code == 401
+
+
+def test_internal_room_state_rejects_wrong_token(client, internal_api_key):
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert response.status_code == 401
+
+
+def test_internal_room_state_rejects_non_bearer_scheme(client, internal_api_key):
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": f"Token {internal_api_key}"},
+    )
+    assert response.status_code == 401
+
+
+def test_internal_room_state_does_not_accept_login_session(authed_client, internal_api_key):
+    """ログインセッションでは通さない（サーバー間専用）。"""
+    response = authed_client.get("/api/internal/room-state")
+    assert response.status_code == 401
+
+
+def test_internal_room_state_returns_snapshot(client, internal_api_key):
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": f"Bearer {internal_api_key}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # 日時はオフセット付き。VPS が UTC のため、付いていないと受け側で9時間ずれる。
+    assert data["fetchedAt"].endswith("+09:00")
+    assert data["staleThresholdMinutes"] == 15
+
+    sensor = data["sensors"][0]
+    assert sensor["deviceId"] == 1
+    assert sensor["name"]
+    assert sensor["measuredAt"].endswith("+09:00")
+    assert sensor["stale"] is False
+    assert isinstance(sensor["ageMinutes"], float)
+    assert isinstance(sensor["temperature"], float)
+    # 履歴・日別統計は載せない
+    assert "history" not in sensor
+
+    assert data["outdoor"]["temperature"] == 25.0
+    assert data["outdoor"]["observedAt"] == "2026-08-19T21:00:00+09:00"
+
+    aircon = data["aircons"][0]
+    assert aircon["acId"] == 1
+    assert aircon["power"] == "ON"
+    assert aircon["targetTemperature"] == 26.0
+    assert aircon["measuredAt"].endswith("+09:00")
+    assert aircon["online"] is True
+
+
+def test_internal_room_state_uses_camel_case_only(client, internal_api_key):
+    """AIDE 側は camelCase を前提に実装済み。snake_case が混ざっていないこと。"""
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": f"Bearer {internal_api_key}"},
+    )
+    data = response.json()
+    keys = set(data) | set(data["sensors"][0]) | set(data["outdoor"]) | set(data["aircons"][0])
+    assert not [key for key in keys if "_" in key]

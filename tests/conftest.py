@@ -52,7 +52,13 @@ def auth_headers():
 @pytest.fixture
 def mock_weather(monkeypatch):
     def outdoor_weather(db=None):
-        return {"temperature": 25.0, "humidity": 60.0, "pressure": 1013.0}
+        return {
+            "temperature": 25.0,
+            "humidity": 60.0,
+            "pressure": 1013.0,
+            # Open-Meteo は timezone=Asia/Tokyo でもオフセットを付けずに返す。
+            "observed_at": "2026-08-19T21:00",
+        }
 
     def outdoor_history(start, end, db=None):
         start_dt = datetime.datetime.strptime(start, "%Y-%m-%d")
@@ -90,6 +96,20 @@ def mock_weather(monkeypatch):
     monkeypatch.setattr("backend.weather.get_outdoor_weather", outdoor_weather)
     monkeypatch.setattr("backend.weather.get_outdoor_history", outdoor_history)
     monkeypatch.setattr("backend.weather.search_locations", search_locations)
+
+
+@pytest.fixture
+def internal_api_key(monkeypatch):
+    """サーバー間参照用トークンを設定する。未設定（503）の確認をする側は使わない。"""
+    key = "test-internal-api-key"
+    monkeypatch.setenv("INTERNAL_API_KEY", key)
+    return key
+
+
+@pytest.fixture
+def no_internal_api_key(monkeypatch):
+    """開発機の .env に値が入っていても、未設定時の挙動を確認できるようにする。"""
+    monkeypatch.delenv("INTERNAL_API_KEY", raising=False)
 
 
 @pytest.fixture

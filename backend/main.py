@@ -13,6 +13,7 @@ import random
 from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
+from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
@@ -24,6 +25,45 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 
 def get_now_jst():
     return datetime.datetime.now(JST).replace(tzinfo=None) # Use naive JST to match DB
+
+
+def _to_jst_iso(value: Any) -> Optional[str]:
+    """DB・外部APIの日時を、オフセット付きのISO8601（JST）にする。
+
+    DBもアプリ内部もJSTのnaiveなdatetimeで揃えているが、**本番VPSのタイムゾーンはUTC**。
+    オフセットを付けずに渡すと、受け取った側がUTCとして読んで9時間ずれる。
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            value = datetime.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                value = datetime.datetime.fromisoformat(text)
+            except ValueError:
+                return None
+
+    if not isinstance(value, datetime.datetime):
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=JST)
+    return value.astimezone(JST).isoformat()
+
+
+def _age_minutes(measured_at: Optional[str], now: datetime.datetime) -> Optional[float]:
+    if measured_at is None:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(measured_at)
+    except ValueError:
+        return None
+    return round((now - parsed).total_seconds() / 60.0, 1)
 
 
 #: ゴミの日通知の確認間隔。garbage_notify 側が「通知する時刻か」「送信済みか」を見るため、
@@ -367,6 +407,118 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
         "outdoor_pressure": outdoor["pressure"] if outdoor else None,
     }
 
+def _fetch_latest_aircon_record_for_unit(
+    db: Optional[Session], ac_id: int
+) -> Optional[database.AirconRecord]:
+    """指定した室外機の最新記録。無ければ None。
+
+    `_fetch_latest_aircon_record()` は ac_id に記録が無いと**別の室外機の記録**へ
+    フォールバックする（画面が1台ぶんだけ表示する用途のため）。台数ぶん並べる
+    内部APIでそれをやると他室の値が混ざるので、ここではフォールバックしない。
+    """
+    if database.DB_MOCK or db is None:
+        return None
+    return (
+        db.query(database.AirconRecord)
+        .filter(database.AirconRecord.ac_id == ac_id)
+        .order_by(database.AirconRecord.datetime.desc())
+        .first()
+    )
+
+
+def _build_room_state_sensors(db: Optional[Session]) -> List[dict]:
+    """センサーごとの最新値。鮮度判定は sensor_monitor のものをそのまま載せる。"""
+    statuses = sensor_monitor.collect_sensor_statuses(db)
+    # 表示名は DB 側の設定が正。collect_sensor_statuses() は db を渡さずに名前を引くため、
+    # DB に保存した名前ではなく data/devices.json 側の名前になることがある。
+    names = {
+        device["id"]: device["name"]
+        for device in device_config.list_devices(_discover_device_ids(db), db=db)
+    }
+
+    sensors: List[dict] = []
+    for status in statuses:
+        device_id = status["device_id"]
+        latest = _build_latest_payload(device_id, db) if status["has_data"] else {}
+        sensors.append(
+            {
+                "deviceId": device_id,
+                "name": names.get(device_id, status["name"]),
+                # 1件も記録が無ければ null。行自体は返して「まだ記録が無い」と分かるようにする。
+                "measuredAt": _to_jst_iso(latest.get("datetime")),
+                "ageMinutes": status["age_minutes"],
+                "stale": status["stale"],
+                "temperature": latest.get("temperature"),
+                "humidity": latest.get("humidity"),
+                # 気圧オフセット適用後の hPa（_build_latest_payload が正規化済み）。
+                "pressure": latest.get("pressure"),
+                "co2": latest.get("co2"),
+                "illuminance": latest.get("illuminance"),
+            }
+        )
+    return sensors
+
+
+def _build_room_state_aircons(db: Optional[Session], now: datetime.datetime) -> List[dict]:
+    """エアコンごとの最新の状態。"""
+    aircons: List[dict] = []
+    for unit in aircon_config.list_units(_discover_ac_ids(db), db=db):
+        ac_id = unit["ac_id"]
+        if database.DB_MOCK:
+            payload = database.generate_mock_aircon_latest()
+            payload["ac_id"] = ac_id
+            payload["name"] = aircon_config.get_display_name(
+                ac_id, payload.get("source_name"), db=db
+            )
+        else:
+            record = _fetch_latest_aircon_record_for_unit(db, ac_id)
+            payload = _build_aircon_payload(record, db=db)
+
+        measured_at = _to_jst_iso(payload.get("datetime"))
+        aircons.append(
+            {
+                "acId": ac_id,
+                "name": payload.get("name") or unit["name"],
+                "measuredAt": measured_at,
+                "ageMinutes": _age_minutes(measured_at, now),
+                "power": payload.get("power"),
+                "mode": payload.get("mode"),
+                "targetTemperature": payload.get("target_temperature"),
+                "roomTemperature": payload.get("room_temperature"),
+                "humidity": payload.get("humidity"),
+                "fanSpeed": payload.get("fan_speed"),
+                "online": payload.get("online"),
+            }
+        )
+    return aircons
+
+
+def _build_room_state_payload(db: Optional[Session]) -> dict:
+    """`GET /api/internal/room-state` の応答を組み立てる。
+
+    AIDE が「いま部屋は暑いか」「換気したほうがよいか」に答えるための一枚。
+    複数回叩かせないため室内・屋外・エアコンを1回にまとめ、鮮度の判定も
+    こちらで済ませて渡す（向こうで再実装するとしきい値が必ずズレる）。
+    """
+    now = datetime.datetime.now(JST)
+    outdoor = weather.get_outdoor_weather(db)
+
+    return {
+        "fetchedAt": now.isoformat(),
+        "staleThresholdMinutes": sensor_monitor.stale_threshold_minutes(),
+        "sensors": _build_room_state_sensors(db),
+        "outdoor": {
+            "temperature": outdoor.get("temperature"),
+            "humidity": outdoor.get("humidity"),
+            "pressure": outdoor.get("pressure"),
+            "observedAt": _to_jst_iso(outdoor.get("observed_at")),
+        }
+        if outdoor
+        else None,
+        "aircons": _build_room_state_aircons(db, now),
+    }
+
+
 # --- Endpoints ---
 
 @app.get("/api/health")
@@ -387,6 +539,22 @@ def get_sensors_status(
         "healthy": len(stale_devices) == 0,
         "devices": statuses,
     }
+
+
+@app.get("/api/internal/room-state")
+def get_internal_room_state(
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_token),
+):
+    """いまの部屋の状態を1回で返す、サーバー間参照用の読み取りAPI。
+
+    ログインセッションでは通らない（`INTERNAL_API_KEY` の Bearer トークン専用）。
+    利用者は同じVPS上で動く AIDE の MCP サーバー（guchi-apps/aide#101）。
+
+    **書き込み・設定変更の口はここに足さないこと。** ユーザーJWTを介さない経路なので、
+    増やすほど「ログインしていない誰かが叩ける操作」が増える。
+    """
+    return _build_room_state_payload(db)
 
 
 @app.get("/api/garbage")
