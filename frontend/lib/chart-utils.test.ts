@@ -453,6 +453,62 @@ describe("buildAirconTargetChartSeries", () => {
     ]);
     expect(getDeviceTargetMetricStateAtTime(history, 3, 1500)).toBe(0);
   });
+
+  it("plots automatic target with a shift at room temperature plus the shift", () => {
+    const history = mergeAirconIntoHistory(
+      [],
+      [
+        {
+          datetimeObj: 1000,
+          temperature: 27.6,
+          target_temperature: 1,
+          power: "ON",
+        },
+        {
+          datetimeObj: 2000,
+          temperature: 28,
+          target_temperature: -1.5,
+          power: "ON",
+        },
+      ],
+      3
+    );
+
+    expect(buildAirconTargetChartSegments(history, 3, 320)).toEqual([
+      {
+        auto: true,
+        points: [
+          { datetimeObj: 1000, airconTarget: 28.6 },
+          { datetimeObj: 2000, airconTarget: 26.5 },
+        ],
+      },
+    ]);
+    // シフト量そのものは設定温度の系列（絶対温度）には載せない
+    expect(hasDeviceTargetMetricData(history, 3)).toBe(false);
+    expect(getDeviceTargetMetricStateAtTime(history, 3, 1500)).toBe(1);
+  });
+
+  it("keeps a fixed target temperature outside the shift range as an absolute value", () => {
+    const history = mergeAirconIntoHistory(
+      [],
+      [
+        {
+          datetimeObj: 1000,
+          temperature: 27.6,
+          target_temperature: 16,
+          power: "ON",
+        },
+      ],
+      3
+    );
+
+    expect(buildAirconTargetChartSegments(history, 3, 320)).toEqual([
+      {
+        auto: false,
+        points: [{ datetimeObj: 1000, airconTarget: 16 }],
+      },
+    ]);
+  });
 });
 
 describe("computeVisibleYDomain", () => {

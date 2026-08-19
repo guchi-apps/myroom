@@ -188,6 +188,22 @@ class AirconData(BaseModel):
     online: Optional[bool] = None
     model: Optional[str] = None
 
+# AirCloud Home は自動運転時、設定温度そのものではなく室温からのシフト量
+# （-3.0〜+3.0 程度、0 はシフトなし）を返す。固定の設定温度は 16〜32℃ の
+# 範囲にしかならないため、この閾値で切り分ける。
+AIRCON_AUTO_TARGET_OFFSET_LIMIT = 5.0
+
+
+def _is_aircon_auto_target(value) -> bool:
+    """設定温度がシフト量（自動運転）かどうか。0℃ の設定温度ではない。"""
+    if value is None:
+        return False
+    try:
+        return abs(float(value)) <= AIRCON_AUTO_TARGET_OFFSET_LIMIT
+    except (TypeError, ValueError):
+        return False
+
+
 def _fetch_latest_aircon_record(
     db: Session, ac_id: Optional[int] = None
 ) -> Optional[database.AirconRecord]:
@@ -1331,9 +1347,10 @@ def get_aircon_history(
                 daily_map[date_str] = {"room_temps": [], "target_temps": []}
             if row.get("room_temperature") is not None:
                 daily_map[date_str]["room_temps"].append(row["room_temperature"])
+            # 自動運転のシフト量は絶対温度と平均できないため、年グラフからは外す
             if (
                 row.get("target_temperature") is not None
-                and row.get("target_temperature") != 0
+                and not _is_aircon_auto_target(row.get("target_temperature"))
                 and row.get("power") is not None
                 and str(row.get("power")).upper() != "OFF"
             ):
