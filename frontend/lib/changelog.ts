@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.6.0",
+    date: "2026-08-19",
+    changes: [
+      "同じサーバー上で動くAIアシスタント（AIDE）が、部屋の温度・湿度・エアコンの状態などを参照して答えられるようになりました。アプリの画面や操作方法に変更はありません。",
+    ],
+  },
+  {
     version: "3.5.1",
     date: "2026-08-18",
     changes: [
