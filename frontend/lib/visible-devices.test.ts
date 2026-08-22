@@ -28,6 +28,7 @@ import {
   COMING_SOON_SECTION_KEY,
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
+  REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 
 describe("visible-devices", () => {
@@ -52,6 +53,7 @@ describe("visible-devices", () => {
         "device:9001",
         "airconTarget",
         "outdoor",
+        REMOTE_CARD_KEY,
         GARBAGE_CARD_KEY,
         ENERGY_CARD_KEY,
         COMING_SOON_SECTION_KEY,
@@ -165,6 +167,7 @@ describe("visible-devices", () => {
   });
 
   it("暮らしセクションのカードも表示・非表示の対象キーに含む", () => {
+    expect(buildAllDashboardTargetKeys([1, 2]).has(REMOTE_CARD_KEY)).toBe(true);
     expect(buildAllDashboardTargetKeys([1, 2]).has(GARBAGE_CARD_KEY)).toBe(true);
     expect(buildAllDashboardTargetKeys([1, 2]).has(ENERGY_CARD_KEY)).toBe(true);
   });
