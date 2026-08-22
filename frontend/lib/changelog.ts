@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.9.0",
+    date: "2026-08-22",
+    changes: [
+      "ダッシュボードでエアコンの電気代の目安を確認できるようになりました。今日・昨日・今月・先月の使用量と電気代、日ごとの推移が一目でわかります。電気料金の単価は自分で設定・調整できます。",
+    ],
+  },
+  {
     version: "3.8.0",
     date: "2026-08-22",
     changes: [
