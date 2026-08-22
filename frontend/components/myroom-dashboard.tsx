@@ -21,9 +21,11 @@ import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { CleanerCard } from "@/components/cleaner-card";
 import { PowerCard } from "@/components/power-card";
+import { RemoteCard } from "@/components/remote-card";
 import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
+import { AirconControlPanel } from "@/components/aircon-control-panel";
 import { Button } from "@/components/ui/button";
 import {
   fetchDashboardData,
@@ -32,7 +34,8 @@ import {
   fetchEnergyBreakdown,
   fetchGarbageSchedule,
   fetchOutdoorLocation,
-  fetchAirconUnits,
+  fetchAirconUnitsResponse,
+  fetchRemoteButtons,
   fetchSensorsStatus,
 } from "@/lib/api";
 import {
@@ -79,8 +82,10 @@ import {
   CLEANER_CARD_KEY,
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
+  REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import type { GarbageSchedule } from "@/lib/garbage";
+import type { RemoteButtons } from "@/lib/remote";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
 import {
   loadUiSettingsFromServer,
@@ -97,6 +102,7 @@ import { useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
+  buildAirconStatusPill,
   formatAirconModeTarget,
   getSensorDeviceIds,
   formatOutdoorApiLabel,
@@ -105,6 +111,7 @@ import {
   resolveAirconDataLoadStatus,
   resolveLatestDataLoadStatus,
   resolveOutdoorBatchLoadStatus,
+  type AirconControlState,
   type AirconData,
   type AirconUnitInfo,
   type ChartMetric,
@@ -139,6 +146,8 @@ interface DeviceCardProps {
   action?: React.ReactNode;
   onClick?: () => void;
   statusNote?: string;
+  /** 計測値の上に出す状態の表示（エアコンの運転状態など） */
+  badge?: React.ReactNode;
 }
 
 type MetricsDisplayState = "loading" | "error" | "empty" | "ready";
@@ -308,6 +317,7 @@ function DeviceCard({
   action,
   onClick,
   statusNote,
+  badge,
 }: DeviceCardProps) {
   const className = onClick
     ? "device-card cursor-pointer text-left transition-transform active:scale-[0.98]"
@@ -331,6 +341,7 @@ function DeviceCard({
           {statusNote}
         </p>
       )}
+      {badge && <div className="mb-2">{badge}</div>}
       {metricsState === "ready" ? (
         <div className="flex flex-col gap-1.5">
           {metrics.map((metric) => (
@@ -405,6 +416,8 @@ export function MyRoomDashboard() {
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
+  const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
+  const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
   const [energyError, setEnergyError] = useState(false);
   const [cleanerSummary, setCleanerSummary] = useState<CleanerSummary | null>(null);
@@ -435,6 +448,9 @@ export function MyRoomDashboard() {
     Record<number, DeviceDataLoadStatus>
   >({});
   const [airconLoadStatus, setAirconLoadStatus] = useState<DeviceDataLoadStatus>("empty");
+  // 白くまくんのログイン情報がバックエンドに無ければ操作パネルを出さない（#213）
+  const [airconControlEnabled, setAirconControlEnabled] = useState(false);
+  const [airconControlOpen, setAirconControlOpen] = useState(false);
 
   const activeAirconId = airconLatest?.ac_id ?? 1;
   const airconChartTitle =
@@ -469,6 +485,7 @@ export function MyRoomDashboard() {
     [displayOrder, hiddenDeviceKeys]
   );
 
+  const remoteCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, REMOTE_CARD_KEY);
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
   const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
   const cleanerCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, CLEANER_CARD_KEY);
@@ -550,9 +567,12 @@ export function MyRoomDashboard() {
 
     async function bootstrap() {
       try {
-        const [deviceList, units, outdoorLoc] = await Promise.all([
+        const [deviceList, airconUnitsResponse, outdoorLoc] = await Promise.all([
           fetchDevices().catch(() => [] as DeviceInfo[]),
-          fetchAirconUnits().catch(() => [] as AirconUnitInfo[]),
+          fetchAirconUnitsResponse().catch(() => ({
+            units: [] as AirconUnitInfo[],
+            control_enabled: false,
+          })),
           fetchOutdoorLocation().catch(() => null),
         ]);
         if (cancelled) return;
@@ -571,7 +591,8 @@ export function MyRoomDashboard() {
         if (cancelled) return;
 
         setDevices(deviceList);
-        setAirconUnits(units);
+        setAirconUnits(airconUnitsResponse.units);
+        setAirconControlEnabled(airconUnitsResponse.control_enabled);
         setOutdoorLocation(outdoorLoc);
         setDisplayOrder(settings.displayOrder);
         setChartColors(settings.chartColors);
@@ -636,11 +657,12 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage, energy, cleaner] = await Promise.all([
+        const [data, sensorsStatus, garbage, energy, remote, cleaner] = await Promise.all([
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
           fetchGarbageSchedule().catch(() => null),
           fetchEnergyBreakdown().catch(() => null),
+          fetchRemoteButtons().catch(() => null),
           fetchCleanerSummary().catch(() => null),
         ]);
         setIsOfflineMode(false);
@@ -660,6 +682,8 @@ export function MyRoomDashboard() {
         setGarbageError(garbage == null);
         if (energy) setEnergyBreakdown(energy);
         setEnergyError(energy == null);
+        if (remote) setRemoteButtons(remote);
+        setRemoteError(remote == null);
         if (cleaner) setCleanerSummary(cleaner);
         setCleanerError(cleaner == null);
         if (reloadHistory) {
@@ -804,6 +828,28 @@ export function MyRoomDashboard() {
     return ids;
   }, [visibleDisplayOrder, mergedDailyStatsByDevice, devices, hiddenDeviceKeys]);
 
+  /**
+   * 操作パネルでの送信が成功したとき、カードの表示も合わせる。
+   *
+   * **DBへ入るのはラズパイの取り込み待ち（5分ごと）。** それを待つと、操作した直後だけ
+   * カードが古い状態を出し続けることになる。
+   */
+  const handleAirconControlApplied = useCallback((next: AirconControlState) => {
+    setAirconLatest((prev) => ({
+      ...(prev ?? {}),
+      ac_id: next.ac_id,
+      name: next.name ?? prev?.name,
+      power: next.power,
+      mode: next.mode,
+      target_temperature: next.target_temperature ?? undefined,
+      room_temperature: next.room_temperature ?? prev?.room_temperature,
+      humidity: next.humidity ?? prev?.humidity,
+      fan_speed: next.fan_speed,
+      fan_swing: next.fan_swing,
+    }));
+    setAirconLoadStatus("ok");
+  }, []);
+
   const handleChartLineVisibleChange = (key: string, visible: boolean) => {
     setDefaultLineVisibility((prev) => {
       const next = { ...prev, [key]: visible };
@@ -935,12 +981,19 @@ export function MyRoomDashboard() {
 
         {/* PCでは左に計測値、右に暮らし・近日公開。スマホでは上から順に1列で並ぶ */}
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
-          {(garbageCardVisible || energyCardVisible || cleanerCardVisible) && (
+          {(remoteCardVisible || garbageCardVisible || energyCardVisible || cleanerCardVisible) && (
             <section className="lg:col-start-2 lg:row-start-1">
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
               </div>
               <div className="flex flex-col gap-3">
+                {remoteCardVisible && (
+                  <RemoteCard
+                    buttons={remoteButtons}
+                    loading={!dashboardDataLoaded && remoteButtons == null}
+                    error={remoteError && remoteButtons == null}
+                  />
+                )}
                 {garbageCardVisible && (
                   <GarbageCard
                     schedule={garbageSchedule}
@@ -1052,11 +1105,49 @@ export function MyRoomDashboard() {
                     showTarget: isAirconTargetVisible(hiddenDeviceKeys),
                   }
                 );
+                // 操作できるときだけ開けるようにする。ログイン情報が無いバックエンドでは
+                // パネルを開いても何も操作できないため、入口ごと出さない（#213）
+                const airconControllable = airconControlEnabled && !isOfflineMode;
+                const airconPill = buildAirconStatusPill(airconLatest);
                 return (
                   <DeviceCard
                     key="aircon"
                     title={airconTitle}
                     accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
+                    badge={
+                      airconPill.color ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
+                          style={{
+                            color: airconPill.color,
+                            backgroundColor: `${airconPill.color}24`,
+                          }}
+                        >
+                          <span
+                            className="size-1.5 rounded-full bg-current"
+                            aria-hidden
+                          />
+                          {airconPill.label}
+                        </span>
+                      ) : airconLatest ? (
+                        <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
+                          {airconPill.label}
+                        </span>
+                      ) : null
+                    }
+                    action={
+                      airconControllable ? (
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      ) : undefined
+                    }
+                    onClick={
+                      airconControllable
+                        ? () => setAirconControlOpen(true)
+                        : undefined
+                    }
                     metrics={airconMetrics}
                     metricsState={resolveMetricsDisplayState(
                       airconMetrics,
@@ -1116,7 +1207,7 @@ export function MyRoomDashboard() {
             />
           </section>
 
-          {comingSoonVisible && (
+          {comingSoonVisible && COMING_SOON_CARDS.length > 0 && (
             <section className="lg:col-start-2 lg:row-start-2">
               <div className="mb-3 px-0.5">
                 <h2 className="section-title text-muted-foreground">
@@ -1194,6 +1285,15 @@ export function MyRoomDashboard() {
           onUnitPriceSaved={() => {
             void refreshEnergyBreakdown();
           }}
+        />
+      )}
+
+      {airconControlOpen && (
+        <AirconControlPanel
+          acId={activeAirconId}
+          title={airconTitle}
+          onClose={() => setAirconControlOpen(false)}
+          onApplied={handleAirconControlApplied}
         />
       )}
 

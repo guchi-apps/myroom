@@ -201,7 +201,7 @@ SwitchBot 風のスマートホーム UI をベースに、スマホ向け（最
 
 朝いちばんに知りたい予定を先頭に置き、時系列グラフは掘り下げる情報として下へ回しています。
 
-1. **暮らし（1列）** — ゴミの日・消費電力など、推移グラフの凡例を持たないカード
+1. **暮らし（1列）** — 電気の操作・ゴミの日・消費電力など、推移グラフの凡例を持たないカード
 2. **センサー（2列グリッド・PCでは3列）** — 屋内デバイス / 屋外 / エアコン。カードタップでデバイス詳細（グラフ・記録一覧）
 3. **推移（履歴グラフ）** — 指標タブ（温度・湿度・気圧・CO2・照度）で切り替え。スマホではグラフ上と画面下部の固定バーの両方から操作可能
 4. **最近の記録** — 日ごとの最高・最低値をバー表示
@@ -334,6 +334,7 @@ sudo systemctl start aircon-myroom.timer
 Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
 
 取得できる主な項目: 室温、設定温度、運転モード、電源 ON/OFF、風量・風向、オンライン状態など（詳細は下記参照）。
+風量は `AUTO` / `LV1`〜`LV4`、風向は `VERTICAL`（振る）と `OFF`（固定）が実機で確認できた値です。
 
 > **設定温度は自動運転のときだけ意味が変わる。**
 > AirCloud Home は自動運転（eco を含む）のとき、設定温度として**温度そのものではなく室温からのシフト量**
@@ -343,6 +344,56 @@ Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.co
 > `backend/main.py` の `_is_aircon_auto_target()`）。グラフでは自動運転の区間だけ
 > 「室温 + シフト量」の位置に点線で描く。年グラフは日ごとの平均を出すため、シフト量と絶対温度は
 > 平均できず、自動運転の区間を設定温度の平均から除外している。
+
+#### 画面からの操作
+
+ダッシュボードのエアコンカードをタップすると操作パネルが開き、電源・設定温度・運転モード・風量・
+風向を変えられます（#213）。**バックエンドが AirCloud Home のクラウド API を直接呼びます**
+（`backend/aircon_control.py`）。
+
+**動かすには白くまくんのログイン情報がバックエンドの `.env` に要ります。**
+
+```bash
+AIRCON_EMAIL=your@email.com
+AIRCON_PASSWORD=your_password
+```
+
+未設定なら `GET /api/aircon/units` が `control_enabled: false` を返し、**画面は操作パネルの
+入口ごと出しません**（表示だけの従来どおりの状態になります）。実値は 1Password の `apps/MyRoom`
+から取ります。
+
+> **AirCloud Home を叩くクライアントは3つある。** ラズパイ（運転状態の取り込み）、
+> `collectors/`（日別の電気代）、`backend/aircon_control.py`（操作）です。前の2つは1回動いて
+> 終わるスクリプトで毎回サインインしてよいのに対し、バックエンドは常駐するため、トークンを
+> プロセス内で持ち回してロックで直列化しています。**リクエストのたびにサインインすると
+> レート制限（429）に当たります。**
+
+> **操作APIの形は公開されていない。** #213 で実機に当てて確定させたので、変えるときは
+> 根拠を持って変えてください。**この形を知っているのは `_post_command()` と
+> `build_command_body()` だけ**です。
+>
+> | | 正しい形 | 間違えたときの応答 |
+> |---|---|---|
+> | メソッド | `PUT` | `POST` は **405** |
+> | パス | `rac/basic-idu-control/general-control-command-**status**/{id}` | `-status` 無しは **400**（本文が空で理由が出ない） |
+> | クエリ | `familyId` | `vendorThingId` / `timeZone` では **400**（本文が空） |
+> | 本文 | `power` / `mode` / `fanSpeed` / `fanSwing` / `humidity` / `iduTemperature` / `relativeTemperature` の**7つだけ** | `idu-list` の応答をそのまま返すと **400** |
+> | `humidity` | **文字列の `"0"` 固定** | 読み取った値（`50`）を返すと **400 `INVALID_HUMIDITY`** |
+>
+> 成功すると `{"commandId": "...", "status": "DONE"}` が返ります。**400 の理由は応答本文の
+> `stackTrace`**（`INVALID_HUMIDITY` など）に入るので、失敗時はログに残しています。
+
+> **操作は全項目を送る。** 「温度だけ変える」という部分的な指示は受け付けず、送らなかった
+> 項目は機器側の既定へ戻ります。そのため送信の直前に必ず現在値を引いて混ぜています
+> （`merge_command()`）。
+
+> **自動運転のときだけ温度の入れ先が違う。** `iduTemperature` は設定温度そのもので、
+> 室温からのシフト量は `relativeTemperature` に入れます。**読むときは逆で、自動運転でも
+> シフト量は `iduTemperature` に現れます**（実機で確認済み）。MyRoom は画面もDBも
+> `target_temperature` 1つで扱うため、この振り分けは `build_command_body()` が持ちます。
+
+> **操作の結果がDBに入るのはラズパイの取り込み（5分ごと）待ち。** 操作パネルとカードは、
+> 送信が成功した時点の状態を先に画面へ出します。グラフ・履歴に出るのは取り込み後です。
 
 **DB マイグレーション**（本番 DB 利用時）:
 
@@ -461,6 +512,60 @@ cd ~/apps/myroom
 cp collectors/systemd/myroom-tapo-energy.service collectors/systemd/myroom-tapo-energy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-energy.timer
 ```
+
+### 電気の操作（Nature Remo）
+
+Nature Remo に登録済みのリモコン操作を、ダッシュボードの「暮らし」セクションのボタンから押せます。
+`data/remote.json`（**リポジトリに含まれる**手編集ファイル）に出したいボタンを書くと、そのとおりに並びます。
+
+**照明が点いているかどうかは表示しません。** 赤外線は片方向で、機器が受け取ったかは返ってこないため、
+状態を持つと画面と部屋の実態が必ずずれます。物理リモコンと同じ「押したら飛ぶだけ」に揃えることで、
+状態の同期・Cloud API のレート制限（30回/5分）・バックエンドでのポーリングがまとめて不要になります（#106）。
+そのため **Nature Remo を叩くのは押したときだけ**で、一覧の取得では叩きません。
+
+```jsonc
+{
+  "groups": [
+    {
+      "id": "light",
+      "name": "照明",
+      "buttons": [
+        // Nature Remo に「照明」として登録した機器
+        { "id": "light-on",  "label": "点ける", "appliance_id": "xxxx", "button": "on" },
+        { "id": "light-off", "label": "消す",   "appliance_id": "xxxx", "button": "off" }
+      ]
+    },
+    {
+      "id": "tv",
+      "name": "テレビ",
+      // 「その他」として登録した赤外線は signal_id で押す
+      "buttons": [{ "id": "tv-power", "label": "電源", "signal_id": "xxxx" }]
+    }
+  ]
+}
+```
+
+- **押し方は2通りあります。** Nature Remo アプリで **「照明」として登録した機器は `signals` を持ちません**。
+  `GET /1/appliances` が返す `signals` は空で、`light.buttons` に `on` / `off` / `night` などが入り、
+  `POST /1/appliances/{id}/light` でしか押せません。部屋の電気はこの登録になっていることが多いため、
+  `signal_id` だけでは肝心の照明を出せません。「その他」として登録した赤外線は `signal_id` を使います
+- **「エアコン」として登録した機器はこのカードでは押せません。** 温度・モードを持つ専用APIしか無く、
+  ボタン1つに対応しません。ボタンとして出したい場合は Nature Remo アプリで「その他」として登録し直します
+- `id` を省くと `group1` / `group1-1` のように自動で付きます。このIDが送信APIのパスになるため、
+  重複したボタンIDは（押す先が定まらないので）後から書いた方を捨てます
+- 貼り付け用の一覧はスクリプトで出せます。`data/remote.json` を書くときだけ Nature Remo を叩きます
+
+  ```bash
+  # リポジトリルートで。.env に NATURE_REMO_TOKEN があれば環境変数の指定は不要
+  python scripts/list-remo-signals.py
+  ```
+
+- 環境変数 `NATURE_REMO_TOKEN` が未設定だと、押したときに「トークンが設定されていません」を返します
+  （一覧の表示には影響しません）。トークンは https://home.nature.global/ で発行します
+- API は `GET /api/remote/buttons`（一覧）と `POST /api/remote/buttons/{id}/send`（押す）の2本で、
+  どちらも他のダッシュボードAPIと同じ Supabase JWT 認証です。実装は `backend/remote.py`
+- **signal ID・appliance ID は画面へ返しません。** 押すのに要るのはボタンIDだけで、外へ出す値は少ないほど安全です
+- カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
 
 ### ゴミの日
 
@@ -587,6 +692,8 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
 | PUT | `/api/devices/{id}` | デバイス表示名・継承設定の更新（要認証） |
 | GET | `/api/aircon/units` | エアコンユニット一覧（要認証） |
 | PUT | `/api/aircon/units/{ac_id}` | エアコン表示名の更新（要認証） |
+| GET | `/api/aircon/units/{ac_id}/state` | エアコンの現在の運転状態（**エアコンから直接読む**・要認証） |
+| POST | `/api/aircon/units/{ac_id}/control` | エアコンの運転操作（要認証・下記） |
 | GET/PUT | `/api/ui-settings` | UI 設定（表示順・色・非表示デバイス、要認証） |
 | GET | `/api/outdoor-location` | 屋外地点の取得（要認証） |
 | PUT | `/api/outdoor-location` | 屋外地点の更新（要認証） |
@@ -684,6 +791,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `garbage-notion-token` | ゴミの日を書き出す Notion インテグレーションのトークン（`GARBAGE_NOTION_TOKEN` として同期） |
 | `garbage-notion-data-source-id` | 書き出し先の Notion データソースID（`GARBAGE_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
 | `internal-api-key` | サーバー間参照用APIのトークン（`INTERNAL_API_KEY` として同期）。AIDE 側の `op://apps/aide/myroom-token` と**同じ値**にする |
+| `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
@@ -768,6 +876,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 | `GARBAGE_NOTION_TOKEN` | secret `GARBAGE_NOTION_TOKEN` | このリポジトリ |
 | `GARBAGE_NOTION_DATA_SOURCE_ID` | secret `GARBAGE_NOTION_DATA_SOURCE_ID` | このリポジトリ |
 | `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
+| `NATURE_REMO_TOKEN` | secret `NATURE_REMO_TOKEN` | このリポジトリ |
 | `DB_NAME` | secret `DB_NAME` | このリポジトリ |
 | `DB_USER` | secret `SHARED_DB_USER` | organization 共通 |
 | `DB_PASSWORD` | secret `SHARED_DB_PASSWORD` | organization 共通 |

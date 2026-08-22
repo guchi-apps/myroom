@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, cleaner, energy, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, cleaner, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -162,6 +162,19 @@ class DeviceNameUpdate(BaseModel):
 
 class AirconNameUpdate(BaseModel):
     name: str
+
+
+class AirconControlCommand(BaseModel):
+    """画面からの運転指示。**指定した項目だけを変える。**
+
+    省略した項目はエアコンの現在値をそのまま使う（`backend/aircon_control.py`）。
+    """
+
+    power: Optional[str] = None
+    mode: Optional[str] = None
+    target_temperature: Optional[float] = None
+    fan_speed: Optional[str] = None
+    fan_swing: Optional[str] = None
 
 class BulkDeleteRecordsRequest(BaseModel):
     device: int
@@ -517,8 +530,7 @@ def _build_room_state_aircons(db: Optional[Session], now: datetime.datetime) -> 
     for unit in aircon_config.list_units(_discover_ac_ids(db), db=db):
         ac_id = unit["ac_id"]
         if database.DB_MOCK:
-            payload = database.generate_mock_aircon_latest()
-            payload["ac_id"] = ac_id
+            payload = database.generate_mock_aircon_latest(ac_id)
             payload["name"] = aircon_config.get_display_name(
                 ac_id, payload.get("source_name"), db=db
             )
@@ -615,6 +627,28 @@ def get_garbage_schedule(_: dict = Depends(get_current_user)):
     return garbage.build_payload()
 
 
+@app.get("/api/remote/buttons")
+def get_remote_buttons(_: dict = Depends(get_current_user)):
+    """押せるリモコン操作の一覧。data/remote.json の定義をそのまま返す。
+
+    ここでは Nature Remo を叩かない。外部APIへ出るのは実際に押したときだけ（#106）。
+    """
+    return remote.build_payload()
+
+
+@app.post("/api/remote/buttons/{button_id}/send")
+def send_remote_button(button_id: str, _: dict = Depends(get_current_user)):
+    """赤外線を送る。
+
+    返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは
+    赤外線が片方向のため分からない。
+    """
+    try:
+        return remote.press(button_id)
+    except remote.RemoteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
+
 @app.get("/api/auth/me")
 async def auth_me(user: dict = Depends(get_current_user)):
     return {"email": user.get("email")}
@@ -697,7 +731,75 @@ def update_device_name(
 
 @app.get("/api/aircon/units")
 def get_aircon_units(db: Session = Depends(database.get_db), _: dict = Depends(get_current_user)):
-    return {"units": aircon_config.list_units(_discover_ac_ids(db), db=db)}
+    # `control_enabled` は「操作パネルを出してよいか」。白くまくんのログイン情報が
+    # 本番の .env に入るまでは false になり、画面は表示だけになる（#213）。
+    return {
+        "units": aircon_config.list_units(_discover_ac_ids(db), db=db),
+        "control_enabled": aircon_control.is_configured(),
+    }
+
+
+def _aircon_control_error(exc: aircon_control.AirconControlError) -> HTTPException:
+    """操作の失敗をHTTPへ。**理由が分かる形で画面へ返す。**
+
+    「送ったのに効かない」がいちばん困るので、つながらない・混んでいる・設定されていない
+    を区別できるようにしておく。
+    """
+    if isinstance(exc, aircon_control.AirconControlNotConfigured):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, aircon_control.AirconControlRateLimited):
+        return HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after_sec)},
+        )
+    if isinstance(exc, aircon_control.AirconUnitNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    return HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/aircon/units/{ac_id}/state")
+def get_aircon_control_state(
+    ac_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """操作パネルが開くときの状態。
+
+    **DBの最新記録ではなく、エアコンから直接読む。** DBへ入るのはラズパイの5分ごとの
+    取り込み待ちで、操作の直後は必ず古い。
+    """
+    if ac_id < 1:
+        raise HTTPException(status_code=400, detail="ac id must be >= 1")
+    try:
+        state = aircon_control.get_state(ac_id)
+    except aircon_control.AirconControlError as e:
+        raise _aircon_control_error(e) from e
+
+    state["name"] = aircon_config.get_display_name(ac_id, state.get("name"), db=db)
+    return state
+
+
+@app.post("/api/aircon/units/{ac_id}/control")
+def control_aircon_unit(
+    ac_id: int,
+    body: AirconControlCommand,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """運転指示を送る。返すのは送信後の状態。"""
+    if ac_id < 1:
+        raise HTTPException(status_code=400, detail="ac id must be >= 1")
+
+    try:
+        state = aircon_control.apply_command(ac_id, body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except aircon_control.AirconControlError as e:
+        raise _aircon_control_error(e) from e
+
+    state["name"] = aircon_config.get_display_name(ac_id, state.get("name"), db=db)
+    return state
 
 
 @app.put("/api/aircon/units/{ac_id}")
@@ -1075,7 +1177,7 @@ def get_aircon_latest(
     _: dict = Depends(get_current_user),
 ):
     if database.DB_MOCK:
-        payload = database.generate_mock_aircon_latest()
+        payload = database.generate_mock_aircon_latest(ac_id or 1)
         payload["name"] = aircon_config.get_display_name(
             payload["ac_id"], payload.get("source_name"), db=db
         )
