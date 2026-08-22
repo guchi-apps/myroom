@@ -67,6 +67,7 @@ import {
   getVisibleChartDeviceIds,
   getVisibleSensorDeviceIds,
   isAirconRoomVisible,
+  isAirconTargetVisible,
   isHiddenKeyVisible,
   applyHiddenDevicesToLineVisibility,
   VISIBLE_DEVICES_CHANGED_EVENT,
@@ -99,7 +100,6 @@ import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
   buildAirconStatusPill,
-  hasAirconData,
   getSensorDeviceIds,
   formatOutdoorApiLabel,
   pickOutdoorLatestSource,
@@ -189,7 +189,7 @@ function buildLoadStatusFromLatest(
 }
 
 /**
- * 「いまの部屋」のカード。
+ * 「いまの環境」のカード。
  *
  * 計測値は先頭2つだけを出す（`pickCardReadings`）。1つ目を大きく、2つ目を右へ添えて
  * 高さを1行に収める。気圧・CO2・照度は詳細パネルの「いまの値」が受け持つ（#226）。
@@ -882,7 +882,7 @@ export function MyRoomDashboard() {
         </header>
 
         {/*
-          上段に「いまの部屋」、下段に暮らし。センサーの計測値を2つへ絞ってカードが
+          上段に「いまの環境」、下段に暮らし。センサーの計測値を2つへ絞ってカードが
           低くなったため、いまの状態をひと目で見せる位置へ上げた（#226）。
           PCは上段を4列、下段を2列にして、左右の列の長さが極端に食い違わないようにする。
         */}
@@ -986,6 +986,26 @@ export function MyRoomDashboard() {
                 // パネルを開いても何も操作できないため、入口ごと出さない（#213）
                 const airconControllable = airconControlEnabled && !isOfflineMode;
                 const airconPill = buildAirconStatusPill(airconLatest);
+                // 運転モードと設定温度はバッジ1つが受け持つため、`/devices` の
+                // 「ダッシュボードに表示（設定温度）」はバッジの出し分けで引き継ぐ（#226）
+                const airconBadge = !isAirconTargetVisible(hiddenDeviceKeys)
+                  ? null
+                  : airconPill.color ? (
+                      <span
+                        className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
+                        style={{
+                          color: airconPill.color,
+                          backgroundColor: `${airconPill.color}24`,
+                        }}
+                      >
+                        <span className="size-1.5 rounded-full bg-current" aria-hidden />
+                        {airconPill.label}
+                      </span>
+                    ) : airconLatest ? (
+                      <span className="inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
+                        {airconPill.label}
+                      </span>
+                    ) : null;
                 const airconState = resolveMetricsDisplayState(
                   airconReadings,
                   airconLoadStatus,
@@ -996,27 +1016,7 @@ export function MyRoomDashboard() {
                     key="aircon"
                     title={airconTitle}
                     accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
-                    badge={
-                      airconPill.color ? (
-                        <span
-                          className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
-                          style={{
-                            color: airconPill.color,
-                            backgroundColor: `${airconPill.color}24`,
-                          }}
-                        >
-                          <span
-                            className="size-1.5 rounded-full bg-current"
-                            aria-hidden
-                          />
-                          {airconPill.label}
-                        </span>
-                      ) : airconLatest ? (
-                        <span className="inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
-                          {airconPill.label}
-                        </span>
-                      ) : null
-                    }
+                    badge={airconBadge}
                     action={
                       airconControllable ? (
                         <ChevronRight
@@ -1031,9 +1031,10 @@ export function MyRoomDashboard() {
                         : undefined
                     }
                     readings={airconReadings}
-                    // 室温が無くても運転状態のバッジが出ているなら「データがありません」とは言わない
+                    // 室温を非表示にしていても、運転状態のバッジが出ているなら
+                    // 「データがありません」とは言わない
                     metricsState={
-                      airconState !== "ready" && hasAirconData(airconLatest)
+                      airconState !== "ready" && airconBadge != null
                         ? "ready"
                         : airconState
                     }
