@@ -334,6 +334,7 @@ sudo systemctl start aircon-myroom.timer
 Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
 
 取得できる主な項目: 室温、設定温度、運転モード、電源 ON/OFF、風量・風向、オンライン状態など（詳細は下記参照）。
+風量は `AUTO` / `LV1`〜`LV4`、風向は `VERTICAL`（振る）と `OFF`（固定）が実機で確認できた値です。
 
 > **設定温度は自動運転のときだけ意味が変わる。**
 > AirCloud Home は自動運転（eco を含む）のとき、設定温度として**温度そのものではなく室温からのシフト量**
@@ -343,6 +344,56 @@ Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.co
 > `backend/main.py` の `_is_aircon_auto_target()`）。グラフでは自動運転の区間だけ
 > 「室温 + シフト量」の位置に点線で描く。年グラフは日ごとの平均を出すため、シフト量と絶対温度は
 > 平均できず、自動運転の区間を設定温度の平均から除外している。
+
+#### 画面からの操作
+
+ダッシュボードのエアコンカードをタップすると操作パネルが開き、電源・設定温度・運転モード・風量・
+風向を変えられます（#213）。**バックエンドが AirCloud Home のクラウド API を直接呼びます**
+（`backend/aircon_control.py`）。
+
+**動かすには白くまくんのログイン情報がバックエンドの `.env` に要ります。**
+
+```bash
+AIRCON_EMAIL=your@email.com
+AIRCON_PASSWORD=your_password
+```
+
+未設定なら `GET /api/aircon/units` が `control_enabled: false` を返し、**画面は操作パネルの
+入口ごと出しません**（表示だけの従来どおりの状態になります）。実値は 1Password の `apps/MyRoom`
+から取ります。
+
+> **AirCloud Home を叩くクライアントは3つある。** ラズパイ（運転状態の取り込み）、
+> `collectors/`（日別の電気代）、`backend/aircon_control.py`（操作）です。前の2つは1回動いて
+> 終わるスクリプトで毎回サインインしてよいのに対し、バックエンドは常駐するため、トークンを
+> プロセス内で持ち回してロックで直列化しています。**リクエストのたびにサインインすると
+> レート制限（429）に当たります。**
+
+> **操作APIの形は公開されていない。** #213 で実機に当てて確定させたので、変えるときは
+> 根拠を持って変えてください。**この形を知っているのは `_post_command()` と
+> `build_command_body()` だけ**です。
+>
+> | | 正しい形 | 間違えたときの応答 |
+> |---|---|---|
+> | メソッド | `PUT` | `POST` は **405** |
+> | パス | `rac/basic-idu-control/general-control-command-**status**/{id}` | `-status` 無しは **400**（本文が空で理由が出ない） |
+> | クエリ | `familyId` | `vendorThingId` / `timeZone` では **400**（本文が空） |
+> | 本文 | `power` / `mode` / `fanSpeed` / `fanSwing` / `humidity` / `iduTemperature` / `relativeTemperature` の**7つだけ** | `idu-list` の応答をそのまま返すと **400** |
+> | `humidity` | **文字列の `"0"` 固定** | 読み取った値（`50`）を返すと **400 `INVALID_HUMIDITY`** |
+>
+> 成功すると `{"commandId": "...", "status": "DONE"}` が返ります。**400 の理由は応答本文の
+> `stackTrace`**（`INVALID_HUMIDITY` など）に入るので、失敗時はログに残しています。
+
+> **操作は全項目を送る。** 「温度だけ変える」という部分的な指示は受け付けず、送らなかった
+> 項目は機器側の既定へ戻ります。そのため送信の直前に必ず現在値を引いて混ぜています
+> （`merge_command()`）。
+
+> **自動運転のときだけ温度の入れ先が違う。** `iduTemperature` は設定温度そのもので、
+> 室温からのシフト量は `relativeTemperature` に入れます。**読むときは逆で、自動運転でも
+> シフト量は `iduTemperature` に現れます**（実機で確認済み）。MyRoom は画面もDBも
+> `target_temperature` 1つで扱うため、この振り分けは `build_command_body()` が持ちます。
+
+> **操作の結果がDBに入るのはラズパイの取り込み（5分ごと）待ち。** 操作パネルとカードは、
+> 送信が成功した時点の状態を先に画面へ出します。グラフ・履歴に出るのは取り込み後です。
 
 **DB マイグレーション**（本番 DB 利用時）:
 
@@ -578,6 +629,8 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
 | PUT | `/api/devices/{id}` | デバイス表示名・継承設定の更新（要認証） |
 | GET | `/api/aircon/units` | エアコンユニット一覧（要認証） |
 | PUT | `/api/aircon/units/{ac_id}` | エアコン表示名の更新（要認証） |
+| GET | `/api/aircon/units/{ac_id}/state` | エアコンの現在の運転状態（**エアコンから直接読む**・要認証） |
+| POST | `/api/aircon/units/{ac_id}/control` | エアコンの運転操作（要認証・下記） |
 | GET/PUT | `/api/ui-settings` | UI 設定（表示順・色・非表示デバイス、要認証） |
 | GET | `/api/outdoor-location` | 屋外地点の取得（要認証） |
 | PUT | `/api/outdoor-location` | 屋外地点の更新（要認証） |

@@ -6,6 +6,8 @@ import {
   hasAirconData,
   resolveAirconDataLoadStatus,
   resolveLatestDataLoadStatus,
+  type AirconControlCommand,
+  type AirconControlState,
   type AirconData,
   type AirconUnitInfo,
   type DailyStat,
@@ -220,9 +222,54 @@ export async function updateDeviceName(
   return res.json() as Promise<DeviceInfo>;
 }
 
+export interface AirconUnitsResponse {
+  units: AirconUnitInfo[];
+  /** 操作パネルを出してよいか。白くまくんのログイン情報が未設定なら false */
+  control_enabled: boolean;
+}
+
+export async function fetchAirconUnitsResponse(): Promise<AirconUnitsResponse> {
+  const data = await fetchJson<AirconUnitsResponse>("/api/aircon/units");
+  return { units: data.units ?? [], control_enabled: data.control_enabled ?? false };
+}
+
 export async function fetchAirconUnits(): Promise<AirconUnitInfo[]> {
-  const data = await fetchJson<{ units: AirconUnitInfo[] }>("/api/aircon/units");
-  return data.units;
+  return (await fetchAirconUnitsResponse()).units;
+}
+
+/** 操作パネル用の現在状態。DBの最新記録ではなくエアコンから直接読む */
+export async function fetchAirconControlState(
+  acId: number
+): Promise<AirconControlState> {
+  return airconControlRequest(`/api/aircon/units/${acId}/state`);
+}
+
+export async function sendAirconControl(
+  acId: number,
+  command: AirconControlCommand
+): Promise<AirconControlState> {
+  return airconControlRequest(`/api/aircon/units/${acId}/control`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+  });
+}
+
+/**
+ * 操作APIの呼び出し。**バックエンドが返した理由をそのまま画面へ運ぶ。**
+ * 「つながらない」「混み合っている」「設定されていない」を区別できないと、
+ * 送ったのに効かないときに打つ手が分からなくなる。
+ */
+async function airconControlRequest(
+  url: string,
+  init?: RequestInit
+): Promise<AirconControlState> {
+  const res = await fetchWithAuth(url, init);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `エアコンを操作できませんでした（${res.status}）`);
+  }
+  return res.json() as Promise<AirconControlState>;
 }
 
 export async function updateAirconUnitName(

@@ -218,6 +218,137 @@ export function formatAirconMode(mode?: string | null): string {
   return AIRCON_MODE_LABELS[mode] ?? mode;
 }
 
+/** 操作できる運転モード。`DRY_COOL` は機種が返すことはあっても、こちらから指定はできない */
+export const AIRCON_CONTROL_MODES = [
+  "COOLING",
+  "HEATING",
+  "DRY",
+  "FAN",
+  "AUTO",
+] as const;
+export type AirconControlMode = (typeof AIRCON_CONTROL_MODES)[number];
+
+/** 風量。`LV1` が「静」で、数字が上がるほど強い */
+export const AIRCON_FAN_SPEEDS = ["AUTO", "LV1", "LV2", "LV3", "LV4"] as const;
+export type AirconFanSpeed = (typeof AIRCON_FAN_SPEEDS)[number];
+
+export const AIRCON_FAN_SPEED_LABELS: Record<AirconFanSpeed, string> = {
+  AUTO: "自動",
+  LV1: "静",
+  LV2: "弱",
+  LV3: "中",
+  LV4: "強",
+};
+
+/**
+ * 風向。**実機が返すのは `VERTICAL`**（#213で実機確認）。`AUTO` は返ってこない。
+ * 画面は「自動（振る）」と「固定」の2択にする。
+ */
+export const AIRCON_FAN_SWINGS = ["VERTICAL", "OFF"] as const;
+export type AirconFanSwing = (typeof AIRCON_FAN_SWINGS)[number];
+
+export const AIRCON_FAN_SWING_LABELS: Record<AirconFanSwing, string> = {
+  VERTICAL: "自動",
+  OFF: "固定",
+};
+
+/**
+ * 実機が返した風向を、画面の2択のどちらとして選択状態にするか。
+ * 機種によっては `HORIZONTAL` / `BOTH` を返すため、**止まっていない値はすべて「自動」**に寄せる。
+ */
+export function resolveAirconFanSwingChoice(value?: string | null): AirconFanSwing {
+  return (value ?? "").toUpperCase() === "OFF" ? "OFF" : "VERTICAL";
+}
+
+export const AIRCON_MIN_TEMPERATURE = 16;
+export const AIRCON_MAX_TEMPERATURE = 32;
+export const AIRCON_TEMPERATURE_STEP = 0.5;
+
+/** モードごとの色。カードのピルと操作パネルのアクセントに使う */
+export const AIRCON_MODE_COLORS: Record<string, string> = {
+  COOLING: "#3498db",
+  HEATING: "#e8743b",
+  DRY: "#56ccf2",
+  DRY_COOL: "#56ccf2",
+  FAN: "#95a5a6",
+  AUTO: "#1abc9c",
+};
+
+export function getAirconModeColor(mode?: string | null): string {
+  if (!mode) return AIRCON_MODE_COLORS.AUTO;
+  return AIRCON_MODE_COLORS[mode.toUpperCase()] ?? AIRCON_MODE_COLORS.AUTO;
+}
+
+/** 操作パネルが読み書きする運転状態。DBの最新記録ではなく、エアコンの現在値 */
+export interface AirconControlState {
+  ac_id: number;
+  name?: string;
+  power?: string;
+  mode?: string;
+  room_temperature?: number | null;
+  target_temperature?: number | null;
+  humidity?: number | null;
+  fan_speed?: string;
+  fan_swing?: string;
+  online?: boolean;
+  model?: string | null;
+}
+
+/** 運転指示。**指定した項目だけが変わる** */
+export interface AirconControlCommand {
+  power?: "ON" | "OFF";
+  mode?: AirconControlMode;
+  target_temperature?: number;
+  fan_speed?: AirconFanSpeed;
+  fan_swing?: AirconFanSwing;
+}
+
+/**
+ * 温度の増減。自動運転はシフト量（-5.0〜+5.0）、それ以外は設定温度（16〜32℃）で
+ * 範囲が変わる（`backend/aircon_control.py` の `validate_target_temperature()` と対）。
+ */
+export function stepAirconTemperature(
+  value: number,
+  delta: number,
+  mode?: string | null
+): number {
+  const isAuto = (mode ?? "").toUpperCase() === "AUTO";
+  const min = isAuto ? -AIRCON_AUTO_TARGET_OFFSET_LIMIT : AIRCON_MIN_TEMPERATURE;
+  const max = isAuto ? AIRCON_AUTO_TARGET_OFFSET_LIMIT : AIRCON_MAX_TEMPERATURE;
+  const next = value + delta * AIRCON_TEMPERATURE_STEP;
+  const clamped = Math.min(max, Math.max(min, next));
+  // 0.5 刻みに丸める。浮動小数の誤差で 25.999999 のような値を送らないため
+  return Math.round(clamped / AIRCON_TEMPERATURE_STEP) * AIRCON_TEMPERATURE_STEP;
+}
+
+/** モードを切り替えたときの温度の初期値。バックエンドの `merge_command()` と揃える */
+export function defaultAirconTargetForMode(
+  mode: string,
+  current: number | null | undefined,
+  previousMode: string | null | undefined
+): number {
+  const wasAuto = (previousMode ?? "").toUpperCase() === "AUTO";
+  const isAuto = mode.toUpperCase() === "AUTO";
+  if (wasAuto === isAuto && current != null) return current;
+  return isAuto ? 0 : 26;
+}
+
+/** カードに出す運転状態のピル */
+export function buildAirconStatusPill(
+  data: Pick<AirconData, "mode" | "power" | "target_temperature"> | null | undefined
+): { label: string; color: string | null } {
+  if (!data || (data.power == null && data.mode == null)) {
+    return { label: "--", color: null };
+  }
+  if (isAirconPowerOff(data.power)) {
+    return { label: "停止中", color: null };
+  }
+  return {
+    label: formatAirconModeTarget(data),
+    color: getAirconModeColor(data.mode),
+  };
+}
+
 export function hasAirconData(data: AirconData | null | undefined): boolean {
   if (!data) return false;
   return (

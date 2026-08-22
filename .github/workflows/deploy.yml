@@ -75,6 +75,8 @@ jobs:
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       SUPABASE_URL: ${{ vars.SUPABASE_PROJECT_URL }}
       USERNAME: ${{ secrets.SERVER_USERNAME }}
+      AIRCON_EMAIL: ${{ secrets.AIRCON_EMAIL }}
+      AIRCON_PASSWORD: ${{ secrets.AIRCON_PASSWORD }}
       ALLOWED_GOOGLE_EMAILS: ${{ secrets.ALLOWED_GOOGLE_EMAILS }}
       DB_NAME: ${{ secrets.DB_NAME }}
       GARBAGE_NOTION_DATA_SOURCE_ID: ${{ secrets.GARBAGE_NOTION_DATA_SOURCE_ID }}
@@ -136,6 +138,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ env.SUPABASE_URL }}
           ALLOWED_GOOGLE_EMAILS: ${{ env.ALLOWED_GOOGLE_EMAILS }}
+          # 白くまくん（AirCloud Home）のログイン情報。エアコンの操作にだけ使う（#213）。
+          # 未設定なら操作機能が無効になるだけで、デプロイは通る。
+          AIRCON_EMAIL: ${{ env.AIRCON_EMAIL }}
+          AIRCON_PASSWORD: ${{ env.AIRCON_PASSWORD }}
           SENSOR_WEBHOOK_URL: ${{ env.SENSOR_WEBHOOK_URL }}
           GARBAGE_NOTION_TOKEN: ${{ env.GARBAGE_NOTION_TOKEN }}
           GARBAGE_NOTION_DATA_SOURCE_ID: ${{ env.GARBAGE_NOTION_DATA_SOURCE_ID }}
@@ -153,6 +159,8 @@ jobs:
           b64() { printf '%s' "$1" | base64 -w 0; }
           SUPABASE_URL_B64=$(b64 "$SUPABASE_URL")
           ALLOWED_GOOGLE_EMAILS_B64=$(b64 "$ALLOWED_GOOGLE_EMAILS")
+          AIRCON_EMAIL_B64=$(b64 "$AIRCON_EMAIL")
+          AIRCON_PASSWORD_B64=$(b64 "$AIRCON_PASSWORD")
           SENSOR_WEBHOOK_URL_B64=$(b64 "$SENSOR_WEBHOOK_URL")
           GARBAGE_NOTION_TOKEN_B64=$(b64 "$GARBAGE_NOTION_TOKEN")
           GARBAGE_NOTION_DATA_SOURCE_ID_B64=$(b64 "$GARBAGE_NOTION_DATA_SOURCE_ID")
@@ -183,6 +191,8 @@ jobs:
 
             sync_env_var SUPABASE_URL '${SUPABASE_URL_B64}'
             sync_env_var ALLOWED_GOOGLE_EMAILS '${ALLOWED_GOOGLE_EMAILS_B64}'
+            sync_env_var AIRCON_EMAIL '${AIRCON_EMAIL_B64}'
+            sync_env_var AIRCON_PASSWORD '${AIRCON_PASSWORD_B64}'
             sync_env_var SENSOR_WEBHOOK_URL '${SENSOR_WEBHOOK_URL_B64}'
             sync_env_var GARBAGE_NOTION_TOKEN '${GARBAGE_NOTION_TOKEN_B64}'
             sync_env_var GARBAGE_NOTION_DATA_SOURCE_ID '${GARBAGE_NOTION_DATA_SOURCE_ID_B64}'
