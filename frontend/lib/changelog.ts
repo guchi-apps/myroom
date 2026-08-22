@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.10.0",
+    date: "2026-08-22",
+    changes: [
+      "TP-Link Tapoスマートプラグの消費電力を収集できるようになりました。ダッシュボードの「消費電力」カードでは、エアコンとスマートプラグの使用量・電気代の目安を1枚にまとめて確認できます。",
+    ],
+  },
+  {
     version: "3.9.0",
     date: "2026-08-22",
     changes: [

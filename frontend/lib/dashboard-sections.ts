@@ -41,7 +41,7 @@ export const ENERGY_CARD_KEY = "energy";
 
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
   { key: GARBAGE_CARD_KEY, label: "ゴミの日" },
-  { key: ENERGY_CARD_KEY, label: "エアコンの電気代" },
+  { key: ENERGY_CARD_KEY, label: "消費電力" },
 ];
 
 export function getLifeCardLabel(key: string): string {
@@ -67,11 +67,6 @@ export const COMING_SOON_CARDS: readonly ComingSoonCardDefinition[] = [
     key: "cleaner",
     label: "お掃除ロボット",
     description: "稼働した日と時間を記録して並べます",
-  },
-  {
-    key: "power",
-    label: "消費電力",
-    description: "スマートプラグごとの使用量をグラフにします",
   },
   {
     key: "remote",
