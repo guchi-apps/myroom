@@ -4,9 +4,11 @@
     "rules の type は weekly（毎週）と monthly（第N曜日）の2種類。weekday は mon/tue/wed/thu/fri/sat/sun または 月〜日 で書ける。",
     "monthly の weeks は 1〜5 と -1（最終週）が使える。例: 第2・第4水曜 -> {\"type\": \"monthly\", \"weekday\": \"wed\", \"weeks\": [2, 4]}",
     "年末年始などの変則日程は exceptions に書く。cancel: true でその日の収集をすべて中止、cancel: [\"id\"] で品目を指定して中止、add: [\"id\"] で臨時収集を追加する。",
+    "categories の並び順がそのままカードの「品目ごとの次の収集」の並び順になる（日付順には並べ替えない）。",
+    "area は画面に出さない。どの市のどの地区のルールかを、このファイルを編集する人に伝えるためのメモ。",
     "notion は収集日を Notion のデータベースへ書き出す設定。実際に書き出すかは環境変数 GARBAGE_NOTION_TOKEN / GARBAGE_NOTION_DATA_SOURCE_ID の有無で決まる。properties は Notion 側でプロパティ名を変えている場合だけ書き換える。"
   ],
-  "area": "茨木市（お住まいの地区の収集日に合わせて編集してください）",
+  "area": "高槻市 出丸町",
   "notify_hour": 20,
   "categories": [
     {
@@ -15,16 +17,34 @@
       "color": "#e67e22",
       "note": "生ごみ・紙くずなど",
       "rules": [
-        { "type": "weekly", "weekdays": ["tue", "fri"] }
+        { "type": "weekly", "weekdays": ["mon", "thu"] }
       ]
     },
     {
       "id": "recyclable",
-      "name": "資源ごみ",
+      "name": "リサイクルごみ",
       "color": "#1abc9c",
-      "note": "カン・ビン・ペットボトル",
+      "note": "第2・第4火曜日",
       "rules": [
-        { "type": "monthly", "weekday": "wed", "weeks": [2] }
+        { "type": "monthly", "weekday": "tue", "weeks": [2, 4] }
+      ]
+    },
+    {
+      "id": "incombustible",
+      "name": "不燃ごみ",
+      "color": "#7f8c8d",
+      "note": "第1火曜日",
+      "rules": [
+        { "type": "monthly", "weekday": "tue", "weeks": [1] }
+      ]
+    },
+    {
+      "id": "bulky_burnable",
+      "name": "大型可燃ごみ",
+      "color": "#9b59b6",
+      "note": "第3金曜日",
+      "rules": [
+        { "type": "monthly", "weekday": "fri", "weeks": [3] }
       ]
     }
   ],

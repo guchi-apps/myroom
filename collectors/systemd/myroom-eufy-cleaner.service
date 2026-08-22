@@ -1,0 +1,22 @@
+[Unit]
+# eufy Clean（ロボット掃除機）の状態を LAN 経由で読み、MyRoom へ送る。
+# 観測のみで、起動・停止などの操作は行わない。
+#
+# ラズパイではなくサブPCで動かす。Tuya のローカルプロトコルは掃除機と同じLANに
+# いる必要があり、サブPCならすでにその条件を満たしている。
+Description=MyRoom: お掃除ロボット（eufy）の稼働状態を取得して送る
+Documentation=https://github.com/guchi-apps/myroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# 1台に繋いで読むだけなので、繋がらない場合の待ちを含めても十数秒で終わる。
+TimeoutStartSec=2min
+
+# **専用の venv を使う。** このスクリプトだけ tinytuya が要り、サブPCの
+# システムPythonには入っていない。リポジトリの venv/ はメインPCのpyenv向けで動かない。
+WorkingDirectory=%h/apps/myroom
+ExecStart=%h/apps/myroom/collectors/.venv-cleaner/bin/python %h/apps/myroom/collectors/eufy_to_myroom.py
+Nice=10

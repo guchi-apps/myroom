@@ -15,6 +15,17 @@ DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "myroom")
 DB_MOCK = os.getenv("DB_MOCK", "true").lower() == "true"
 
+# JST Timezone
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _today_jst() -> datetime.date:
+    """モック生成の「今日」。本番VPSはUTCで動くため、`datetime.date.today()`
+    だとUTC 15時〜24時（JSTでは日付が変わった後）に前日のままずれる。
+    エンドポイント側は `get_now_jst()` でJSTの日付を使っているので合わせる。"""
+    return datetime.datetime.now(JST).date()
+
+
 Base = declarative_base()
 
 SENSOR_READINGS_TABLE = "sensor_readings"
@@ -79,6 +90,25 @@ class DailyEnergyRecord(Base):
         default=datetime.datetime.utcnow,
         onupdate=datetime.datetime.utcnow,
     )
+
+
+class CleanerRunRecord(Base):
+    """お掃除ロボットの稼働履歴。**状態が変わった瞬間だけ1行**入る。
+
+    `datetime` はその状態になった時刻、`updated_at` は同じ状態を最後に確認した時刻。
+    収集は数分おきに送ってくるが、状態が変わっていなければ行は増やさず `updated_at`
+    （と `battery`）だけを進める。そのため `battery` は「その状態で最後に観測した残量」で、
+    充電中の行は充電が進むにつれて上がっていく。
+    """
+
+    __tablename__ = "cleaner_runs"
+
+    datetime = Column(DateTime, primary_key=True)
+
+    #: `cleaning` / `charging` / `docked` など（`backend/cleaner.py` の EVENT_LABELS）
+    event = Column(String(20), nullable=False)
+    battery = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, nullable=True)
 
 
 class DisplayEntity(Base):
@@ -216,7 +246,7 @@ def generate_mock_aircon_history_for_range(
 
 def generate_mock_daily():
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(30):
         d = today - datetime.timedelta(days=i)
         data.append({
@@ -232,7 +262,7 @@ def generate_mock_daily():
 
 def generate_mock_aircon_daily(ac_id: int = 1) -> list:
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(30):
         d = today - datetime.timedelta(days=i)
         base = 24.5 + random.uniform(-1.5, 1.5)
@@ -247,7 +277,7 @@ def generate_mock_aircon_daily(ac_id: int = 1) -> list:
 def generate_mock_daily_energy(source: str = "aircon", days: int = 75) -> list:
     """モック用の日別使用量。当日は「まだ途中」に見えるよう少なめにする。"""
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(days):
         d = today - datetime.timedelta(days=i)
         # 夏冬に増えて春秋に減る、ゆるい季節変動
@@ -276,7 +306,7 @@ def generate_mock_energy_rows(days: int = 75) -> list:
     消費電力カードはエアコンとスマートプラグを1枚にまとめるため、
     モックでも複数の取得元が混ざった状態を作る。
     """
-    today = datetime.date.today()
+    today = _today_jst()
     rows = []
     for source, factor, power_w in MOCK_ENERGY_SOURCES:
         for row in generate_mock_daily_energy(source, days):
@@ -289,6 +319,77 @@ def generate_mock_energy_rows(days: int = 75) -> list:
                 }
             )
     rows.sort(key=lambda item: (item["date"], item["source"]))
+    return rows
+
+
+#: モックの稼働開始時刻。午前と午後を交互にして、カードの「最終起動」が
+#: いつも同じ時刻に見えないようにする
+MOCK_CLEANER_START_HOURS = (9, 14)
+
+#: モックで作る履歴の長さ（日）。当月の回数と平均を出せればよい
+MOCK_CLEANER_DAYS = 45
+
+
+def generate_mock_cleaner_rows(now=None) -> list:
+    """モック用のお掃除ロボットの稼働履歴。
+
+    2〜3日おきに1回動き、終わると充電して待機に戻る、という実機に近い並びを作る。
+    本物と同じく**状態が変わった行だけ**を返す（`backend/cleaner.py` の前提）。
+    """
+    if now is None:
+        # 呼び出し側（`backend/cleaner.py`）は必ず `get_now_jst()` を渡す。
+        # ここの既定値は単体で試すとき用で、本番VPSがUTCで動くぶんJSTへ寄せる。
+        now = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=9))
+        ).replace(tzinfo=None)
+
+    # 直近の稼働は「3時間前」に固定する。実行した時刻によってカードが
+    # 「何日も動いていない」ように見えるのを避けるため。
+    starts = [(now - datetime.timedelta(hours=3)).replace(second=0, microsecond=0)]
+    while (now - starts[-1]).days < MOCK_CLEANER_DAYS:
+        index = len(starts)
+        starts.append(
+            (starts[-1] - datetime.timedelta(days=2 if index % 2 else 3)).replace(
+                hour=MOCK_CLEANER_START_HOURS[index % 2],
+                minute=(5 + index * 7) % 55,
+            )
+        )
+
+    rows = []
+    for index, start in enumerate(reversed(starts)):
+        duration = 26 + (index * 5) % 20  # 26〜45分
+        end = start + datetime.timedelta(minutes=duration)
+        docked = end + datetime.timedelta(minutes=110)
+
+        # battery は「その状態で最後に観測した残量」。掃除中は減り、充電中は増える
+        rows.append(
+            {
+                "datetime": start,
+                "event": "cleaning",
+                "battery": max(20, 92 - duration),
+                "updated_at": end,
+            }
+        )
+        rows.append(
+            {
+                "datetime": end,
+                "event": "charging",
+                "battery": 99,
+                "updated_at": docked,
+            }
+        )
+        rows.append(
+            {
+                "datetime": docked,
+                "event": "docked",
+                "battery": 100,
+                "updated_at": docked,
+            }
+        )
+
+    if rows:
+        # 最後の行だけは「いま」まで確認できていることにする（受信途絶の警告を出さない）
+        rows[-1]["updated_at"] = now
     return rows
 
 

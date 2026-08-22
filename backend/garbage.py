@@ -389,6 +389,48 @@ def find_upcoming(
     return upcoming
 
 
+def find_next_by_category(
+    config: Dict[str, Any],
+    today: datetime.date,
+) -> List[Dict[str, Any]]:
+    """品目ごとに「次にいつ出せるか」を求める。
+
+    設定に書いた品目の順でそのまま返す（カードもこの順に並べる）。今日の収集も対象に含める。
+    UPCOMING_SEARCH_DAYS 先まで見つからない品目は next を None にして、行そのものは残す
+    （ルールの書き忘れに気付けるようにするため）。
+    """
+    pending = {category["id"]: category for category in config["categories"]}
+    found: Dict[str, Dict[str, Any]] = {}
+
+    for offset in range(0, UPCOMING_SEARCH_DAYS):
+        if not pending:
+            break
+        day = today + datetime.timedelta(days=offset)
+        for collected in categories_on(config, day):
+            if collected["id"] in pending and collected["id"] not in found:
+                found[collected["id"]] = {
+                    "date": day.isoformat(),
+                    "weekday": weekday_label(day),
+                    "days_until": offset,
+                }
+        pending = {
+            category_id: category
+            for category_id, category in pending.items()
+            if category_id not in found
+        }
+
+    return [
+        {
+            "id": category["id"],
+            "name": category["name"],
+            "color": category["color"],
+            "note": category["note"],
+            "next": found.get(category["id"]),
+        }
+        for category in config["categories"]
+    ]
+
+
 def build_payload(today: Optional[datetime.date] = None) -> Dict[str, Any]:
     """ダッシュボードのゴミの日カード用のペイロード。"""
     config = load_config()
@@ -401,4 +443,5 @@ def build_payload(today: Optional[datetime.date] = None) -> Dict[str, Any]:
         "today": build_day(config, today, today),
         "tomorrow": build_day(config, tomorrow, today),
         "upcoming": find_upcoming(config, today) if config["configured"] else [],
+        "by_category": find_next_by_category(config, today) if config["configured"] else [],
     }

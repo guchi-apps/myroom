@@ -1,0 +1,11 @@
+# collectors/eufy_to_myroom.py 専用の依存。
+#
+# eufy Clean には Anker の公式パブリックAPIが無く、Tuya のローカルプロトコル
+# （TCP 6668・独自の暗号化）で機器を直接読む。そのための実装が tinytuya。
+# サブPCのシステムPythonには入っていないため、専用の venv を作って使う。
+#
+#   python3 -m venv collectors/.venv-cleaner
+#   collectors/.venv-cleaner/bin/pip install -r collectors/requirements-cleaner.txt
+#
+# バックエンドの requirements.txt には入れない。VPS は掃除機と同じLANにいないため。
+tinytuya>=1.13

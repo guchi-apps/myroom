@@ -56,6 +56,9 @@
   --energy-surface: rgba(243, 156, 18, 0.13);
   /* 電気の操作（照明）。消費電力のアンバーより赤みを落とし、隣に並べても区別が付く */
   --remote-color: #e8a13a;
+  /* お掃除ロボット。温度(#3498db)・湿度(#2ecc71)・電気代(#f39c12) と重ならないティール */
+  --cleaner-color: #11a3a3;
+  --cleaner-surface: rgba(17, 163, 163, 0.12);
   --chart-grid: rgba(0, 0, 0, 0.05);
   --chart-line: rgba(0, 0, 0, 0.1);
 }
@@ -82,6 +85,8 @@
   --energy-color: #f5b041;
   --energy-surface: rgba(243, 156, 18, 0.16);
   --remote-color: #f0b556;
+  --cleaner-color: #3fc7c7;
+  --cleaner-surface: rgba(63, 199, 199, 0.15);
   --chart-grid: rgba(255, 255, 255, 0.05);
   --chart-line: rgba(255, 255, 255, 0.2);
 }

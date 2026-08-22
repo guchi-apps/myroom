@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGarbageCategoryRows,
   buildGarbageHighlight,
   buildGarbageRows,
+  collectGarbageNotes,
   formatGarbageCategories,
   formatGarbageCountdown,
   formatGarbageDate,
+  isGarbageComingSoon,
   type GarbageDay,
   type GarbageSchedule,
 } from "@/lib/garbage";
@@ -23,7 +26,7 @@ function day(overrides: Partial<GarbageDay> = {}): GarbageDay {
 function schedule(overrides: Partial<GarbageSchedule> = {}): GarbageSchedule {
   return {
     configured: true,
-    area: "茨木市",
+    area: "高槻市 出丸町",
     today: day(),
     tomorrow: day({ date: "2026-08-15", weekday: "土", days_until: 1 }),
     upcoming: [],
@@ -32,7 +35,7 @@ function schedule(overrides: Partial<GarbageSchedule> = {}): GarbageSchedule {
 }
 
 const burnable = { id: "burnable", name: "普通ごみ", color: "#e67e22", note: "" };
-const recyclable = { id: "recyclable", name: "資源ごみ", color: "#1abc9c", note: "" };
+const recyclable = { id: "recyclable", name: "リサイクルごみ", color: "#1abc9c", note: "" };
 
 describe("formatGarbageDate", () => {
   it("先頭の0を落として曜日を添える", () => {
@@ -51,7 +54,7 @@ describe("formatGarbageCategories", () => {
 
   it("複数の品目は中黒で並べる", () => {
     expect(formatGarbageCategories(day({ categories: [burnable, recyclable] }))).toBe(
-      "普通ごみ・資源ごみ"
+      "普通ごみ・リサイクルごみ"
     );
   });
 });
@@ -62,25 +65,67 @@ describe("buildGarbageRows", () => {
     expect(rows.map((row) => row.label)).toEqual(["今日", "明日"]);
   });
 
-  it("この先の収集予定はAPIが返した数だけ並べ、見出しは最初の行にだけ付ける", () => {
+  it("この先の収集予定は行にせず、今日・明日の2行だけを返す", () => {
     const rows = buildGarbageRows(
       schedule({
         upcoming: [
           day({ date: "2026-08-18", weekday: "火", days_until: 4, categories: [burnable] }),
           day({ date: "2026-08-21", weekday: "金", days_until: 7, categories: [burnable] }),
-          day({ date: "2026-09-09", weekday: "水", days_until: 26, categories: [recyclable] }),
         ],
       })
     );
-    expect(rows).toHaveLength(5);
-    expect(rows.map((row) => row.label)).toEqual(["今日", "明日", "この先", "", ""]);
-    expect(rows.map((row) => row.day.date)).toEqual([
-      "2026-08-14",
-      "2026-08-15",
-      "2026-08-18",
-      "2026-08-21",
-      "2026-09-09",
-    ]);
+    expect(rows.map((row) => row.day.date)).toEqual(["2026-08-14", "2026-08-15"]);
+  });
+});
+
+describe("buildGarbageCategoryRows", () => {
+  it("APIが返した並び順のまま返す", () => {
+    const rows = buildGarbageCategoryRows(
+      schedule({
+        by_category: [
+          { ...burnable, next: { date: "2026-08-17", weekday: "月", days_until: 3 } },
+          { ...recyclable, next: null },
+        ],
+      })
+    );
+    expect(rows.map((row) => row.name)).toEqual(["普通ごみ", "リサイクルごみ"]);
+    expect(rows[1].next).toBeNull();
+  });
+
+  it("by_categoryを返さない古いバックエンドでは空になる", () => {
+    expect(buildGarbageCategoryRows(schedule())).toEqual([]);
+  });
+});
+
+describe("isGarbageComingSoon", () => {
+  it("3日以内なら近いとみなす", () => {
+    const next = { date: "2026-08-17", weekday: "月", days_until: 3 };
+    expect(isGarbageComingSoon({ ...burnable, next })).toBe(true);
+    expect(isGarbageComingSoon({ ...burnable, next: { ...next, days_until: 4 } })).toBe(
+      false
+    );
+  });
+
+  it("予定が無ければ近くはない", () => {
+    expect(isGarbageComingSoon({ ...burnable, next: null })).toBe(false);
+  });
+});
+
+describe("collectGarbageNotes", () => {
+  it("今日・明日・この先の注記を重複なく集める", () => {
+    const notes = collectGarbageNotes(
+      schedule({
+        today: day({ notes: ["年末年始のため収集なし"] }),
+        tomorrow: day({
+          date: "2026-08-15",
+          weekday: "土",
+          days_until: 1,
+          notes: ["年末年始のため収集なし"],
+        }),
+        upcoming: [day({ date: "2026-08-18", weekday: "火", days_until: 4, notes: ["振替収集"] })],
+      })
+    );
+    expect(notes).toEqual(["年末年始のため収集なし", "振替収集"]);
   });
 });
 
