@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.13.0",
+    date: "2026-08-23",
+    changes: [
+      "ダッシュボードから家電を直接操作できるようになりました。エアコンカードをタップすると操作パネルが開き、電源・設定温度・運転モード・風量/風向をその場で変更できます。また「電気の操作」カードから、あらかじめ登録した照明やテレビなどのリモコン操作をボタン一つで実行できるようになりました。",
+    ],
+  },
+  {
     version: "3.12.0",
     date: "2026-08-23",
     changes: [
