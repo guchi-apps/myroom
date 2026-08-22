@@ -38,6 +38,13 @@ AirCloud Home から日別の電力使用量（kWh）と電気代（円）を取
 - 複数台ある場合は**全台の合計**を送る。1台だけにしたいときは `--unit`（`racName` か `vendorThingId`）
 - レート制限（429）に当たったら、理由を出して終了コード1で終わる。次回の実行で取り直せばよい
 
+> **`API error: 405 {"detail":"Method Not Allowed"}` で落ちたら、まずデプロイの成否を疑う。**
+> `backend/main.py` の末尾にフロントエンド配信用の catch-all
+> （`@app.api_route("/{full_path:path}", methods=["GET", "HEAD"])`）があるため、
+> **まだ本番に無いPOSTのエンドポイントを叩くと、パスだけ catch-all に一致して 404 ではなく 405 になる。**
+> 「メソッドが違う」ように見えるが、実際は「そのバージョンがまだ本番に無い」。
+> `gh run list --repo guchi-apps/myroom --workflow deploy.yml` で直近のデプロイを確認する（#204）。
+
 ### 依存
 
 **`requests` だけ。** サブPCのシステムPython（3.12）に導入済みなので、venvを用意しなくても動く。
