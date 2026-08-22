@@ -19,7 +19,9 @@ import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
+import { CleanerCard } from "@/components/cleaner-card";
 import { PowerCard } from "@/components/power-card";
+import { RemoteCard } from "@/components/remote-card";
 import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
@@ -28,10 +30,12 @@ import { Button } from "@/components/ui/button";
 import {
   fetchDashboardData,
   fetchDevices,
+  fetchCleanerSummary,
   fetchEnergyBreakdown,
   fetchGarbageSchedule,
   fetchOutdoorLocation,
   fetchAirconUnitsResponse,
+  fetchRemoteButtons,
   fetchSensorsStatus,
 } from "@/lib/api";
 import {
@@ -75,10 +79,13 @@ import {
   COMING_SOON_CARDS,
   COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
+  CLEANER_CARD_KEY,
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
+  REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import type { GarbageSchedule } from "@/lib/garbage";
+import type { RemoteButtons } from "@/lib/remote";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
 import {
   loadUiSettingsFromServer,
@@ -108,6 +115,7 @@ import {
   type AirconData,
   type AirconUnitInfo,
   type ChartMetric,
+  type CleanerSummary,
   type ChartViewRange,
   type DailyStat,
   type DeviceDataLoadStatus,
@@ -408,8 +416,12 @@ export function MyRoomDashboard() {
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
+  const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
+  const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
   const [energyError, setEnergyError] = useState(false);
+  const [cleanerSummary, setCleanerSummary] = useState<CleanerSummary | null>(null);
+  const [cleanerError, setCleanerError] = useState(false);
   const [energyPanelOpen, setEnergyPanelOpen] = useState(false);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
@@ -473,8 +485,10 @@ export function MyRoomDashboard() {
     [displayOrder, hiddenDeviceKeys]
   );
 
+  const remoteCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, REMOTE_CARD_KEY);
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
   const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
+  const cleanerCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, CLEANER_CARD_KEY);
   const comingSoonVisible = isHiddenKeyVisible(hiddenDeviceKeys, COMING_SOON_SECTION_KEY);
 
   const {
@@ -643,11 +657,13 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage, energy] = await Promise.all([
+        const [data, sensorsStatus, garbage, energy, remote, cleaner] = await Promise.all([
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
           fetchGarbageSchedule().catch(() => null),
           fetchEnergyBreakdown().catch(() => null),
+          fetchRemoteButtons().catch(() => null),
+          fetchCleanerSummary().catch(() => null),
         ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
@@ -666,6 +682,10 @@ export function MyRoomDashboard() {
         setGarbageError(garbage == null);
         if (energy) setEnergyBreakdown(energy);
         setEnergyError(energy == null);
+        if (remote) setRemoteButtons(remote);
+        setRemoteError(remote == null);
+        if (cleaner) setCleanerSummary(cleaner);
+        setCleanerError(cleaner == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -961,12 +981,19 @@ export function MyRoomDashboard() {
 
         {/* PCでは左に計測値、右に暮らし・近日公開。スマホでは上から順に1列で並ぶ */}
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
-          {(garbageCardVisible || energyCardVisible) && (
+          {(remoteCardVisible || garbageCardVisible || energyCardVisible || cleanerCardVisible) && (
             <section className="lg:col-start-2 lg:row-start-1">
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
               </div>
               <div className="flex flex-col gap-3">
+                {remoteCardVisible && (
+                  <RemoteCard
+                    buttons={remoteButtons}
+                    loading={!dashboardDataLoaded && remoteButtons == null}
+                    error={remoteError && remoteButtons == null}
+                  />
+                )}
                 {garbageCardVisible && (
                   <GarbageCard
                     schedule={garbageSchedule}
@@ -980,6 +1007,13 @@ export function MyRoomDashboard() {
                     loading={!dashboardDataLoaded && energyBreakdown == null}
                     error={energyError && energyBreakdown == null}
                     onOpenDetail={() => setEnergyPanelOpen(true)}
+                  />
+                )}
+                {cleanerCardVisible && (
+                  <CleanerCard
+                    summary={cleanerSummary}
+                    loading={!dashboardDataLoaded && cleanerSummary == null}
+                    error={cleanerError && cleanerSummary == null}
                   />
                 )}
               </div>
@@ -1173,7 +1207,7 @@ export function MyRoomDashboard() {
             />
           </section>
 
-          {comingSoonVisible && (
+          {comingSoonVisible && COMING_SOON_CARDS.length > 0 && (
             <section className="lg:col-start-2 lg:row-start-2">
               <div className="mb-3 px-0.5">
                 <h2 className="section-title text-muted-foreground">

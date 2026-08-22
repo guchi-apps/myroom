@@ -201,7 +201,7 @@ SwitchBot 風のスマートホーム UI をベースに、スマホ向け（最
 
 朝いちばんに知りたい予定を先頭に置き、時系列グラフは掘り下げる情報として下へ回しています。
 
-1. **暮らし（1列）** — ゴミの日・消費電力など、推移グラフの凡例を持たないカード
+1. **暮らし（1列）** — 電気の操作・ゴミの日・消費電力など、推移グラフの凡例を持たないカード
 2. **センサー（2列グリッド・PCでは3列）** — 屋内デバイス / 屋外 / エアコン。カードタップでデバイス詳細（グラフ・記録一覧）
 3. **推移（履歴グラフ）** — 指標タブ（温度・湿度・気圧・CO2・照度）で切り替え。スマホではグラフ上と画面下部の固定バーの両方から操作可能
 4. **最近の記録** — 日ごとの最高・最低値をバー表示
@@ -513,16 +513,71 @@ cp collectors/systemd/myroom-tapo-energy.service collectors/systemd/myroom-tapo-
 systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-energy.timer
 ```
 
+### 電気の操作（Nature Remo）
+
+Nature Remo に登録済みのリモコン操作を、ダッシュボードの「暮らし」セクションのボタンから押せます。
+`data/remote.json`（**リポジトリに含まれる**手編集ファイル）に出したいボタンを書くと、そのとおりに並びます。
+
+**照明が点いているかどうかは表示しません。** 赤外線は片方向で、機器が受け取ったかは返ってこないため、
+状態を持つと画面と部屋の実態が必ずずれます。物理リモコンと同じ「押したら飛ぶだけ」に揃えることで、
+状態の同期・Cloud API のレート制限（30回/5分）・バックエンドでのポーリングがまとめて不要になります（#106）。
+そのため **Nature Remo を叩くのは押したときだけ**で、一覧の取得では叩きません。
+
+```jsonc
+{
+  "groups": [
+    {
+      "id": "light",
+      "name": "照明",
+      "buttons": [
+        // Nature Remo に「照明」として登録した機器
+        { "id": "light-on",  "label": "点ける", "appliance_id": "xxxx", "button": "on" },
+        { "id": "light-off", "label": "消す",   "appliance_id": "xxxx", "button": "off" }
+      ]
+    },
+    {
+      "id": "tv",
+      "name": "テレビ",
+      // 「その他」として登録した赤外線は signal_id で押す
+      "buttons": [{ "id": "tv-power", "label": "電源", "signal_id": "xxxx" }]
+    }
+  ]
+}
+```
+
+- **押し方は2通りあります。** Nature Remo アプリで **「照明」として登録した機器は `signals` を持ちません**。
+  `GET /1/appliances` が返す `signals` は空で、`light.buttons` に `on` / `off` / `night` などが入り、
+  `POST /1/appliances/{id}/light` でしか押せません。部屋の電気はこの登録になっていることが多いため、
+  `signal_id` だけでは肝心の照明を出せません。「その他」として登録した赤外線は `signal_id` を使います
+- **「エアコン」として登録した機器はこのカードでは押せません。** 温度・モードを持つ専用APIしか無く、
+  ボタン1つに対応しません。ボタンとして出したい場合は Nature Remo アプリで「その他」として登録し直します
+- `id` を省くと `group1` / `group1-1` のように自動で付きます。このIDが送信APIのパスになるため、
+  重複したボタンIDは（押す先が定まらないので）後から書いた方を捨てます
+- 貼り付け用の一覧はスクリプトで出せます。`data/remote.json` を書くときだけ Nature Remo を叩きます
+
+  ```bash
+  # リポジトリルートで。.env に NATURE_REMO_TOKEN があれば環境変数の指定は不要
+  python scripts/list-remo-signals.py
+  ```
+
+- 環境変数 `NATURE_REMO_TOKEN` が未設定だと、押したときに「トークンが設定されていません」を返します
+  （一覧の表示には影響しません）。トークンは https://home.nature.global/ で発行します
+- API は `GET /api/remote/buttons`（一覧）と `POST /api/remote/buttons/{id}/send`（押す）の2本で、
+  どちらも他のダッシュボードAPIと同じ Supabase JWT 認証です。実装は `backend/remote.py`
+- **signal ID・appliance ID は画面へ返しません。** 押すのに要るのはボタンIDだけで、外へ出す値は少ないほど安全です
+- カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
+
 ### ゴミの日
 
 収集日を `data/garbage.json`（**リポジトリに含まれる**手編集ファイル）に書くと、ダッシュボードの
-「暮らし」セクションに次の収集が見出しで出て、今日・明日とこの先の予定（最大3件）が並び、
+「暮らし」セクションに次の収集が見出しで出て、今日・明日の予定と、品目ごとの次の収集日が並び、
 前日夜に Signaly へ通知が飛びます。
 外部 API もスクレイピングも使わず、書いたルールから日付を計算するだけです。
 
 ```jsonc
 {
-  "area": "茨木市",
+  // 画面には出ません。どの市のどの地区のルールかを編集する人に伝えるためのメモです
+  "area": "高槻市 出丸町",
   "notify_hour": 20,               // 通知する時刻（JST・0〜23）
   "categories": [
     {
@@ -530,13 +585,13 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
       "name": "普通ごみ",
       "color": "#e67e22",
       "note": "生ごみ・紙くずなど",
-      "rules": [{ "type": "weekly", "weekdays": ["tue", "fri"] }]
+      "rules": [{ "type": "weekly", "weekdays": ["mon", "thu"] }]
     },
     {
       "id": "recyclable",
-      "name": "資源ごみ",
-      // 第2・最終水曜（weeks は 1〜5 と -1（最終週）が使える）
-      "rules": [{ "type": "monthly", "weekday": "wed", "weeks": [2, -1] }]
+      "name": "リサイクルごみ",
+      // 第2・第4火曜（weeks は 1〜5 と -1（最終週）が使える）
+      "rules": [{ "type": "monthly", "weekday": "tue", "weeks": [2, 4] }]
     }
   ],
   "exceptions": [
@@ -548,6 +603,9 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
 ```
 
 - `weekday` / `weekdays` は `mon`〜`sun` でも `月`〜`日` でも書けます
+- **`categories` の並び順が、カードの「品目ごとの次の収集」の並び順になります。** 日付順には
+  並べ替えません（毎日順番が入れ替わると目的の品目を探しにくいため）。約2か月先まで収集が
+  見つからない品目は「予定なし」と出るので、ルールの書き忘れに気付けます
 - 年末年始などの変則日程は `exceptions` に書きます。`cancel: true` でその日を全休、
   `cancel: ["id"]` で品目を指定して中止、`add: ["id"]` で臨時収集を追加
 - 通知は `backend/garbage_notify.py`。バックエンドが5分ごとに呼び、`notify_hour` の時刻にだけ送信します
@@ -557,11 +615,16 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
 - 同じ収集日に二重通知しないよう、送信済みの日付を `data/garbage_notify_state.json`（gitignore）に残します
 - カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
 
+**いま書いてあるルールの出どころは Notion の「しおり › 情報本体 › ♻️ ゴミ分別ルール（高槻市・出丸町）」**
+（分別区分マスターデータの表）です。引越しや市の変更でルールを直すときは、まず Notion 側の
+その表を直してから `data/garbage.json` へ写してください。**逆順にすると Notion 側の
+「ゴミの日」データベースが次の同期で巻き戻ります**（下記）。
+
 #### Notion への書き出し（dayspan のカレンダー連携）
 
 収集日を Notion のデータベースへ書き出し、Notion を読むアプリ（dayspan など）のカレンダーから
 見えるようにします。**収集日の正はあくまで `data/garbage.json`** で、Notion 側を手で書き換えても
-次の同期で戻ります。
+次の同期で戻ります（`data/garbage.json` に無い日のページは自動でアーカイブされます）。
 
 ```json
 "notion": {
@@ -636,7 +699,7 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
 | PUT | `/api/outdoor-location` | 屋外地点の更新（要認証） |
 | GET | `/api/outdoor-location/search?q=大阪` | 地名検索（要認証） |
 | GET | `/api/sensors/status` | センサー鮮度ステータス（要認証） |
-| GET | `/api/garbage` | ゴミの日（今日・明日・次の収集、要認証） |
+| GET | `/api/garbage` | ゴミの日（今日・明日・この先の予定・品目ごとの次の収集、要認証） |
 | GET | `/api/internal/room-state` | 部屋の状態のスナップショット（**サーバー間専用**・下記） |
 
 ### サーバー間参照用の内部API
@@ -728,6 +791,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `garbage-notion-token` | ゴミの日を書き出す Notion インテグレーションのトークン（`GARBAGE_NOTION_TOKEN` として同期） |
 | `garbage-notion-data-source-id` | 書き出し先の Notion データソースID（`GARBAGE_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
 | `internal-api-key` | サーバー間参照用APIのトークン（`INTERNAL_API_KEY` として同期）。AIDE 側の `op://apps/aide/myroom-token` と**同じ値**にする |
+| `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
@@ -812,6 +876,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 | `GARBAGE_NOTION_TOKEN` | secret `GARBAGE_NOTION_TOKEN` | このリポジトリ |
 | `GARBAGE_NOTION_DATA_SOURCE_ID` | secret `GARBAGE_NOTION_DATA_SOURCE_ID` | このリポジトリ |
 | `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
+| `NATURE_REMO_TOKEN` | secret `NATURE_REMO_TOKEN` | このリポジトリ |
 | `DB_NAME` | secret `DB_NAME` | このリポジトリ |
 | `DB_USER` | secret `SHARED_DB_USER` | organization 共通 |
 | `DB_PASSWORD` | secret `SHARED_DB_PASSWORD` | organization 共通 |

@@ -12,6 +12,7 @@ import {
   type AirconUnitInfo,
   type DailyStat,
   type DeviceDataLoadStatus,
+  type CleanerSummary,
   type DeviceInfo,
   type EnergyBreakdown,
   type HistoryPoint,
@@ -25,6 +26,7 @@ import {
   type UiSettings,
 } from "@/lib/types";
 import type { GarbageSchedule } from "@/lib/garbage";
+import type { RemoteButtons, RemoteSendResult } from "@/lib/remote";
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
 import { toApiDateTime, type AirconHistoryPoint } from "@/lib/history-loader";
 import { expandDeviceIdsForHistory } from "@/lib/device-inheritance";
@@ -372,10 +374,40 @@ export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
   return fetchJson<GarbageSchedule>("/api/garbage");
 }
 
+/** 電気の操作カード用。押せるボタンの一覧だけを取る（Nature Remo は叩かない） */
+export async function fetchRemoteButtons(): Promise<RemoteButtons> {
+  return fetchJson<RemoteButtons>("/api/remote/buttons");
+}
+
+/** ボタンを押す。失敗した理由はそのままカードに出すため、detail を Error に載せる */
+export async function sendRemoteButton(buttonId: string): Promise<RemoteSendResult> {
+  let res: Response;
+  try {
+    res = await fetchWithAuth(
+      `/api/remote/buttons/${encodeURIComponent(buttonId)}/send`,
+      { method: "POST" }
+    );
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
+    // ここへ来るのは fetch 自体が失敗したとき。文言はそのままカードに出る
+    throw new Error("通信できませんでした（オフラインかもしれません）");
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<RemoteSendResult>;
+}
+
 /** 消費電力カード用。エアコンとスマートプラグをまとめた集計を取る */
 export async function fetchEnergyBreakdown(days = 30): Promise<EnergyBreakdown> {
   const params = new URLSearchParams({ days: String(days) });
   return fetchJson<EnergyBreakdown>(`/api/energy/breakdown?${params.toString()}`);
+}
+
+/** お掃除ロボットカード用。最終起動・いまの状態・直近の稼働をまとめて取る */
+export async function fetchCleanerSummary(): Promise<CleanerSummary> {
+  return fetchJson<CleanerSummary>("/api/cleaner/summary");
 }
 
 export interface LatestBatchResult {

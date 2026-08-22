@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.12.0",
+    date: "2026-08-23",
+    changes: [
+      "お掃除ロボット（eufy）の稼働履歴を記録し、いつ・何分掃除したかをダッシュボードで確認できるようになりました。また、スマートプラグの消費電力について、これまで見えていなかった過去1か月分のデータもさかのぼって表示されるようになりました。ゴミの日カードでは、品目ごとに「次はいつ出せるか」がひと目で分かるようになりました。",
+    ],
+  },
+  {
     version: "3.11.0",
     date: "2026-08-22",
     changes: [

@@ -82,6 +82,7 @@ jobs:
       GARBAGE_NOTION_DATA_SOURCE_ID: ${{ secrets.GARBAGE_NOTION_DATA_SOURCE_ID }}
       GARBAGE_NOTION_TOKEN: ${{ secrets.GARBAGE_NOTION_TOKEN }}
       INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+      NATURE_REMO_TOKEN: ${{ secrets.NATURE_REMO_TOKEN }}
       SENSOR_WEBHOOK_URL: ${{ secrets.SENSOR_WEBHOOK_URL }}
       SIGNALY_WEBHOOK_URL: ${{ secrets.SIGNALY_WEBHOOK_URL }}
       TARGET_DIR: ${{ secrets.TARGET_DIR }}
@@ -146,6 +147,7 @@ jobs:
           GARBAGE_NOTION_TOKEN: ${{ env.GARBAGE_NOTION_TOKEN }}
           GARBAGE_NOTION_DATA_SOURCE_ID: ${{ env.GARBAGE_NOTION_DATA_SOURCE_ID }}
           INTERNAL_API_KEY: ${{ env.INTERNAL_API_KEY }}
+          NATURE_REMO_TOKEN: ${{ env.NATURE_REMO_TOKEN }}
           DB_USER: ${{ env.DB_USER }}
           DB_PASSWORD: ${{ env.DB_PASSWORD }}
           DB_HOST: ${{ env.DB_HOST }}
@@ -165,6 +167,7 @@ jobs:
           GARBAGE_NOTION_TOKEN_B64=$(b64 "$GARBAGE_NOTION_TOKEN")
           GARBAGE_NOTION_DATA_SOURCE_ID_B64=$(b64 "$GARBAGE_NOTION_DATA_SOURCE_ID")
           INTERNAL_API_KEY_B64=$(b64 "$INTERNAL_API_KEY")
+          NATURE_REMO_TOKEN_B64=$(b64 "$NATURE_REMO_TOKEN")
           DB_USER_B64=$(b64 "$DB_USER")
           DB_PASSWORD_B64=$(b64 "$DB_PASSWORD")
           DB_HOST_B64=$(b64 "$DB_HOST")
@@ -197,6 +200,7 @@ jobs:
             sync_env_var GARBAGE_NOTION_TOKEN '${GARBAGE_NOTION_TOKEN_B64}'
             sync_env_var GARBAGE_NOTION_DATA_SOURCE_ID '${GARBAGE_NOTION_DATA_SOURCE_ID_B64}'
             sync_env_var INTERNAL_API_KEY '${INTERNAL_API_KEY_B64}'
+            sync_env_var NATURE_REMO_TOKEN '${NATURE_REMO_TOKEN_B64}'
             sync_env_var DB_USER '${DB_USER_B64}'
             sync_env_var DB_PASSWORD '${DB_PASSWORD_B64}'
             sync_env_var DB_HOST '${DB_HOST_B64}'

@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, energy, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, cleaner, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -210,6 +210,18 @@ class DailyEnergyPayload(BaseModel):
 
     source: Optional[str] = None
     records: List[DailyEnergyItem]
+
+class CleanerObservation(BaseModel):
+    """お掃除ロボットの1回ぶんの観測。収集スクリプトが数分おきに送ってくる。
+
+    `datetime` を省くとサーバー側の「いま」（JST）を使う。状態が変わっていなければ
+    行は増えず、最後に確認した時刻と残量だけが進む。
+    """
+
+    event: str
+    datetime: Optional[str] = None
+    battery: Optional[int] = None
+
 
 class AirconData(BaseModel):
     datetime: str
@@ -613,6 +625,28 @@ def get_internal_room_state(
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
     return garbage.build_payload()
+
+
+@app.get("/api/remote/buttons")
+def get_remote_buttons(_: dict = Depends(get_current_user)):
+    """押せるリモコン操作の一覧。data/remote.json の定義をそのまま返す。
+
+    ここでは Nature Remo を叩かない。外部APIへ出るのは実際に押したときだけ（#106）。
+    """
+    return remote.build_payload()
+
+
+@app.post("/api/remote/buttons/{button_id}/send")
+def send_remote_button(button_id: str, _: dict = Depends(get_current_user)):
+    """赤外線を送る。
+
+    返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは
+    赤外線が片方向のため分からない。
+    """
+    try:
+        return remote.press(button_id)
+    except remote.RemoteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
 
 
 @app.get("/api/auth/me")
@@ -1092,6 +1126,48 @@ def get_energy_breakdown(
     家全体の今日・今月・先月同日までの合計と、日別の内訳を1度に返す。
     """
     return energy.get_breakdown(db, get_now_jst().date(), history_days=days)
+
+
+@app.post("/api/cleaner")
+async def create_cleaner_observation(
+    payload: CleanerObservation,
+    db: Session = Depends(database.get_db),
+):
+    """お掃除ロボットの状態を受け取る（サブPCの収集スクリプトから）。
+
+    **同じ状態が続いている間は行を増やさない。** 収集は数分おきに送ってくるため、
+    そのまま追記すると1日で数百行になり、稼働履歴として読めなくなる。
+    """
+    try:
+        event = cleaner.normalize_event(payload.event)
+        observed_at = (
+            cleaner.parse_datetime(payload.datetime)
+            if payload.datetime
+            else get_now_jst()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    battery = cleaner.parse_battery(payload.battery)
+
+    if database.DB_MOCK:
+        return {"status": "mock_ok", "event": event, "changed": False}
+
+    try:
+        result = cleaner.record_observation(db, observed_at, event, battery)
+        return {"status": "ok", **result}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/cleaner/summary")
+def get_cleaner_summary(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """お掃除ロボットカード用。最終起動・いまの状態・直近の稼働・当月の回数を返す。"""
+    return cleaner.get_summary(db, get_now_jst())
 
 
 @app.get("/api/aircon/latest")
