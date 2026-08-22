@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.11.0",
+    date: "2026-08-22",
+    changes: [
+      "エアコンの電気代が、単価から計算した目安ではなく、取得元アプリが返す実際の金額で表示されるようになりました。",
+    ],
+  },
+  {
     version: "3.10.1",
     date: "2026-08-22",
     changes: [
