@@ -31,6 +31,14 @@
 | フロントエンドのLint | `npm run lint` | **`frontend/`** |
 | フロントエンドの依存 | `npm ci` | **`frontend/`** |
 
+**バックエンドのテストは `TZ=Asia/Tokyo` を付けて実行する。** サブPCもGitHub Actionsのランナーも
+タイムゾーンはUTCで、そのまま流すと `tests/test_energy.py` の2件（`test_energy_summary_returns_mock_data`・
+`test_energy_breakdown_returns_mock_data`）が **15:00 UTC 以降だけ** 落ちる。消費電力のモックが
+`datetime.date.today()`（ホストのローカル日）で作られるのに対し、APIは `get_now_jst()` を使うため、
+日付が1日ずれて日数が1本足りなくなる（`len(daily) == 29`）。テストの失敗ではなくモックの前提の問題で、
+`TZ=Asia/Tokyo` を付ければ通る。**新しくモックデータを足すときは、日時をサーバーの「いま」から
+受け取る形にしておくこと**（`generate_mock_cleaner_rows(now)` はこの形）。
+
 CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`（Node 20）の
 2ジョブに分かれている。**触った層のコマンドだけ実行すればよい。**
 
