@@ -24,7 +24,11 @@ import { deviceDht11VisibilityKey } from "@/lib/chart-line-visibility";
 import { buildDefaultChartLineVisibility } from "@/lib/chart-line-visibility";
 import { outdoorMetricVisibilityKey } from "@/lib/chart-line-visibility";
 import { AIRCON_CHART_DEVICE_ID, getSensorDeviceIds } from "@/lib/types";
-import { COMING_SOON_SECTION_KEY, GARBAGE_CARD_KEY } from "@/lib/dashboard-sections";
+import {
+  COMING_SOON_SECTION_KEY,
+  ENERGY_CARD_KEY,
+  GARBAGE_CARD_KEY,
+} from "@/lib/dashboard-sections";
 
 describe("visible-devices", () => {
   it("includes real sensor device id 3", () => {
@@ -49,6 +53,7 @@ describe("visible-devices", () => {
         "airconTarget",
         "outdoor",
         GARBAGE_CARD_KEY,
+        ENERGY_CARD_KEY,
         COMING_SOON_SECTION_KEY,
       ].sort()
     );
@@ -161,6 +166,7 @@ describe("visible-devices", () => {
 
   it("暮らしセクションのカードも表示・非表示の対象キーに含む", () => {
     expect(buildAllDashboardTargetKeys([1, 2]).has(GARBAGE_CARD_KEY)).toBe(true);
+    expect(buildAllDashboardTargetKeys([1, 2]).has(ENERGY_CARD_KEY)).toBe(true);
   });
 
   it("近日公開セクションはセクションごと表示・非表示を切り替えられる", () => {

@@ -1,0 +1,20 @@
+[Unit]
+# AirCloud Home（白くまくんアプリ）から日別の電力使用量を取り、MyRoom へ送る。
+# BLEを使わずクラウドAPI同士で完結するため、ラズパイではなくサブPCで動かしている
+# （CO2センサーの収集だけはBLEの届く場所が要るのでラズパイに残る）。
+Description=MyRoom: エアコンの日別使用量を AirCloud Home から取得して送る
+Documentation=https://github.com/guchi-apps/myroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# 日付ごとにAPIを1回ずつ叩き、間に2秒の間隔を空ける。既定の2日ぶんでも十数秒で終わる。
+TimeoutStartSec=5min
+
+# venv は使わない。リポジトリの venv/ はメインPCのpyenv向けでサブPCでは動かず、
+# このスクリプトの依存は requests だけ（サブPCのシステムPythonに導入済み）。
+WorkingDirectory=%h/apps/myroom
+ExecStart=/usr/bin/python3 %h/apps/myroom/collectors/aircon_energy_to_myroom.py
+Nice=10

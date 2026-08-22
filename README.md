@@ -16,6 +16,7 @@ myroom/
 │   ├── devices.json           # デバイス表示名
 │   └── outdoor_location.json  # 屋外地点
 ├── scripts/           # 開発用起動スクリプト
+├── collectors/        # サブPCで動かす収集スクリプト＋systemdユニット
 └── migrate_db.py      # DB スキーマ更新
 ```
 
@@ -200,7 +201,7 @@ SwitchBot 風のスマートホーム UI をベースに、スマホ向け（最
 
 朝いちばんに知りたい予定を先頭に置き、時系列グラフは掘り下げる情報として下へ回しています。
 
-1. **暮らし（1列）** — ゴミの日など、計測値ではないカード
+1. **暮らし（1列）** — ゴミの日・エアコンの電気代など、推移グラフの凡例を持たないカード
 2. **センサー（2列グリッド・PCでは3列）** — 屋内デバイス / 屋外 / エアコン。カードタップでデバイス詳細（グラフ・記録一覧）
 3. **推移（履歴グラフ）** — 指標タブ（温度・湿度・気圧・CO2・照度）で切り替え。スマホではグラフ上と画面下部の固定バーの両方から操作可能
 4. **最近の記録** — 日ごとの最高・最低値をバー表示
@@ -219,9 +220,9 @@ PC では 1〜6 のうち、左カラムに センサー・推移・最近の記
 置き場所を次のように決めています（`frontend/lib/dashboard-sections.ts`）。
 
 - **センサー** — 時系列グラフを持つ計測値。2列グリッド（PCでは3列）。並び順は `display_order`（グラフ凡例と共通）で管理
-- **暮らし** — 計測値ではないもの。1行あたりの情報量がカードごとに違うため1列で全幅。
-  グラフ凡例を持たないので `display_order` には混ぜず、並びは `LIFE_CARDS` の定義順で固定。
-  表示・非表示だけは共通の `hidden_devices`（表示設定ページ）で管理
+- **暮らし** — 推移グラフの凡例を持たないもの（予定・操作、および日ごとの集計値）。
+  1行あたりの情報量がカードごとに違うため1列で全幅。`display_order` には混ぜず、
+  並びは `LIFE_CARDS` の定義順で固定。表示・非表示だけは共通の `hidden_devices`（表示設定ページ）で管理
 - **近日公開** — まだ作っていない機能の案内。`COMING_SOON_CARDS` の定義順。カード単位ではなく
   セクションごと `COMING_SOON_SECTION_KEY` で表示・非表示を切り替える。実装が済んだカードは
   ここから消し、センサーか暮らしの本物のカードに置き換える
@@ -241,6 +242,8 @@ API・DB側の変更は要らない。
 | 気圧 | hPa | 整数、紫色 (`#9b59b6`) |
 | CO2 | ppm | 整数、オレンジ (`#e67e22`) |
 | 照度 | lx | 小数点第1位、黄色 (`#f1c40f`) |
+| 電力使用量 | kWh | 小数点第1位、アンバー (`#f39c12`) |
+| 電気代 | 円 | 整数（3桁区切り）。単価を掛けた**目安** |
 
 ### 履歴グラフ
 
@@ -297,7 +300,7 @@ curl -X POST "https://myroom.gucchii.com/api/sensor?device=2" \
 - CO2 値は UI のセンサーカードに ppm として表示
 
 **Raspberry Pi 上のスクリプト・セットアップ手順**（WinSCP、SSH、BLE/`btmon`、systemd、トラブルシューティング）は  
-[m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。`myroom-api/README.md` を参照してください。
+[guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。`myroom-api/README.md` を参照してください。
 
 ### エアコン（白くまくんアプリ / AirCloud Home + Raspberry Pi）
 
@@ -328,7 +331,7 @@ sudo ./install.sh
 sudo systemctl start aircon-myroom.timer
 ```
 
-Raspberry Pi 上のスクリプトは [m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
+Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
 
 取得できる主な項目: 室温、設定温度、運転モード、電源 ON/OFF、風量・風向、オンライン状態など（詳細は下記参照）。
 
@@ -344,7 +347,49 @@ Raspberry Pi 上のスクリプトは [m-guchi/pi0w_260719](https://github.com/m
 **DB マイグレーション**（本番 DB 利用時）:
 
 ```bash
-python3 migrate_db.py   # aircon テーブルを作成
+python3 migrate_db.py   # aircon / daily_energy テーブルを作成
+```
+
+### 電気代（日別の電力使用量）
+
+取得元を問わない日別テーブル `daily_energy` に使用量（kWh）をためて、ダッシュボードの「暮らし」
+セクションに電気代の目安を出します。エアコンぶんは AirCloud Home の
+`rac/energy-consumptions/summary/v3` から取れるため、**運転状態とは別枠（1時間間隔）で**送ります
+（状態の取得は5分間隔・レート制限があるため同じ間隔では回せません）。
+
+**送り手は Raspberry Pi ではなくサブPC**です。この取得はクラウドAPI同士で完結し BLE を使わないため、
+センサーの近くに居る必要がありません。スクリプトは [`collectors/`](collectors/README.md)、
+定期実行の systemd ユニットは [`collectors/systemd/`](collectors/systemd/) にあります
+（運転状態と CO2 の収集は引き続き Raspberry Pi 側）。
+
+| 用途 | URL |
+|------|-----|
+| API（日別使用量 POST） | https://myroom.gucchii.com/api/energy |
+| API（集計 GET・要ログイン） | https://myroom.gucchii.com/api/energy/summary |
+
+```bash
+# 1日ぶん、または複数日まとめて送る
+curl -X POST "https://myroom.gucchii.com/api/energy" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"aircon","records":[{"date":"2026-08-22","kwh":2.4}]}'
+```
+
+- `records[].date` は `YYYY-MM-DD`。`kwh` か `cost_yen` の**どちらか1つ以上**が必須
+- **同じ `(date, source)` は上書きします。** 当日ぶんは1日のあいだ増えていくため、
+  追記だと二重計上になります。何度送っても構いません
+- `source` は取得元の識別子。エアコンは `aircon`、スマートプラグなら `tapo:<機器名>` のように
+  「種別:識別子」で書きます。レコードごとに `records[].source` で上書きもできます
+- **金額は目安です。** 取得元が返すのは使用量だけなので、`ui_settings` の `energy_unit_price`
+  （円/kWh・既定 31）を掛けて計算します。単価はカードをタップした詳細パネルから変更できます。
+  取得元が `cost_yen` を返した場合だけ、その値をそのまま使います
+- 集計（`/api/energy/summary?source=aircon&days=30`）は今日・昨日・今月・先月・先月の同じ日まで・
+  日別を1度に返します。「今月 vs 先月の同じ時期」の比較はこれを使っています
+- カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
+
+**DB マイグレーション**（本番 DB 利用時）:
+
+```bash
+python3 migrate_db.py   # daily_energy テーブルを作成
 ```
 
 ### ゴミの日

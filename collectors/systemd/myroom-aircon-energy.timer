@@ -1,0 +1,14 @@
+[Unit]
+Description=MyRoom: エアコンの日別使用量の取得（1時間ごと）
+
+[Timer]
+# エネルギー取得APIは1時間キャッシュ・レート制限がある（429で30分バックオフ）。
+# 運転状態の5分間隔とは別枠で、1時間ごとに回す。
+OnCalendar=hourly
+# 停止中に逃した実行を起動直後に走らせる。当日ぶんは上書きなので取り直して問題ない。
+Persistent=true
+# 毎時ちょうどに他のタイマーと一斉に外へ出さない。
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
