@@ -186,9 +186,23 @@ def generate_mock_history():
     start = end - datetime.timedelta(days=730)
     return generate_mock_history_for_range(start, end)
 
-def generate_mock_aircon_latest() -> dict:
-    return {
-        "ac_id": 1,
+#: モックのときだけ使う、画面から操作した内容の記憶（ac_id ごと）。
+#: 白くまくんの資格情報が無くても操作パネルを一通り動かせるようにするためだけのもので、
+#: プロセスが終われば消える。本番（DB_MOCK=false）では一切使わない。
+_MOCK_AIRCON_OVERRIDES: dict = {}
+
+
+def set_mock_aircon_override(ac_id: int, changes: dict) -> None:
+    _MOCK_AIRCON_OVERRIDES.setdefault(ac_id, {}).update(changes)
+
+
+def clear_mock_aircon_overrides() -> None:
+    _MOCK_AIRCON_OVERRIDES.clear()
+
+
+def generate_mock_aircon_latest(ac_id: int = 1) -> dict:
+    payload = {
+        "ac_id": ac_id,
         "datetime": datetime.datetime.now(),
         "name": "リビングエアコン",
         "source_name": "リビングエアコン",
@@ -198,10 +212,12 @@ def generate_mock_aircon_latest() -> dict:
         "mode": "COOLING",
         "power": "ON",
         "fan_speed": "AUTO",
-        "fan_swing": "AUTO",
+        "fan_swing": "VERTICAL",
         "online": True,
         "model": "RAS-KW4025D",
     }
+    payload.update(_MOCK_AIRCON_OVERRIDES.get(ac_id, {}))
+    return payload
 
 
 def generate_mock_aircon_history_for_range(
