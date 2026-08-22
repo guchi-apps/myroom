@@ -15,6 +15,17 @@ DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "myroom")
 DB_MOCK = os.getenv("DB_MOCK", "true").lower() == "true"
 
+# JST Timezone
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _today_jst() -> datetime.date:
+    """モック生成の「今日」。本番VPSはUTCで動くため、`datetime.date.today()`
+    だとUTC 15時〜24時（JSTでは日付が変わった後）に前日のままずれる。
+    エンドポイント側は `get_now_jst()` でJSTの日付を使っているので合わせる。"""
+    return datetime.datetime.now(JST).date()
+
+
 Base = declarative_base()
 
 SENSOR_READINGS_TABLE = "sensor_readings"
@@ -216,7 +227,7 @@ def generate_mock_aircon_history_for_range(
 
 def generate_mock_daily():
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(30):
         d = today - datetime.timedelta(days=i)
         data.append({
@@ -232,7 +243,7 @@ def generate_mock_daily():
 
 def generate_mock_aircon_daily(ac_id: int = 1) -> list:
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(30):
         d = today - datetime.timedelta(days=i)
         base = 24.5 + random.uniform(-1.5, 1.5)
@@ -247,7 +258,7 @@ def generate_mock_aircon_daily(ac_id: int = 1) -> list:
 def generate_mock_daily_energy(source: str = "aircon", days: int = 75) -> list:
     """モック用の日別使用量。当日は「まだ途中」に見えるよう少なめにする。"""
     data = []
-    today = datetime.date.today()
+    today = _today_jst()
     for i in range(days):
         d = today - datetime.timedelta(days=i)
         # 夏冬に増えて春秋に減る、ゆるい季節変動
@@ -276,7 +287,7 @@ def generate_mock_energy_rows(days: int = 75) -> list:
     消費電力カードはエアコンとスマートプラグを1枚にまとめるため、
     モックでも複数の取得元が混ざった状態を作る。
     """
-    today = datetime.date.today()
+    today = _today_jst()
     rows = []
     for source, factor, power_w in MOCK_ENERGY_SOURCES:
         for row in generate_mock_daily_energy(source, days):
