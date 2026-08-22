@@ -15,7 +15,7 @@ import {
   CHART_METRICS,
   DASHBOARD_SENSOR_DEVICE_IDS,
 } from "@/lib/types";
-import { LIFE_CARDS } from "@/lib/dashboard-sections";
+import { COMING_SOON_SECTION_KEY, LIFE_CARDS } from "@/lib/dashboard-sections";
 
 export { AIRCON_TARGET_VISIBILITY_KEY } from "@/lib/chart-line-visibility";
 
@@ -44,6 +44,8 @@ export function buildAllDashboardTargetKeys(
   for (const card of LIFE_CARDS) {
     keys.add(card.key);
   }
+  // 近日公開セクションはカード単位ではなくセクションごと切り替える
+  keys.add(COMING_SOON_SECTION_KEY);
   return keys;
 }
 

@@ -50,6 +50,32 @@ describe("GarbageCard", () => {
     expect(html).toContain("振替収集");
   });
 
+  it("次の収集を見出しに出し、品目は設定した色で示す", () => {
+    const html = render(<GarbageCard schedule={schedule} loading={false} error={false} />);
+    expect(html).toContain("今日 8/18(火)");
+    expect(html).toContain("#e67e22");
+  });
+
+  it("この先の収集予定はAPIが返した数だけ並べる", () => {
+    const html = render(
+      <GarbageCard
+        schedule={{
+          ...schedule,
+          upcoming: [
+            { date: "2026-08-21", weekday: "金", days_until: 3, categories: [burnable], notes: [] },
+            { date: "2026-08-25", weekday: "火", days_until: 7, categories: [burnable], notes: [] },
+            { date: "2026-09-09", weekday: "水", days_until: 22, categories: [burnable], notes: [] },
+          ],
+        }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("8/21(金)");
+    expect(html).toContain("8/25(火)");
+    expect(html).toContain("9/9(水)");
+  });
+
   it("未設定なら書き換え先を案内する", () => {
     const html = render(
       <GarbageCard
