@@ -31,6 +31,14 @@
 | フロントエンドのLint | `npm run lint` | **`frontend/`** |
 | フロントエンドの依存 | `npm ci` | **`frontend/`** |
 
+**新しく作った worktree では、まず `cd frontend && npm ci` から始めること。**
+issue-deck のランチャーが「依存インストール済み」と伝えてくる場合でも、それが見ているのは
+リポジトリルートで、ルートには実質の依存が無い（`package-lock.json` は空のスタブ）。
+`frontend/node_modules` は空のままなので、`npm run test` は
+`Cannot find module 'vitest/config'` で落ちる。**なお、ルートで `npm install` 系を実行すると
+空のスタブだった `package-lock.json` に `packages` が書き足されて差分が出る。**
+コミットに含めないこと。
+
 CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`（Node 20）の
 2ジョブに分かれている。**触った層のコマンドだけ実行すればよい。**
 

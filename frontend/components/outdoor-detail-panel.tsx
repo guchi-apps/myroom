@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
+import { CurrentReadings } from "@/components/current-readings";
 import { EnvironmentChart } from "@/components/environment-chart";
 import type { ChartColorSettings } from "@/lib/chart-colors";
 import {
@@ -9,6 +10,7 @@ import {
   type ChartLineVisibilitySettings,
 } from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
+import { buildOutdoorReadings } from "@/lib/device-metrics";
 import { useOutdoorChartHistory } from "@/lib/use-outdoor-chart-history";
 import {
   CHART_METRICS,
@@ -16,6 +18,7 @@ import {
   type ChartMetric,
   type ChartViewRange,
   type HistoryPoint,
+  type LatestData,
 } from "@/lib/types";
 
 const OUTDOOR_LEGEND_ORDER: readonly DisplayOrderItem[] = [{ type: "outdoor" }];
@@ -25,6 +28,8 @@ const EMPTY_DEVICE_NAMES: Record<number, string> = {};
 interface OutdoorDetailPanelProps {
   open: boolean;
   locationName?: string;
+  /** カードから外した気圧を「いまの値」として出すための最新データ（#226） */
+  latest?: LatestData | null;
   chartColors: ChartColorSettings;
   lineVisibility: ChartLineVisibilitySettings;
   isOfflineMode?: boolean;
@@ -37,6 +42,7 @@ interface OutdoorDetailPanelProps {
 export function OutdoorDetailPanel({
   open,
   locationName,
+  latest = null,
   chartColors,
   lineVisibility: lineVisibilityProp,
   isOfflineMode = false,
@@ -101,6 +107,10 @@ export function OutdoorDetailPanel({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
+          <CurrentReadings
+            readings={buildOutdoorReadings(latest)}
+            measuredAt={latest?.datetime}
+          />
           <div className="px-3 py-3">
             <EnvironmentChart
               historyData={historyData}
