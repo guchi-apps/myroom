@@ -86,6 +86,141 @@ class TestBuildPayload:
         payload = tapo.build_payload(readings, datetime.date(2026, 8, 22))
         assert payload["records"][0]["kwh"] == 0.0
 
+    def test_history_comes_before_today(self):
+        """過去ぶんは古い順に並べ、瞬時電力は当日ぶんにだけ付ける。"""
+        readings = [
+            {
+                "name": "乾燥機",
+                "kwh_today": 2.1,
+                "power_w": 480.0,
+                "history": [
+                    (datetime.date(2026, 8, 20), 1.75),
+                    (datetime.date(2026, 8, 21), 0.0),
+                ],
+            }
+        ]
+        payload = tapo.build_payload(readings, datetime.date(2026, 8, 22))
+        assert payload == {
+            "records": [
+                {
+                    "date": "2026-08-20",
+                    "source": "tapo:乾燥機",
+                    "kwh": 1.75,
+                    "power_w": None,
+                },
+                {
+                    "date": "2026-08-21",
+                    "source": "tapo:乾燥機",
+                    "kwh": 0.0,
+                    "power_w": None,
+                },
+                {
+                    "date": "2026-08-22",
+                    "source": "tapo:乾燥機",
+                    "kwh": 2.1,
+                    "power_w": 480.0,
+                },
+            ]
+        }
+
+    def test_history_is_sent_even_without_today(self):
+        """当日ぶんが読めなくても、過去ぶんは送る。"""
+        readings = [
+            {
+                "name": "乾燥機",
+                "kwh_today": None,
+                "power_w": None,
+                "history": [(datetime.date(2026, 8, 21), 1.2)],
+            }
+        ]
+        payload = tapo.build_payload(readings, datetime.date(2026, 8, 22))
+        assert [r["date"] for r in payload["records"]] == ["2026-08-21"]
+
+
+class TestWindowStart:
+    def test_one_day_is_today_only(self):
+        assert tapo.window_start(datetime.date(2026, 8, 22), 1) == datetime.date(2026, 8, 22)
+
+    def test_counts_today_in_the_span(self):
+        assert tapo.window_start(datetime.date(2026, 8, 22), 3) == datetime.date(2026, 8, 20)
+
+    def test_rejects_zero(self):
+        with pytest.raises(ValueError):
+            tapo.window_start(datetime.date(2026, 8, 22), 0)
+
+
+class TestExtractDailyHistory:
+    """`get_energy_data` の応答（Wh の配列）を切り出す部分。
+
+    プラグは起点を月初へ丸め、92日ぶんをまとめて返す。実機（P110M）の応答をもとにしている。
+    """
+
+    JST = datetime.timezone(datetime.timedelta(hours=9))
+    START = datetime.datetime(2026, 8, 1, tzinfo=JST)
+
+    def _response(self, values):
+        return {
+            "get_energy_data": {
+                "data": list(values),
+                "start_timestamp": int(self.START.timestamp()),
+                "interval": 1440,
+            }
+        }
+
+    def test_converts_wh_to_kwh_and_skips_today(self):
+        # 8/1 から 0,0,1234,0,567（8/5 が当日）
+        response = self._response([0, 0, 1234, 0, 567] + [0] * 87)
+        history = tapo.extract_daily_history(
+            response, datetime.date(2026, 8, 5), datetime.date(2026, 8, 1)
+        )
+        assert history == [
+            (datetime.date(2026, 8, 3), 1.234),
+            (datetime.date(2026, 8, 4), 0.0),
+        ]
+
+    def test_drops_days_before_the_first_measurement(self):
+        """計測前の日も 0 で返るため、最初に0でなかった日より前は送らない。"""
+        response = self._response([0] * 13 + [267, 324] + [0] * 77)
+        history = tapo.extract_daily_history(
+            response, datetime.date(2026, 8, 16), datetime.date(2026, 8, 1)
+        )
+        assert history == [
+            (datetime.date(2026, 8, 14), 0.267),
+            (datetime.date(2026, 8, 15), 0.324),
+        ]
+
+    def test_trims_to_the_requested_window(self):
+        """月初へ丸められて返るぶんは、要求した期間まで切り詰める。"""
+        response = self._response([100, 200, 300, 400, 500] + [0] * 87)
+        history = tapo.extract_daily_history(
+            response, datetime.date(2026, 8, 5), datetime.date(2026, 8, 4)
+        )
+        assert history == [(datetime.date(2026, 8, 4), 0.4)]
+
+    def test_all_zero_returns_nothing(self):
+        """一度も計測していないプラグは、0 で埋めずに何も送らない。"""
+        response = self._response([0] * 92)
+        assert (
+            tapo.extract_daily_history(
+                response, datetime.date(2026, 8, 5), datetime.date(2026, 8, 1)
+            )
+            == []
+        )
+
+    def test_accepts_unwrapped_payload(self):
+        response = self._response([0, 0, 1234])["get_energy_data"]
+        history = tapo.extract_daily_history(
+            response, datetime.date(2026, 8, 4), datetime.date(2026, 8, 1)
+        )
+        assert history == [(datetime.date(2026, 8, 3), 1.234)]
+
+    @pytest.mark.parametrize("response", [None, {}, {"data": [1, 2]}, {"start_timestamp": 0}])
+    def test_broken_response_raises(self, response):
+        with pytest.raises(ValueError):
+            tapo.extract_daily_history(
+                response, datetime.date(2026, 8, 5), datetime.date(2026, 8, 1)
+            )
+
 
 class TestLoadConfig:
     def test_requires_credentials(self, monkeypatch):
