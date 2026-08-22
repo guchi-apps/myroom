@@ -42,6 +42,8 @@ export function useOutdoorChartHistory(
 
   const [historyData, setHistoryData] = useState<HistoryPoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  /** 最新データの取得が終わるまで true。true の間はグラフを描かない */
+  const [awaitingLatest, setAwaitingLatest] = useState(true);
   const [loadingRange, setLoadingRange] = useState(false);
   const [historyEpoch, setHistoryEpoch] = useState(0);
   const [noMoreOlderData, setNoMoreOlderData] = useState(false);
@@ -64,6 +66,7 @@ export function useOutdoorChartHistory(
     if (!historyDataRef.current.length) {
       setHistoryLoading(true);
     }
+    setAwaitingLatest(true);
     setNoMoreOlderData(false);
     loadedRangeRef.current = null;
 
@@ -80,6 +83,7 @@ export function useOutdoorChartHistory(
       loadedRangeRef.current = getLoadedRange(quickChunk);
       setHistoryEpoch((epoch) => epoch + 1);
       setHistoryLoading(false);
+      setAwaitingLatest(false);
 
       if (fullSpanMs > quickSpanMs) {
         const fullStart = new Date(end.getTime() - fullSpanMs);
@@ -102,12 +106,14 @@ export function useOutdoorChartHistory(
         loadedRangeRef.current = null;
       }
       setHistoryLoading(false);
+      setAwaitingLatest(false);
     }
   }, [fetchWindow, viewRange]);
 
   const hydrateFromCache = useCallback((points: HistoryPoint[]) => {
     const outdoorOnly = filterOutdoorHistory(points);
     setHistoryLoading(false);
+    setAwaitingLatest(false);
     setNoMoreOlderData(true);
     setHistoryData(outdoorOnly);
     loadedRangeRef.current = outdoorOnly.length ? getLoadedRange(outdoorOnly) : null;
@@ -116,8 +122,11 @@ export function useOutdoorChartHistory(
 
   useEffect(() => {
     if (offlineMode) {
+      // オフラインでは最新データを取得できないため、キャッシュをそのまま見せる
       if (offlineHistoryRef.current?.length) {
         hydrateFromCache(offlineHistoryRef.current);
+      } else {
+        setAwaitingLatest(false);
       }
       return;
     }
@@ -250,6 +259,7 @@ export function useOutdoorChartHistory(
   return {
     historyData,
     historyLoading,
+    awaitingLatest,
     loadingRange,
     historyEpoch,
     noMoreOlderData,

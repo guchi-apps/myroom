@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.7.2",
+    date: "2026-08-22",
+    changes: [
+      "グラフの初期表示時に、最新データの取得が終わる前の不完全な状態が一瞬表示されてしまう問題を解消しました。データを読み込んでいる間はローディング表示に切り替わり、読み込みが完了してからグラフが表示されるようになります。",
+    ],
+  },
+  {
     version: "3.7.1",
     date: "2026-08-22",
     changes: [

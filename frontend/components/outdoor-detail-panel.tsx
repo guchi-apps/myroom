@@ -66,6 +66,7 @@ export function OutdoorDetailPanel({
   const {
     historyData,
     historyLoading,
+    awaitingLatest,
     loadingRange,
     historyEpoch,
     noMoreOlderData,
@@ -111,6 +112,7 @@ export function OutdoorDetailPanel({
               onViewRangeChange={setViewRange}
               loading={false}
               historyLoading={historyLoading || loadingRange}
+              awaitingLatest={awaitingLatest}
               historyEpoch={historyEpoch}
               noMoreOlderData={noMoreOlderData}
               onVisibleDomainChange={ensureVisibleRangeLoaded}
