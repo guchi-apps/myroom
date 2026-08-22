@@ -55,6 +55,29 @@ class AirconRecord(Base):
     model = Column(String(100), nullable=True)
 
 
+class DailyEnergyRecord(Base):
+    """日別の電力使用量。取得元（source）を問わず1つのテーブルにためる。
+
+    `source` はエアコンなら `aircon`、スマートプラグなら `tapo:<機器名>` のように
+    「種別:識別子」の形にする。機器が増えても列を足さずに済むようにするため。
+    `cost_yen` は取得元が金額まで返してきたときだけ入り、通常は NULL。
+    その場合は単価設定（`ui_settings` の `energy_unit_price`）から計算する。
+    """
+
+    __tablename__ = "daily_energy"
+
+    date = Column(Date, primary_key=True)
+    source = Column(String(64), primary_key=True)
+
+    kwh = Column(Float, nullable=True)
+    cost_yen = Column(Float, nullable=True)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+    )
+
+
 class DisplayEntity(Base):
     __tablename__ = "display_entities"
 
@@ -217,6 +240,22 @@ def generate_mock_aircon_daily(ac_id: int = 1) -> list:
         })
     data.sort(key=lambda x: x["date"])
     return data
+
+def generate_mock_daily_energy(source: str = "aircon", days: int = 75) -> list:
+    """モック用の日別使用量。当日は「まだ途中」に見えるよう少なめにする。"""
+    data = []
+    today = datetime.date.today()
+    for i in range(days):
+        d = today - datetime.timedelta(days=i)
+        # 夏冬に増えて春秋に減る、ゆるい季節変動
+        seasonal = 1.0 + 0.8 * abs(math.sin((d.timetuple().tm_yday / 365) * 2 * math.pi))
+        kwh = max(0.0, seasonal * (1.6 + random.uniform(-0.9, 1.4)))
+        if i == 0:
+            kwh *= 0.3
+        data.append({"date": d, "source": source, "kwh": round(kwh, 2), "cost_yen": None})
+    data.sort(key=lambda x: x["date"])
+    return data
+
 
 import math
 

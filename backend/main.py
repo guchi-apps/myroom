@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, energy, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -173,6 +173,27 @@ class UiSettingsUpdate(BaseModel):
     hidden_devices: Optional[List[str]] = None
     stale_alert_excluded_devices: Optional[List[str]] = None
     pressure_offsets: Optional[Dict[str, float]] = None
+    energy_unit_price: Optional[float] = None
+
+
+class DailyEnergyItem(BaseModel):
+    date: str
+    source: Optional[str] = None
+    kwh: Optional[float] = None
+    cost_yen: Optional[float] = None
+
+    @model_validator(mode="after")
+    def at_least_one_value(self):
+        if self.kwh is None and self.cost_yen is None:
+            raise ValueError("At least one of kwh or cost_yen is required")
+        return self
+
+
+class DailyEnergyPayload(BaseModel):
+    """収集側が1日ぶんだけ送る場合と、まとめて送る場合の両方を受ける。"""
+
+    source: Optional[str] = None
+    records: List[DailyEnergyItem]
 
 class AirconData(BaseModel):
     datetime: str
@@ -927,6 +948,52 @@ async def create_aircon_data(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/energy")
+async def create_daily_energy(
+    payload: DailyEnergyPayload,
+    db: Session = Depends(database.get_db),
+):
+    """日別の電力使用量を受け取る（Raspberry Pi の収集スクリプトから）。
+
+    同じ (date, source) は上書きする。当日ぶんは1日のあいだ増えていくため、
+    追記だと二重計上になる。
+    """
+    if database.DB_MOCK:
+        return {"status": "mock_ok", "received": len(payload.records)}
+
+    default_source = payload.source or energy.DEFAULT_SOURCE
+    try:
+        records = [
+            {
+                "date": energy.parse_date(item.date),
+                "source": item.source or default_source,
+                "kwh": item.kwh,
+                "cost_yen": item.cost_yen,
+            }
+            for item in payload.records
+        ]
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    try:
+        written = energy.upsert_records(db, records)
+        return {"status": "ok", "written": written}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/energy/summary")
+def get_energy_summary(
+    source: str = energy.DEFAULT_SOURCE,
+    days: int = Query(default=energy.DEFAULT_HISTORY_DAYS, ge=1, le=400),
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """ダッシュボードの電気代カード用。今日・昨日・今月・先月と日別を1度に返す。"""
+    return energy.get_summary(db, get_now_jst().date(), source=source, history_days=days)
 
 
 @app.get("/api/aircon/latest")

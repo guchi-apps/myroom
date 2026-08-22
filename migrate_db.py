@@ -262,6 +262,24 @@ def migrate():
                 """))
                 print("Table 'app_settings' created.")
 
+            print("Checking if 'daily_energy' table exists...")
+            result = conn.execute(text("SHOW TABLES LIKE 'daily_energy'"))
+            if result.fetchone():
+                print("Table 'daily_energy' already exists.")
+            else:
+                print("Creating table 'daily_energy'...")
+                conn.execute(text("""
+                    CREATE TABLE daily_energy (
+                        date DATE NOT NULL,
+                        source VARCHAR(64) NOT NULL,
+                        kwh FLOAT NULL,
+                        cost_yen FLOAT NULL,
+                        updated_at DATETIME NULL,
+                        PRIMARY KEY (date, source)
+                    )
+                """))
+                print("Table 'daily_energy' created.")
+
         print("Migration completed.")
 
     except Exception as e:

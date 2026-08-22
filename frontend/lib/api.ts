@@ -11,6 +11,7 @@ import {
   type DailyStat,
   type DeviceDataLoadStatus,
   type DeviceInfo,
+  type EnergySummary,
   type HistoryPoint,
   type LatestData,
   type OutdoorLocation,
@@ -322,6 +323,14 @@ export async function fetchSensorsStatus(): Promise<SensorsStatusResponse> {
 
 export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
   return fetchJson<GarbageSchedule>("/api/garbage");
+}
+
+export async function fetchEnergySummary(
+  source = "aircon",
+  days = 30
+): Promise<EnergySummary> {
+  const params = new URLSearchParams({ source, days: String(days) });
+  return fetchJson<EnergySummary>(`/api/energy/summary?${params.toString()}`);
 }
 
 export interface LatestBatchResult {

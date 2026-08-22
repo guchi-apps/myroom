@@ -19,12 +19,15 @@ import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
+import { EnergyCard } from "@/components/energy-card";
+import { EnergyDetailPanel } from "@/components/energy-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { Button } from "@/components/ui/button";
 import {
   fetchDashboardData,
   fetchDevices,
+  fetchEnergySummary,
   fetchGarbageSchedule,
   fetchOutdoorLocation,
   fetchAirconUnits,
@@ -71,6 +74,7 @@ import {
   COMING_SOON_CARDS,
   COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
+  ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import type { GarbageSchedule } from "@/lib/garbage";
@@ -105,6 +109,7 @@ import {
   type DailyStat,
   type DeviceDataLoadStatus,
   type DeviceInfo,
+  type EnergySummary,
   type LatestData,
   type OutdoorLocation,
   type SensorDeviceStatus,
@@ -396,6 +401,9 @@ export function MyRoomDashboard() {
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
+  const [energySummary, setEnergySummary] = useState<EnergySummary | null>(null);
+  const [energyError, setEnergyError] = useState(false);
+  const [energyPanelOpen, setEnergyPanelOpen] = useState(false);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
   const [displayOrder, setDisplayOrder] = useState<DisplayOrderItem[]>(() =>
@@ -456,6 +464,7 @@ export function MyRoomDashboard() {
   );
 
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
+  const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
   const comingSoonVisible = isHiddenKeyVisible(hiddenDeviceKeys, COMING_SOON_SECTION_KEY);
 
   const {
@@ -594,6 +603,17 @@ export function MyRoomDashboard() {
     };
   }, [reloadUiSettings]);
 
+  /** 単価を変えたあとの再集計。金額はサーバー側で単価を掛けているため取り直す */
+  const refreshEnergySummary = useCallback(async () => {
+    try {
+      const summary = await fetchEnergySummary();
+      setEnergySummary(summary);
+      setEnergyError(false);
+    } catch {
+      setEnergyError(true);
+    }
+  }, []);
+
   const fetchData = useCallback(
     async (options?: { showChartLoading?: boolean; reloadHistory?: boolean }) => {
       const showChartLoading = options?.showChartLoading ?? false;
@@ -609,10 +629,11 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage] = await Promise.all([
+        const [data, sensorsStatus, garbage, energy] = await Promise.all([
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
           fetchGarbageSchedule().catch(() => null),
+          fetchEnergySummary().catch(() => null),
         ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
@@ -629,6 +650,8 @@ export function MyRoomDashboard() {
         // 取得できなかったときは直前の内容を残したまま、エラー表示だけを出す
         if (garbage) setGarbageSchedule(garbage);
         setGarbageError(garbage == null);
+        if (energy) setEnergySummary(energy);
+        setEnergyError(energy == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -902,17 +925,27 @@ export function MyRoomDashboard() {
 
         {/* PCでは左に計測値、右に暮らし・近日公開。スマホでは上から順に1列で並ぶ */}
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
-          {garbageCardVisible && (
+          {(garbageCardVisible || energyCardVisible) && (
             <section className="lg:col-start-2 lg:row-start-1">
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
               </div>
               <div className="flex flex-col gap-3">
-                <GarbageCard
-                  schedule={garbageSchedule}
-                  loading={!dashboardDataLoaded && garbageSchedule == null}
-                  error={garbageError && garbageSchedule == null}
-                />
+                {garbageCardVisible && (
+                  <GarbageCard
+                    schedule={garbageSchedule}
+                    loading={!dashboardDataLoaded && garbageSchedule == null}
+                    error={garbageError && garbageSchedule == null}
+                  />
+                )}
+                {energyCardVisible && (
+                  <EnergyCard
+                    summary={energySummary}
+                    loading={!dashboardDataLoaded && energySummary == null}
+                    error={energyError && energySummary == null}
+                    onOpenDetail={() => setEnergyPanelOpen(true)}
+                  />
+                )}
               </div>
             </section>
           )}
@@ -1133,6 +1166,17 @@ export function MyRoomDashboard() {
           offlineCacheKey={offlineSnapshot?.cachedAt ?? null}
           onLineVisibilityChange={handleChartLineVisibleChange}
           onClose={() => setOutdoorPanelOpen(false)}
+        />
+      )}
+
+      {energyPanelOpen && (
+        <EnergyDetailPanel
+          open={energyPanelOpen}
+          summary={energySummary}
+          onClose={() => setEnergyPanelOpen(false)}
+          onUnitPriceSaved={() => {
+            void refreshEnergySummary();
+          }}
         />
       )}
 
