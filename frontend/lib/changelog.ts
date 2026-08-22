@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.14.0",
+    date: "2026-08-23",
+    changes: [
+      "ホーム画面のカード表示を見やすく整理しました。各カードは温度・湿度など主な数値だけが大きく表示されるようになり、気圧・CO2・照度などの詳しい数値はカードをタップして開く詳細画面の「いまの値」で確認できます。また、これまで画面下部に常に表示されていた推移グラフと最近の記録は、「推移」ボタンから開く専用の画面にまとまりました。",
+    ],
+  },
+  {
     version: "3.13.0",
     date: "2026-08-23",
     changes: [
