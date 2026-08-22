@@ -347,6 +347,53 @@ Raspberry Pi 上のスクリプトは [m-guchi/pi0w_260719](https://github.com/m
 python3 migrate_db.py   # aircon テーブルを作成
 ```
 
+### 消費電力（Tapo スマートプラグ + サブPC）
+
+TP-Link Tapo スマートプラグ（P110 系）の消費電力を LAN 経由で読み、日別の使用量として
+記録します。**計測のみで、ON/OFF の操作はできません。**
+
+エアコン（`source='aircon'`）と同じ `daily_energy` テーブルへ `source='tapo:<表示名>'` として
+入り、ダッシュボードの「消費電力」カードに1枚でまとまって出ます。
+
+**収集はサブPC で動かします。** Pi Zero W ではありません。`python-kasa` が Python 3.11 以上と
+`cryptography` を要求し、armv6 の Pi Zero W では導入が現実的でないためです。
+
+**前提**
+
+- Tapo アプリでプラグをセットアップ済み（TP-Link アカウントに紐付いていること）
+- プラグとサブPC が同じ LAN にいること（KLAP プロトコル・TCP 80、ディスカバリーは UDP 20002）
+- プラグの IP を DHCP 予約などで固定してあること
+
+**セットアップ**
+
+```bash
+# 収集専用の venv を作る（バックエンドの venv とは分ける）
+python3 -m venv .venv-collector
+.venv-collector/bin/pip install -r requirements-collector.txt
+
+# LAN 上のプラグを探して IP と名前を確認する
+op run --env-file=scripts/tapo.env.tpl -- .venv-collector/bin/python scripts/tapo_to_myroom.py --list-devices
+
+# 読み取りだけ試す（POST しない）
+op run --env-file=scripts/tapo.env.tpl -- .venv-collector/bin/python scripts/tapo_to_myroom.py --dry-run
+```
+
+資格情報は `scripts/tapo.env.tpl` の `op://` 参照から注入します（実値は書きません）。
+`TAPO_HOSTS` は `192.168.1.21=冷蔵庫,192.168.1.22=テレビ` のように書き、`=表示名` を省くと
+プラグ自身の名前を使います。
+
+> **表示名はあとから変えないこと。**
+> 表示名はそのまま `daily_energy.source`（`tapo:<表示名>`）になるため、変更すると
+> 別の機器として記録され、グラフが途中で途切れます。
+
+> **停電・ブレーカー断のあと、Tapo のローカル API はディスカバリー通信を受け取るまで応答しない。**
+> 遅延初期化のためで、放っておくと数分〜場合によっては復活しません。収集スクリプトは各機器へ
+> 接続する前に必ずブロードキャストのディスカバリーを1回投げてこれを回避しています
+> （`wake_up_devices()`）。この順序を崩さないでください。
+
+**定期実行**は サブPC の systemd タイマー（5分間隔）で行います。ユニットの定義は
+[guchi-apps/subpc](https://github.com/guchi-apps/subpc) 側で管理します。
+
 ### ゴミの日
 
 収集日を `data/garbage.json`（**リポジトリに含まれる**手編集ファイル）に書くと、ダッシュボードの

@@ -1,0 +1,8 @@
+# サブPC で動かす収集スクリプト（scripts/tapo_to_myroom.py）専用の依存。
+#
+# バックエンドの requirements.txt には入れない。VPS はプラグと同じ LAN にいないため
+# 使い道が無く、入れるとデプロイのたびに無関係なビルドが走る。
+#
+#   python3 -m venv .venv-collector
+#   .venv-collector/bin/pip install -r requirements-collector.txt
+python-kasa>=0.7
