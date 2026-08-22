@@ -142,6 +142,64 @@ python-kasa の `Device` は aiohttp のセッションを握る。`disconnect()
 `Unclosed client session` を **ERROR で** 吐き、送信自体は成功しているのに
 `journalctl --user -u myroom-tapo-energy.service` では失敗に見える。`close_device()` を通すこと。
 
+## eufy_to_myroom.py
+
+お掃除ロボット（eufy Clean）の稼働状態を LAN 内から読み、`POST /api/cleaner` へ送る（観測のみ）。
+`tinytuya` が要るため、**専用の venv（`collectors/.venv-cleaner/`）で動かす**
+（`requirements-cleaner.txt`）。設定は `eufy.env.example` を `collectors/.env` へ追記する。
+
+```bash
+cd ~/apps/myroom
+
+# LAN 上の Tuya 機器を探して IP と device_id を調べる（初回の設定用）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --scan
+
+# 機器が返す DP の辞書をそのまま見る（DP番号の特定用）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --dump
+
+# 読み取るだけ（POSTしない）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --dry-run -v
+```
+
+### local key の取り出しが唯一の手作業
+
+**Tuya のローカルプロトコルは `device_id` と `local_key` の両方が無いと復号できない。**
+`--scan` で分かるのは IP・device_id・プロトコル版までで、local key はクラウド側にしかない。
+取り出すには Tuya IoT 開発者アカウントが要る。
+
+1. [Tuya IoT Platform](https://iot.tuya.com/) でアカウントを作り、Cloud プロジェクトを1つ作る
+   （データセンターは **Western America**。eufy の日本アカウントもここに載っていることが多い）
+2. プロジェクトの「Devices」→「Link App Account」で、eufy アプリのアカウントをQRコードで紐づける
+3. `collectors/.venv-cleaner/bin/python -m tinytuya wizard` に API Key / API Secret / 地域を渡すと、
+   紐づいた機器の `id` と `key` が `devices.json` に書き出される
+4. その `id` を `EUFY_DEVICE_ID`、`key` を `EUFY_LOCAL_KEY` として `collectors/.env` に入れる
+
+- **local key は機器をアプリから登録し直すと変わる。** 読めなくなったらここからやり直す
+- 掃除機のIPはルーターでDHCP固定にしておく（変わると読めなくなる）
+
+### DP番号は機種で変わる
+
+Tuya は状態を「DP番号 → 値」の辞書で返す。eufy はおおむね `15` が稼働状態、`104` が
+バッテリー残量だが、**機種とファームで変わる。** 既定で読めない場合は `--dump` の出力を見て
+`EUFY_STATUS_DP` / `EUFY_BATTERY_DP` を設定する。
+
+```json
+{
+  "15": "Charging",
+  "104": 92
+}
+```
+
+状態名の読み替え（`Recharge` → 帰還中 など）は **MyRoom 側**（`backend/cleaner.py` の
+`EVENT_ALIASES`）に置いている。収集スクリプトは小文字にして送るだけなので、知らない状態名が
+出てきたときに直すのはサーバー側1箇所でよい。
+
+### 同じ状態を何度送っても履歴は汚れない
+
+MyRoom は**状態が変わったときだけ** `cleaner_runs` に行を足す。同じ状態が続いている間は
+最後に確認した時刻とバッテリー残量だけを進めるため、3分ごとに送り続けても履歴は
+「掃除を始めた」「充電に入った」の並びのまま保たれる。ログの `状態に変化なし` は正常な結果。
+
 ## 定期実行
 
 ユニットは [`systemd/`](systemd/) にある。`aide` と同じく
@@ -157,4 +215,5 @@ systemctl --user list-timers myroom-aircon-energy.timer
 journalctl --user -u myroom-aircon-energy.service -n 50
 ```
 
-Tapo ぶん（5分ごと）も同じ手順で、ユニット名を `myroom-tapo-energy` に読み替える。
+Tapo ぶん（5分ごと）と eufy ぶん（3分ごと）も同じ手順で、ユニット名をそれぞれ
+`myroom-tapo-energy`・`myroom-eufy-cleaner` に読み替える。

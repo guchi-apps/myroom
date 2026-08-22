@@ -38,10 +38,12 @@ export interface LifeCardDefinition {
 
 export const GARBAGE_CARD_KEY = "garbage";
 export const ENERGY_CARD_KEY = "energy";
+export const CLEANER_CARD_KEY = "cleaner";
 
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
   { key: GARBAGE_CARD_KEY, label: "ゴミの日" },
   { key: ENERGY_CARD_KEY, label: "消費電力" },
+  { key: CLEANER_CARD_KEY, label: "お掃除ロボット" },
 ];
 
 export function getLifeCardLabel(key: string): string {
@@ -63,11 +65,6 @@ export interface ComingSoonCardDefinition {
 export const COMING_SOON_SECTION_KEY = "coming-soon";
 
 export const COMING_SOON_CARDS: readonly ComingSoonCardDefinition[] = [
-  {
-    key: "cleaner",
-    label: "お掃除ロボット",
-    description: "稼働した日と時間を記録して並べます",
-  },
   {
     key: "remote",
     label: "電気の操作",

@@ -291,6 +291,24 @@ def migrate():
                 )
                 print("Column 'power_w' added.")
 
+            # お掃除ロボット（eufy）の稼働履歴（#110）。状態が変わった瞬間だけ1行入る。
+            # updated_at は「同じ状態を最後に確認した時刻」で、受信が途絶えたかの判定に使う。
+            print("Checking if 'cleaner_runs' table exists...")
+            if _table_exists(conn, "cleaner_runs"):
+                print("Table 'cleaner_runs' already exists.")
+            else:
+                print("Creating table 'cleaner_runs'...")
+                conn.execute(text("""
+                    CREATE TABLE cleaner_runs (
+                        datetime DATETIME NOT NULL,
+                        event VARCHAR(20) NOT NULL,
+                        battery INT NULL,
+                        updated_at DATETIME NULL,
+                        PRIMARY KEY (datetime)
+                    )
+                """))
+                print("Table 'cleaner_runs' created.")
+
         print("Migration completed.")
 
     except Exception as e:
