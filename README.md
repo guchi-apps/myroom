@@ -130,7 +130,7 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 #### 3. フロントエンド (Next.js)
 
-Google 認証を使う場合、初回のみ `frontend/.env.local` を作成してください（`.gitignore` 対象。1Password アプリから値を直接コピーし、`.env.tpl` 経由では同期されません）。
+Google 認証を使う場合、初回のみ `frontend/.env.local` を作成してください（`.gitignore` 対象。ローカル開発用の値は自動同期されないため、1Password アプリから直接コピーします）。
 
 ```bash
 # frontend/.env.local
@@ -550,8 +550,8 @@ systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-ener
   - ダッシュボードのデータ取得 API は **認証必須**（`Authorization: Bearer <Supabaseアクセストークン>`）。センサー POST（`/api/sensor`）・エアコン POST（`/api/aircon`）は認証なし
   - ログインは Supabase Auth 経由の Google 認証で行う（複数の自作アプリ共通の Supabase プロジェクトを使用）。許可したアカウントのみアクセス可能（`ALLOWED_GOOGLE_EMAILS` にメールアドレスをカンマ区切りで設定）
   - バックエンドは Supabase の JWKS（`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`）を取得・キャッシュし、リクエストごとに JWT を自前検証する（Supabase への問い合わせは発生しない）
-  - 本番: 1Password 共有アイテム `Supabase` の `project-url` / `publishable-key` と、`MyRoom` の `allowed-google-emails` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドに自動同期（`.github/deploy.env.tpl` / `deploy.yml`）
-  - ローカル開発: 本番と誤って同じ Supabase プロジェクトを操作しないよう、同アイテムの `dev-project-url` / `dev-publishable-key`（開発用の別 Supabase プロジェクト）を使用。バックエンドは `.env.tpl` 経由（`SUPABASE_URL`）で自動反映されるが、**フロントエンドは自動同期されない**ため `frontend/.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を手動で書き込む必要がある（値は 1Password アプリから直接コピー。詳細は下記「2. フロントエンド」参照）
+  - 本番: GitHub の organization variable `SUPABASE_PROJECT_URL` / `SUPABASE_PUBLISHABLE_KEY` と、このリポジトリの secret `ALLOWED_GOOGLE_EMAILS` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドへ反映（`deploy.yml`。対応表は `.github/secrets-manifest.tsv`）
+  - ローカル開発: 本番と誤って同じ Supabase プロジェクトを操作しないよう、1Password 共有アイテム `Supabase` の `dev-project-url` / `dev-publishable-key`（開発用の別 Supabase プロジェクト）を使用。**ローカルは自動同期されない**ため、バックエンドはローカルの `.env` に `SUPABASE_URL` を、フロントエンドは `frontend/.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を、それぞれ 1Password アプリから値をコピーして書き込む（詳細は「3. フロントエンド (Next.js)」参照）
   - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番用プロジェクトには本番ドメインの、開発用プロジェクトにはローカル開発用の `/auth/callback` を、それぞれ**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
   - ゴミの日の前日夜: 同じ Signaly の宛先へ通知（`GARBAGE_WEBHOOK_URL` で分離可能）
@@ -639,22 +639,31 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 ## 本番環境へのデプロイ
 
-### 1. 1Password の設定
+### 1. シークレットの設定（1Password → GitHub）
 
-デプロイ用の秘密情報は 1Password で管理し、GitHub Actions から `1password/load-secrets-action` で読み込みます。
+デプロイ用の秘密情報は 1Password で管理しますが、**GitHub Actions は実行時に 1Password を呼びません。** 実行時の取得先は GitHub の secret / variable で、1Password は「人が管理する唯一の正」として残します。
+
+以前は実行のたびに `1password/load-secrets-action` で読んでいましたが、1Password サービスアカウントの日次レート制限（**1Password アカウント全体で 1,000 リクエスト/日**。サービスアカウントを分けても分割されない）を使い切り、フリート全体のデプロイが止まったため移行しました（guchi-apps/issue-deck#1302）。
+
+**どの値を GitHub のどこから取るかは `.github/secrets-manifest.tsv` が正です。** `SCOPE` が `inherit` の行は organization の共通値（このリポジトリでは同期しない）、`repo` の行はこのリポジトリの secret です。`deploy.yml` の `env:` ブロックはこのマニフェストから `scripts/generate-workflow-env-block.sh` で生成します。
+
+1Password 側の値を変えたときだけ、次のいずれかで GitHub へ同期します（デプロイのたびには実行しません）。
+
+- issue-deck の画面、または `sync-secrets.yml` を `workflow_dispatch` で起こす
+- 手元から `scripts/sync-github-secrets.sh` を実行する（**個人アカウントのセッションが必要**。サービスアカウントでは GitHub へ書き込めない）
 
 #### 1-1. 1Password にデプロイ用アイテムを作成
 
-保管庫名 `apps` に、次のアイテムを作成してください。
+保管庫名 `apps` に、次のアイテムを作成してください。**`Server` / `DB` / `githubaction-sshkey` は複数の自作アプリで共通のため、GitHub 側では organization の secret（`SERVER_*` / `SHARED_DB_*`）になっており、このリポジトリからは同期しません**（`.github/secrets-manifest.tsv` の `SCOPE` が `inherit` の行）。
 
-**アイテム `Supabase`**（セキュアノート等・複数の自作アプリで共通利用）
+**アイテム `Supabase`**（セキュアノート等・複数の自作アプリで共通利用。本番用の 2 つは organization の variable `SUPABASE_PROJECT_URL` / `SUPABASE_PUBLISHABLE_KEY` になっており、このリポジトリからは同期しない）
 
 | フィールド名 | 内容 |
 |-------------|------|
 | `project-url` | 本番用 Supabase プロジェクトの URL（`SUPABASE_URL` としてサーバー `.env` に、`NEXT_PUBLIC_SUPABASE_URL` としてフロントエンドのビルドに同期） |
 | `publishable-key` | 本番用 Supabase の Publishable key（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` としてフロントエンドのビルドに同期。フロントに公開してよい値） |
-| `dev-project-url` | ローカル開発用 Supabase プロジェクトの URL（本番と誤操作しないよう分離）。バックエンドは `.env.tpl` 経由でローカルの `.env` の `SUPABASE_URL` に自動反映。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_URL` に手動でコピー |
-| `dev-publishable-key` | ローカル開発用 Supabase の Publishable key。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` に手動でコピー（`.env.tpl` には含まれない） |
+| `dev-project-url` | ローカル開発用 Supabase プロジェクトの URL（本番と誤操作しないよう分離）。**ローカルへは自動同期しない。** バックエンドはローカルの `.env` の `SUPABASE_URL` に、フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_URL` に手動でコピー |
+| `dev-publishable-key` | ローカル開発用 Supabase の Publishable key。フロントエンドは `frontend/.env.local` の `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` に手動でコピー |
 
 **アイテム `MyRoom`**（セキュアノート等）
 
@@ -668,7 +677,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
-**アイテム `Server`**（セキュアノート等）
+**アイテム `Server`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
 
 | フィールド名 | 内容 |
 |-------------|------|
@@ -676,7 +685,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `username` | SSH ユーザー名 |
 | `ssh-port` | SSH ポート番号 |
 
-**アイテム `DB`**（セキュアノート等）
+**アイテム `DB`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
 
 | フィールド名 | 内容 |
 |-------------|------|
@@ -685,13 +694,13 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `db-host` | MySQL ホスト（`DB_HOST` として同期） |
 | `db-port` | MySQL ポート（`DB_PORT` として同期） |
 
-**アイテム `githubaction-sshkey`**（「SSH 鍵」アイテム型）
+**アイテム `githubaction-sshkey`**（「SSH 鍵」アイテム型・organization 共通。このリポジトリからは同期しない）
 
 | フィールド ID | 内容 |
 |-------------|------|
 | `private_key` | サーバー接続用 SSH 秘密鍵（UI 表示は「秘密鍵」だが参照は ID を使う） |
 
-Vault 名やアイテム名を変える場合は、`.github/deploy.env.tpl` の `op://...` 参照も合わせて更新してください。日本語ラベル（`秘密鍵`）は secret reference に使えません。
+Vault 名やアイテム名を変える場合は、`.github/secrets-manifest.tsv` の `SOURCE` 列（`op://...`）も合わせて更新してください。`SCOPE` が `inherit` の行はこのリポジトリでは同期していないため、更新先は organization 側の設定になります。日本語ラベル（`秘密鍵`）は secret reference に使えません。
 
 正しい参照の確認:
 
@@ -707,7 +716,7 @@ op read "op://apps/githubaction-sshkey/private_key?ssh-format=openssh"
 
 | GitHub Secret | 内容 |
 |---------------|------|
-| `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account のトークン（これだけ GitHub に残す） |
+| `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account のトークン。**デプロイでは使いません。** `sync-secrets.yml` / `scripts/sync-github-secrets.sh` が 1Password から値を読んで GitHub へ同期するときだけ使います |
 
 #### 1-3. 本番サーバーの初期セットアップ
 
@@ -732,28 +741,30 @@ python3 /tmp/virtualenv.pyz venv
 
 #### 1-4. 本番サーバーの `.env`
 
-rsync では `.env` を転送しません。サーバー上の `.env` には、1Password から同期しない設定も残します。
+rsync では `.env` を転送しません。サーバー上の `.env` には、デプロイで同期しない設定も残します。
 
 | 環境変数 | 管理方法 |
 |----------|----------|
 | `DB_MOCK` | デプロイ時に `false` を自動設定（本番は常に実 DB） |
-| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | 必要な場合のみサーバー `.env` に手動設定 |
+| `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` | **サーバー `.env` には書きません。** DDL 権限を持つマイグレーション専用ユーザー（organization secret の `SHARED_DB_MIGRATE_USER` / `SHARED_DB_MIGRATE_PASSWORD`）を、`migrate_db.py` を実行する 1 コマンドの間だけ環境変数で渡します（#193） |
 
-デプロイ時に 1Password から次の値が自動で `.env` に書き込まれます（既存の同名キーは上書き）。
+デプロイ時に **GitHub の secret / variable** から次の値が自動で `.env` に書き込まれます（既存の同名キーは上書き）。1Password は参照しません。
 
-| 環境変数 | 1Password アイテム | フィールド |
-|----------|-------------------|-----------|
-| `SUPABASE_URL` | Supabase | `project-url` |
-| `ALLOWED_GOOGLE_EMAILS` | MyRoom | `allowed-google-emails` |
-| `SENSOR_WEBHOOK_URL` | MyRoom | `sensor-webhook-url` |
-| `GARBAGE_NOTION_TOKEN` | MyRoom | `garbage-notion-token` |
-| `GARBAGE_NOTION_DATA_SOURCE_ID` | MyRoom | `garbage-notion-data-source-id` |
-| `INTERNAL_API_KEY` | MyRoom | `internal-api-key` |
-| `DB_NAME` | MyRoom | `db-name` |
-| `DB_USER` | DB | `db-user` |
-| `DB_PASSWORD` | DB | `db-password` |
-| `DB_HOST` | DB | `db-host` |
-| `DB_PORT` | DB | `db-port` |
+| 環境変数 | GitHub 側の名前 | スコープ |
+|----------|----------------|----------|
+| `SUPABASE_URL` | variable `SUPABASE_PROJECT_URL` | organization 共通 |
+| `ALLOWED_GOOGLE_EMAILS` | secret `ALLOWED_GOOGLE_EMAILS` | このリポジトリ |
+| `SENSOR_WEBHOOK_URL` | secret `SENSOR_WEBHOOK_URL` | このリポジトリ |
+| `GARBAGE_NOTION_TOKEN` | secret `GARBAGE_NOTION_TOKEN` | このリポジトリ |
+| `GARBAGE_NOTION_DATA_SOURCE_ID` | secret `GARBAGE_NOTION_DATA_SOURCE_ID` | このリポジトリ |
+| `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
+| `DB_NAME` | secret `DB_NAME` | このリポジトリ |
+| `DB_USER` | secret `SHARED_DB_USER` | organization 共通 |
+| `DB_PASSWORD` | secret `SHARED_DB_PASSWORD` | organization 共通 |
+| `DB_HOST` | secret `SHARED_DB_HOST` | organization 共通 |
+| `DB_PORT` | secret `SHARED_DB_PORT` | organization 共通 |
+
+`DB_MOCK` は `false` が固定で書き込まれます。フロントエンドのビルドに渡す `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` も、同じ organization variable から取ります。
 
 ### 2. デプロイフロー
 
@@ -762,7 +773,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、1
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. GitHub の secret から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期
+4. GitHub の secret / variable から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期（対応は「1-4. 本番サーバーの `.env`」の表）
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成
