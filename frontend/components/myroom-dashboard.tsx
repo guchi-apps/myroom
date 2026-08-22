@@ -17,6 +17,7 @@ import {
 import { LoginScreen } from "@/components/login-screen";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
+import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
@@ -67,6 +68,8 @@ import {
   VISIBLE_DEVICES_CHANGED_EVENT,
 } from "@/lib/visible-devices";
 import {
+  COMING_SOON_CARDS,
+  COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
   GARBAGE_CARD_KEY,
 } from "@/lib/dashboard-sections";
@@ -453,6 +456,7 @@ export function MyRoomDashboard() {
   );
 
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
+  const comingSoonVisible = isHiddenKeyVisible(hiddenDeviceKeys, COMING_SOON_SECTION_KEY);
 
   const {
     historyData,
@@ -852,8 +856,8 @@ export function MyRoomDashboard() {
     : null;
 
   return (
-    <div className="pb-28 sm:pb-10">
-      <div className="space-y-6 px-5 pt-12">
+    <div className="mx-auto w-full max-w-[480px] pb-28 sm:pb-10 lg:max-w-[1040px]">
+      <div className="space-y-6 px-5 pt-12 lg:px-8">
         {isOfflineMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
             オフライン表示中
@@ -874,189 +878,211 @@ export function MyRoomDashboard() {
             </button>
           </div>
         )}
-        <section>
-          <div className="mb-3 flex items-center justify-between px-0.5">
-            <div>
-              <h2 className="section-title">MyRoom</h2>
-              <p className="section-subtitle">最終更新: {lastUpdated}</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isOfflineMode) return;
-                  fetchData({ showChartLoading: true });
-                  void refreshLatest();
-                }}
-                disabled={isOfflineMode}
-                className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="更新"
-              >
-                <RefreshCw className={`size-5 ${refreshing ? "animate-spin" : ""}`} />
-              </button>
-            </div>
+        <header className="flex items-center justify-between gap-3 px-0.5">
+          <div>
+            <h1 className="section-title">MyRoom</h1>
+            <p className="section-subtitle">最終更新: {lastUpdated}</p>
           </div>
-
-          <EnvironmentChart
-            historyData={historyData}
-            deviceIds={chartDeviceIds}
-            deviceNames={deviceNames}
-            chartMetric={chartMetric}
-            onChartMetricChange={setChartMetric}
-            viewRange={viewRange}
-            onViewRangeChange={setViewRange}
-            loading={chartLoading}
-            historyLoading={historyLoading || loadingRange}
-            awaitingLatest={awaitingLatest}
-            historyEpoch={historyEpoch}
-            noMoreOlderData={noMoreOlderData}
-            onVisibleDomainChange={ensureVisibleRangeLoaded}
-            airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
-            outdoorLocationName={outdoorLocation?.name}
-            legendOrder={visibleDisplayOrder}
-            chartColors={chartColors}
-            lineVisibility={effectiveLineVisibility}
-            onLineVisibilityChange={handleChartLineVisibleChange}
-          />
-        </section>
-
-        <section>
-          <div className="mb-3 flex items-center justify-between px-0.5">
-            <h2 className="section-title">{DASHBOARD_SECTION_LABELS.sensors}</h2>
-            <Link
-              href="/devices"
-              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (isOfflineMode) return;
+                fetchData({ showChartLoading: true });
+                void refreshLatest();
+              }}
+              disabled={isOfflineMode}
+              className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="更新"
             >
-              <Settings className="size-4" strokeWidth={1.75} />
-              表示設定
-            </Link>
+              <RefreshCw className={`size-5 ${refreshing ? "animate-spin" : ""}`} />
+            </button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {!layoutReady
-              ? buildDefaultDisplayOrder().map((_, index) => (
-                  <DeviceCardSkeleton key={`device-skeleton-${index}`} />
-                ))
-              : visibleDisplayOrder.map((item) => {
-              if (item.type === "device") {
-                const deviceId = item.deviceId;
-                const device = getDeviceInfo(deviceId);
-                const accentColor = getDeviceChartColor(chartColors, deviceId);
-                const indoorMetrics = buildIndoorMetrics(
-                  latestByDevice[deviceId],
-                  accentColor
-                );
-                return (
-                  <DeviceCard
-                    key={`device-${deviceId}`}
-                    title={device.name}
-                    accentColor={accentColor}
-                    action={
-                      <ChevronRight
-                        className="size-5 shrink-0 text-muted-foreground/60"
-                        strokeWidth={1.75}
-                      />
-                    }
-                    onClick={() => {
-                      setDevicePanelId(deviceId);
-                      setDevicePanelOpen(true);
-                    }}
-                    metrics={indoorMetrics}
-                    metricsState={resolveMetricsDisplayState(
-                      indoorMetrics,
-                      latestLoadStatusByDevice[deviceId],
-                      dashboardDataLoaded
-                    )}
-                    statusNote={formatStaleNote(deviceId)}
-                  />
-                );
-              }
+        </header>
 
-              if (item.type === "outdoor") {
-                const outdoorLoadStatus = resolveOutdoorBatchLoadStatus(
-                  latestByDevice,
-                  latestLoadStatusByDevice
-                );
-                return (
-                  <DeviceCard
-                    key="outdoor"
-                    title={formatOutdoorApiLabel(outdoorLocation?.name)}
-                    metrics={outdoorMetrics}
-                    metricsState={resolveMetricsDisplayState(
-                      outdoorMetrics,
-                      outdoorLoadStatus,
-                      dashboardDataLoaded
-                    )}
-                    action={
-                      <ChevronRight
-                        className="size-5 shrink-0 text-muted-foreground/60"
-                        strokeWidth={1.75}
-                      />
-                    }
-                    onClick={() => setOutdoorPanelOpen(true)}
-                  />
-                );
-              }
-
-              const airconMetrics = buildAirconMetrics(
-                airconLatest,
-                getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID),
-                {
-                  showRoom: isAirconRoomVisible(hiddenDeviceKeys),
-                  showTarget: isAirconTargetVisible(hiddenDeviceKeys),
-                }
-              );
-              return (
-                <DeviceCard
-                  key="aircon"
-                  title={airconTitle}
-                  accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
-                  metrics={airconMetrics}
-                  metricsState={resolveMetricsDisplayState(
-                    airconMetrics,
-                    airconLoadStatus,
-                    dashboardDataLoaded
-                  )}
+        {/* PCでは左に計測値、右に暮らし・近日公開。スマホでは上から順に1列で並ぶ */}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
+          {garbageCardVisible && (
+            <section className="lg:col-start-2 lg:row-start-1">
+              <div className="mb-3 px-0.5">
+                <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
+              </div>
+              <div className="flex flex-col gap-3">
+                <GarbageCard
+                  schedule={garbageSchedule}
+                  loading={!dashboardDataLoaded && garbageSchedule == null}
+                  error={garbageError && garbageSchedule == null}
                 />
-              );
-            })}
-          </div>
-        </section>
+              </div>
+            </section>
+          )}
 
-        {garbageCardVisible && (
-          <section>
-            <div className="mb-3 px-0.5">
-              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
+          <section className="lg:col-start-1 lg:row-start-1">
+            <div className="mb-3 flex items-center justify-between px-0.5">
+              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.sensors}</h2>
+              <Link
+                href="/devices"
+                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <Settings className="size-4" strokeWidth={1.75} />
+                表示設定
+              </Link>
             </div>
-            <div className="flex flex-col gap-3">
-              <GarbageCard
-                schedule={garbageSchedule}
-                loading={!dashboardDataLoaded && garbageSchedule == null}
-                error={garbageError && garbageSchedule == null}
-              />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              {!layoutReady
+                ? buildDefaultDisplayOrder().map((_, index) => (
+                    <DeviceCardSkeleton key={`device-skeleton-${index}`} />
+                  ))
+                : visibleDisplayOrder.map((item) => {
+                if (item.type === "device") {
+                  const deviceId = item.deviceId;
+                  const device = getDeviceInfo(deviceId);
+                  const accentColor = getDeviceChartColor(chartColors, deviceId);
+                  const indoorMetrics = buildIndoorMetrics(
+                    latestByDevice[deviceId],
+                    accentColor
+                  );
+                  return (
+                    <DeviceCard
+                      key={`device-${deviceId}`}
+                      title={device.name}
+                      accentColor={accentColor}
+                      action={
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      }
+                      onClick={() => {
+                        setDevicePanelId(deviceId);
+                        setDevicePanelOpen(true);
+                      }}
+                      metrics={indoorMetrics}
+                      metricsState={resolveMetricsDisplayState(
+                        indoorMetrics,
+                        latestLoadStatusByDevice[deviceId],
+                        dashboardDataLoaded
+                      )}
+                      statusNote={formatStaleNote(deviceId)}
+                    />
+                  );
+                }
+
+                if (item.type === "outdoor") {
+                  const outdoorLoadStatus = resolveOutdoorBatchLoadStatus(
+                    latestByDevice,
+                    latestLoadStatusByDevice
+                  );
+                  return (
+                    <DeviceCard
+                      key="outdoor"
+                      title={formatOutdoorApiLabel(outdoorLocation?.name)}
+                      metrics={outdoorMetrics}
+                      metricsState={resolveMetricsDisplayState(
+                        outdoorMetrics,
+                        outdoorLoadStatus,
+                        dashboardDataLoaded
+                      )}
+                      action={
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      }
+                      onClick={() => setOutdoorPanelOpen(true)}
+                    />
+                  );
+                }
+
+                const airconMetrics = buildAirconMetrics(
+                  airconLatest,
+                  getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID),
+                  {
+                    showRoom: isAirconRoomVisible(hiddenDeviceKeys),
+                    showTarget: isAirconTargetVisible(hiddenDeviceKeys),
+                  }
+                );
+                return (
+                  <DeviceCard
+                    key="aircon"
+                    title={airconTitle}
+                    accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
+                    metrics={airconMetrics}
+                    metricsState={resolveMetricsDisplayState(
+                      airconMetrics,
+                      airconLoadStatus,
+                      dashboardDataLoaded
+                    )}
+                  />
+                );
+              })}
             </div>
           </section>
-        )}
 
-        <section>
-          <div className="mb-3 px-0.5">
-            <h2 className="section-title">最近の記録</h2>
-          </div>
+          <section className="lg:col-start-1 lg:row-start-2">
+            <div className="mb-3 px-0.5">
+              <h2 className="section-title">推移</h2>
+            </div>
 
-          <DailyStatsList
-            dailyStatsByDevice={mergedDailyStatsByDevice}
-            deviceIds={dailyStatsDeviceIds}
-            deviceNames={deviceNames}
-            chartMetric={chartMetric}
-            latestByDevice={latestForDailyStats}
-            dailyLimit={dailyLimit}
-            chartColors={chartColors}
-            onLoadMore={() =>
-              setDailyLimit((prev) => Math.min(prev + 7, maxDailyStatsDays))
-            }
-          />
-        </section>
+            <EnvironmentChart
+              historyData={historyData}
+              deviceIds={chartDeviceIds}
+              deviceNames={deviceNames}
+              chartMetric={chartMetric}
+              onChartMetricChange={setChartMetric}
+              viewRange={viewRange}
+              onViewRangeChange={setViewRange}
+              loading={chartLoading}
+              historyLoading={historyLoading || loadingRange}
+              awaitingLatest={awaitingLatest}
+              historyEpoch={historyEpoch}
+              noMoreOlderData={noMoreOlderData}
+              onVisibleDomainChange={ensureVisibleRangeLoaded}
+              airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
+              outdoorLocationName={outdoorLocation?.name}
+              legendOrder={visibleDisplayOrder}
+              chartColors={chartColors}
+              lineVisibility={effectiveLineVisibility}
+              onLineVisibilityChange={handleChartLineVisibleChange}
+            />
+          </section>
 
-        <div className="flex gap-2 pt-2">
+          <section className="lg:col-start-1 lg:row-start-3">
+            <div className="mb-3 px-0.5">
+              <h2 className="section-title">最近の記録</h2>
+            </div>
+
+            <DailyStatsList
+              dailyStatsByDevice={mergedDailyStatsByDevice}
+              deviceIds={dailyStatsDeviceIds}
+              deviceNames={deviceNames}
+              chartMetric={chartMetric}
+              latestByDevice={latestForDailyStats}
+              dailyLimit={dailyLimit}
+              chartColors={chartColors}
+              onLoadMore={() =>
+                setDailyLimit((prev) => Math.min(prev + 7, maxDailyStatsDays))
+              }
+            />
+          </section>
+
+          {comingSoonVisible && (
+            <section className="lg:col-start-2 lg:row-start-2">
+              <div className="mb-3 px-0.5">
+                <h2 className="section-title text-muted-foreground">
+                  {DASHBOARD_SECTION_LABELS.comingSoon}
+                </h2>
+              </div>
+              <div className="flex flex-col gap-2.5">
+                {COMING_SOON_CARDS.map((card) => (
+                  <ComingSoonCard key={card.key} card={card} />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div className="flex gap-2 pt-2 lg:max-w-[420px]">
           <Button
             variant="ghost"
             className="flex-1 text-muted-foreground"
@@ -1075,7 +1101,7 @@ export function MyRoomDashboard() {
         <button
           type="button"
           onClick={() => setVersionHistoryOpen(true)}
-          className="mx-auto block pt-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          className="mx-auto block pt-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline lg:mx-0 lg:w-[420px]"
         >
           バージョン {APP_VERSION}
         </button>
