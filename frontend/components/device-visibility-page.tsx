@@ -74,6 +74,7 @@ import {
   VISIBLE_DEVICES_CHANGED_EVENT,
 } from "@/lib/visible-devices";
 import {
+  COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
   LIFE_CARDS,
 } from "@/lib/dashboard-sections";
@@ -838,7 +839,7 @@ export function DeviceVisibilityPage() {
   }
 
   return (
-    <div className="pb-10">
+    <div className="mx-auto w-full max-w-[480px] pb-10">
       <div className="space-y-6 px-5 pt-12">
         <header className="flex items-center gap-3">
           <Link
@@ -939,6 +940,28 @@ export function DeviceVisibilityPage() {
                 }
               />
             ))}
+          </section>
+        )}
+
+        {!loading && (
+          <section className="space-y-3">
+            <div className="px-0.5">
+              <h2 className="text-sm font-semibold">
+                {DASHBOARD_SECTION_LABELS.comingSoon}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                これから作る機能の案内。セクションごと表示・非表示を切り替えます
+              </p>
+            </div>
+            <ChartLineVisibilityToggle
+              id="coming-soon-visible"
+              label={DASHBOARD_SECTION_LABELS.comingSoon}
+              description="オフにするとダッシュボードの一番下から消えます"
+              visible={isHiddenKeyVisible(hiddenKeys, COMING_SOON_SECTION_KEY)}
+              onChange={(visible) =>
+                handleHiddenKeyVisibilityChange(COMING_SOON_SECTION_KEY, visible)
+              }
+            />
           </section>
         )}
       </div>

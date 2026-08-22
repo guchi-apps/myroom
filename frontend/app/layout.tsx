@@ -50,9 +50,8 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <ServiceWorkerRegister />
-          <div className="mx-auto min-h-screen max-w-[480px] bg-background">
-            {children}
-          </div>
+          {/* 画面ごとに幅が違う（ホームはPCで広げる）ため、最大幅は各画面が決める */}
+          <div className="min-h-screen w-full bg-background">{children}</div>
         </ThemeProvider>
       </body>
     </html>
