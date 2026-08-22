@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Trash2, X } from "lucide-react";
+import { CurrentReadings } from "@/components/current-readings";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,12 +17,14 @@ import {
 } from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import { getInheritanceChain } from "@/lib/device-inheritance";
+import { buildIndoorReadings } from "@/lib/device-metrics";
 import { useChartHistory } from "@/lib/use-chart-history";
 import type {
   ChartMetric,
   ChartViewRange,
   DeviceInfo,
   HistoryPoint,
+  LatestData,
   SensorRecord,
 } from "@/lib/types";
 
@@ -31,6 +34,8 @@ interface DeviceDetailPanelProps {
   open: boolean;
   deviceId: number;
   locationName: string;
+  /** カードから外した気圧・CO2・照度を「いまの値」として出すための最新データ（#226） */
+  latest?: LatestData | null;
   chartColors: ChartColorSettings;
   lineVisibility?: ChartLineVisibilitySettings;
   devices: DeviceInfo[];
@@ -73,6 +78,7 @@ export function DeviceDetailPanel({
   open,
   deviceId,
   locationName,
+  latest = null,
   chartColors,
   lineVisibility: lineVisibilityProp,
   devices,
@@ -320,6 +326,11 @@ export function DeviceDetailPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
           {view === "chart" ? (
+            <>
+            <CurrentReadings
+              readings={buildIndoorReadings(latest)}
+              measuredAt={latest?.datetime}
+            />
             <div className="px-3 py-3">
               <EnvironmentChart
                 historyData={historyData}
@@ -342,6 +353,7 @@ export function DeviceDetailPanel({
                 pinMetricTabsOnMobile={false}
               />
             </div>
+            </>
           ) : loading ? (
             <p className="px-5 py-10 text-center text-sm text-muted-foreground">
               読み込み中...
