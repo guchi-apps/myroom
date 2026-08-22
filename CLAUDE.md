@@ -45,6 +45,23 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 `scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
 検証目的でビルドしただけでも差分が出る。**リリース作業以外では、この差分をコミットに含めないこと。**
 
+## 本番DBのマイグレーション
+
+**テーブルや列を増やす変更（`migrate_db.py` へのDDL追加）は、本番の「アプリ用DBユーザー」では実行できない。**
+本番は共有MariaDBで、アプリ用ユーザー（`SHARED_DB_USER`）には
+`SELECT / INSERT / UPDATE / DELETE` しか付いていない。DDLを含むマイグレーションをそのまま流すと
+`CREATE command denied` / `ALTER command denied`（MySQLエラー1142）でデプロイが落ちる（#193）。
+
+そのため `deploy.yml` は、**マイグレーション専用ユーザー**（organization secret の
+`SHARED_DB_MIGRATE_USER` / `SHARED_DB_MIGRATE_PASSWORD`）を `DB_ADMIN_USER` / `DB_ADMIN_PASSWORD`
+として `migrate_db.py` の実行時にだけ渡す。**この値は本番の `.env` には書かない**
+（常時稼働するバックエンドにDDL権限を持たせないため）。`migrate_db.py` はこの2つが空なら
+アプリ用ユーザーへフォールバックする。
+
+- 新しいテーブル・列を足すときは `migrate_db.py` に「存在チェック → 無ければ作る」の形で追記する
+- **マイグレーション専用ユーザーにそのDBのGRANTが無ければ、上記を渡しても落ちる。**
+  その場合はVPS上で管理者ユーザーからGRANTを1度だけ実行する必要がある（手作業。Git管理外）
+
 ## マルチエージェント運用（GitHub Actions 無人実行）
 
 `@claude` コメントを起点に、計画提示〜実装〜develop向けPR作成までを GitHub Actions 上で無人実行する。
