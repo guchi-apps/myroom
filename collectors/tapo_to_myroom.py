@@ -26,9 +26,21 @@
 ホストを直接叩く前に必ずブロードキャストのディスカバリー（UDP/20002）を1回投げ、
 その後で各機器へ接続する。1回あたり数百ミリ秒で済むので、毎回投げてよい。
 
+ブロードキャストで見つからないとき
+----------------------------------
+**ディスカバリーの応答はホスト側のファイアウォールに落とされることがある。** ブロードキャスト
+宛（255.255.255.255）に送った問い合わせへの応答は、送信元がプラグ個々の IP になるため
+conntrack の ESTABLISHED に一致しない。サブPCのように ufw が `deny incoming` だと、
+プラグは応答しているのに `[UFW BLOCK] ... SPT=20002` として捨てられ、0台に見える（#199）。
+
+**ユニキャストなら通る。** そのため `--list-devices` はブロードキャストで0台だったときに
+同じサブネットを1台ずつ当たり直す（`--scan` で範囲を指定できる）。収集本体は最初から
+ユニキャストなので、この状態でも読み取りには影響しない。
+
 使い方:
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
+  collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices --scan 192.168.2.0/24
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
 """
 
@@ -37,9 +49,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import ipaddress
 import json
 import logging
 import os
+import socket
 import urllib.error
 import urllib.request
 import os.path
@@ -69,6 +83,13 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 DISCOVERY_TIMEOUT = 5
 CONNECT_TIMEOUT = 10
 POST_TIMEOUT = 15
+
+#: ユニキャスト走査で1台に待つ秒数。LAN内なので応答は数十msで返る
+SCAN_TIMEOUT = 3
+#: ユニキャスト走査の同時実行数。/24 を SCAN_TIMEOUT=3 で約12秒
+SCAN_CONCURRENCY = 64
+#: 走査を受け付ける最大アドレス数（/20）。家庭のLANでこれを超える指定は打ち間違い
+SCAN_MAX_HOSTS = 4096
 
 
 class ConfigError(Exception):
@@ -144,11 +165,29 @@ def parse_hosts(raw: str) -> List[Tuple[str, Optional[str]]]:
     return hosts
 
 
-def load_config() -> Dict[str, Any]:
+def load_config(require_hosts: bool = True) -> Dict[str, Any]:
+    """設定を環境変数から組み立てる。
+
+    **`--list-devices` のときは `TAPO_HOSTS` を必須にしない。** あれは「まだ IP が
+    分からない」初回設定のための機能で、そこで `TAPO_HOSTS` を要求すると、
+    一番必要な場面で探索まで到達できない。
+    """
+    raw_hosts = os.getenv("TAPO_HOSTS", "").strip()
+    if require_hosts:
+        hosts = parse_hosts(_require_env("TAPO_HOSTS"))
+    elif raw_hosts:
+        try:
+            hosts = parse_hosts(raw_hosts)
+        except ConfigError as exc:
+            LOGGER.warning("TAPO_HOSTS を読めませんでした（探索には影響しません）: %s", exc)
+            hosts = []
+    else:
+        hosts = []
+
     return {
         "username": _require_env("TAPO_USERNAME"),
         "password": _require_env("TAPO_PASSWORD"),
-        "hosts": parse_hosts(_require_env("TAPO_HOSTS")),
+        "hosts": hosts,
         "api_url": os.getenv("MYROOM_ENERGY_API_URL", DEFAULT_API_URL).strip(),
     }
 
@@ -171,6 +210,97 @@ async def wake_up_devices(credentials: Credentials) -> Dict[str, Any]:
         return {}
     LOGGER.debug("ディスカバリーで %d 台見つかりました", len(found))
     return found
+
+
+async def close_device(device: Any) -> None:
+    """機器との接続を閉じる。
+
+    閉じないと python-kasa が握っている aiohttp のセッションが解放時に
+    `Unclosed client session` を **ERROR で** 吐く。実際には成功しているのに
+    `journalctl` では失敗に見えるため、読み終えたら必ず閉じる。
+    """
+    try:
+        await device.disconnect()
+    except Exception as exc:  # noqa: BLE001 - 後片付けの失敗は本筋に影響しない
+        LOGGER.debug("切断に失敗しました: %s", exc)
+
+
+def parse_scan_target(raw: str) -> ipaddress.IPv4Network:
+    """`--scan` の CIDR を検証して返す。
+
+    1アドレスずつ当たるので、広すぎる指定は事故になる（`/8` は1600万アドレス）。
+    家庭のLANで想定するのは `/24`〜`/20` まで。
+    """
+    try:
+        network = ipaddress.ip_network(raw, strict=False)
+    except ValueError as exc:
+        raise ConfigError(f"--scan の指定が不正です（{raw}）: {exc}") from exc
+    if not isinstance(network, ipaddress.IPv4Network):
+        raise ConfigError(f"--scan は IPv4 のみ対応しています: {raw}")
+    if network.num_addresses > SCAN_MAX_HOSTS:
+        raise ConfigError(
+            f"--scan の範囲が広すぎます（{network} = {network.num_addresses} アドレス）。"
+            f"{SCAN_MAX_HOSTS} アドレス以内で指定してください"
+        )
+    return network
+
+
+def local_subnet() -> Optional[ipaddress.IPv4Network]:
+    """既定の経路が出ていくインターフェースの IP から、走査するサブネット（/24）を推定する。
+
+    UDP ソケットの `connect()` はパケットを送らず、カーネルの経路表を引くだけ。相手へ
+    到達できなくても、既定経路のインターフェースのアドレスが取れる。Tailscale の
+    アドレスは /32 で既定経路を持たないため、ここには出てこない。
+
+    **/24 決め打ち。** それ以外のLANでは `--scan` で明示すること。
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.0.2.1", 9))  # TEST-NET-1。実際には送らない
+        address = sock.getsockname()[0]
+    except OSError as exc:
+        LOGGER.warning("自ホストの IP を取得できませんでした: %s", exc)
+        return None
+    finally:
+        sock.close()
+
+    try:
+        return ipaddress.ip_network(f"{address}/24", strict=False)
+    except ValueError as exc:  # pragma: no cover - getsockname が壊れた値を返した場合
+        LOGGER.warning("サブネットを決められませんでした（%s）: %s", address, exc)
+        return None
+
+
+async def _probe_host(
+    host: str, credentials: Credentials, semaphore: asyncio.Semaphore
+) -> Optional[Any]:
+    async with semaphore:
+        try:
+            return await asyncio.wait_for(
+                Discover.discover_single(host, credentials=credentials),
+                timeout=SCAN_TIMEOUT,
+            )
+        except Exception:  # noqa: BLE001 - 大半は「Tapo 機器ではない」だけなので黙る
+            return None
+
+
+async def scan_subnet(
+    network: ipaddress.IPv4Network, credentials: Credentials
+) -> Dict[str, Any]:
+    """サブネットの各アドレスへ**ユニキャストで**ディスカバリーを投げて機器を探す。
+
+    ブロードキャストの応答がファイアウォールに落とされる環境（モジュール冒頭の説明を
+    参照）向けのフォールバック。/24 なら十数秒で終わる。
+    """
+    hosts = [str(host) for host in network.hosts()]
+    LOGGER.info("%s を1台ずつ探します（%d アドレス）…", network, len(hosts))
+    semaphore = asyncio.Semaphore(SCAN_CONCURRENCY)
+    devices = await asyncio.gather(
+        *(_probe_host(host, credentials, semaphore) for host in hosts)
+    )
+    return {
+        host: device for host, device in zip(hosts, devices) if device is not None
+    }
 
 
 def _read_energy(device: Any) -> Dict[str, Optional[float]]:
@@ -209,6 +339,7 @@ async def read_device(
     host: str, name_override: Optional[str], credentials: Credentials
 ) -> Optional[Dict[str, Any]]:
     """1台ぶんを読む。読めなければ None（他の機器の送信は止めない）。"""
+    device = None
     try:
         device = await asyncio.wait_for(
             Discover.discover_single(host, credentials=credentials),
@@ -217,24 +348,30 @@ async def read_device(
         await asyncio.wait_for(device.update(), timeout=CONNECT_TIMEOUT)
     except Exception as exc:  # noqa: BLE001 - 1台の不調で全体を落とさない
         LOGGER.warning("%s へ接続できませんでした: %s", host, exc)
+        if device is not None:
+            await close_device(device)
         return None
 
-    energy = _read_energy(device)
-    if energy["kwh_today"] is None and energy["power_w"] is None:
-        LOGGER.warning("%s はエネルギー計測に対応していないようです", host)
-        return None
+    try:
+        energy = _read_energy(device)
+        if energy["kwh_today"] is None and energy["power_w"] is None:
+            LOGGER.warning("%s はエネルギー計測に対応していないようです", host)
+            return None
 
-    return {
-        "host": host,
-        "name": name_override or getattr(device, "alias", None) or host,
-        "model": getattr(device, "model", None),
-        **energy,
-    }
+        return {
+            "host": host,
+            "name": name_override or getattr(device, "alias", None) or host,
+            "model": getattr(device, "model", None),
+            **energy,
+        }
+    finally:
+        await close_device(device)
 
 
 async def collect(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     credentials = Credentials(config["username"], config["password"])
-    await wake_up_devices(credentials)
+    for device in (await wake_up_devices(credentials)).values():
+        await close_device(device)
 
     results = await asyncio.gather(
         *(read_device(host, name, credentials) for host, name in config["hosts"])
@@ -279,11 +416,42 @@ def post_payload(api_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------- CLI
 
 
-async def run_list_devices(config: Dict[str, Any]) -> int:
+NOT_FOUND_HINT = """LAN 上に Tapo 機器が見つかりませんでした。次を確認してください。
+
+  1. プラグがこのホストと同じ LAN・同じ VLAN にあり、ping が通ること
+  2. ホストのファイアウォールがディスカバリーの応答を落としていないこと
+     （ufw が deny incoming だとブロードキャストの応答は捨てられます）
+
+       journalctl -k --since '-5min' | grep 'UFW BLOCK' | grep 'SPT=20002'
+
+     ここに行が出ていれば、プラグは応答しているのに捨てられています。
+     IP が分かっているなら TAPO_HOSTS に直接書けば収集は動きます（収集は
+     ユニキャストのため、この状態でも読めます）。
+  3. サブネットが /24 でない場合は --scan で範囲を指定すること
+     （例: --scan 192.168.2.0/23）"""
+
+
+async def run_list_devices(config: Dict[str, Any], scan: Optional[str]) -> int:
     credentials = Credentials(config["username"], config["password"])
     found = await wake_up_devices(credentials)
+
     if not found:
-        print("LAN 上に Tapo 機器が見つかりませんでした。")
+        # ブロードキャストの応答はファイアウォールに落とされることがある（#199）。
+        # ユニキャストなら通るので、同じサブネットを1台ずつ当たり直す。
+        LOGGER.info(
+            "ブロードキャストでは見つかりませんでした。"
+            "ユニキャストで探し直します（応答がファイアウォールに落とされている可能性）。"
+        )
+        try:
+            network = parse_scan_target(scan) if scan else local_subnet()
+        except ConfigError as exc:
+            LOGGER.error("%s", exc)
+            return 2
+        if network is not None:
+            found = await scan_subnet(network, credentials)
+
+    if not found:
+        print(NOT_FOUND_HINT)
         return 1
 
     print(f"{len(found)} 台見つかりました。TAPO_HOSTS にはこの IP を書きます。\n")
@@ -292,6 +460,7 @@ async def run_list_devices(config: Dict[str, Any]) -> int:
             await device.update()
         except Exception as exc:  # noqa: BLE001 - 一覧表示なので読めない機器も出す
             print(f"  {host}  (更新できませんでした: {exc})")
+            await close_device(device)
             continue
         energy = _read_energy(device)
         supported = "計測あり" if energy["kwh_today"] is not None else "計測なし"
@@ -299,6 +468,7 @@ async def run_list_devices(config: Dict[str, Any]) -> int:
             f"  {host:<16} {getattr(device, 'alias', '?')}"
             f"  [{getattr(device, 'model', '?')}] {supported}"
         )
+        await close_device(device)
     return 0
 
 
@@ -352,6 +522,14 @@ def main() -> int:
         help="LAN 上の Tapo 機器を探して IP と名前を表示する（初回の設定用）",
     )
     parser.add_argument(
+        "--scan",
+        metavar="CIDR",
+        help=(
+            "--list-devices でブロードキャストが空だったときに1台ずつ当たる範囲"
+            "（省略時は自ホストの IP から /24 を推定）"
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="読み取るだけで POST しない"
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="詳細ログを出す")
@@ -379,14 +557,15 @@ def main() -> int:
         return 2
 
     try:
-        config = load_config()
+        # 一覧表示は IP を調べるための機能なので、TAPO_HOSTS が無くても動かす
+        config = load_config(require_hosts=not args.list_devices)
     except ConfigError as exc:
         LOGGER.error("%s", exc)
         LOGGER.error("collectors/tapo.env.example を参照してください。")
         return 2
 
     if args.list_devices:
-        return asyncio.run(run_list_devices(config))
+        return asyncio.run(run_list_devices(config, args.scan))
     return asyncio.run(run_collect(config, args.dry_run))
 
 
