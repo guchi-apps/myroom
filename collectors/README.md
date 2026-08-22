@@ -116,7 +116,26 @@ collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
 
 # 読み取るだけ（POSTしない）
 collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
+
+# 過去1か月ぶんを取り込む（プラグを増やしたとき・収集が長く止まったときに1度だけ）
+collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --days 31
 ```
+
+### 過去ぶんはプラグ本体から取れる
+
+**P110 系は日別の使用量をプラグ自身が覚えている。** `get_energy_data`（`interval=1440`）で
+月初起点の 92 日ぶんが Wh の配列として返るため、収集を始める前の日や、収集が止まっていた
+あいだの日も後から埋められる（#208）。
+
+- 既定は `--days 3`（当日＋直近2日）。当日ぶんは1日のあいだ増えていくので、直近の確定値も
+  送り直して最終値へ寄せる。**5分ごとの定期実行で毎回30行を書き直すのは重いので、
+  1か月ぶんは既定にしない**
+- **計測を始める前の日も `0` が返る。** 「まだ計測していない日」と「本当に0だった日」は
+  区別できないため、返ってきた履歴全体で最初に0でなかった日より前は送らない
+  （プラグを付ける前の日が0で埋まり、グラフが平らに伸びるのを防ぐ）。その日以降の0は
+  「使わなかった日」として送る
+- **瞬時電力（`power_w`）が付くのは当日ぶんだけ。** 過去ぶんは日別の積算しか残っていない
+- `--days` の上限は 92（プラグが返す履歴の長さ）。それ以前の日は取得できない
 
 ### ディスカバリーの応答は ufw に落とされる
 
@@ -142,6 +161,64 @@ python-kasa の `Device` は aiohttp のセッションを握る。`disconnect()
 `Unclosed client session` を **ERROR で** 吐き、送信自体は成功しているのに
 `journalctl --user -u myroom-tapo-energy.service` では失敗に見える。`close_device()` を通すこと。
 
+## eufy_to_myroom.py
+
+お掃除ロボット（eufy Clean）の稼働状態を LAN 内から読み、`POST /api/cleaner` へ送る（観測のみ）。
+`tinytuya` が要るため、**専用の venv（`collectors/.venv-cleaner/`）で動かす**
+（`requirements-cleaner.txt`）。設定は `eufy.env.example` を `collectors/.env` へ追記する。
+
+```bash
+cd ~/apps/myroom
+
+# LAN 上の Tuya 機器を探して IP と device_id を調べる（初回の設定用）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --scan
+
+# 機器が返す DP の辞書をそのまま見る（DP番号の特定用）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --dump
+
+# 読み取るだけ（POSTしない）
+collectors/.venv-cleaner/bin/python collectors/eufy_to_myroom.py --dry-run -v
+```
+
+### local key の取り出しが唯一の手作業
+
+**Tuya のローカルプロトコルは `device_id` と `local_key` の両方が無いと復号できない。**
+`--scan` で分かるのは IP・device_id・プロトコル版までで、local key はクラウド側にしかない。
+取り出すには Tuya IoT 開発者アカウントが要る。
+
+1. [Tuya IoT Platform](https://iot.tuya.com/) でアカウントを作り、Cloud プロジェクトを1つ作る
+   （データセンターは **Western America**。eufy の日本アカウントもここに載っていることが多い）
+2. プロジェクトの「Devices」→「Link App Account」で、eufy アプリのアカウントをQRコードで紐づける
+3. `collectors/.venv-cleaner/bin/python -m tinytuya wizard` に API Key / API Secret / 地域を渡すと、
+   紐づいた機器の `id` と `key` が `devices.json` に書き出される
+4. その `id` を `EUFY_DEVICE_ID`、`key` を `EUFY_LOCAL_KEY` として `collectors/.env` に入れる
+
+- **local key は機器をアプリから登録し直すと変わる。** 読めなくなったらここからやり直す
+- 掃除機のIPはルーターでDHCP固定にしておく（変わると読めなくなる）
+
+### DP番号は機種で変わる
+
+Tuya は状態を「DP番号 → 値」の辞書で返す。eufy はおおむね `15` が稼働状態、`104` が
+バッテリー残量だが、**機種とファームで変わる。** 既定で読めない場合は `--dump` の出力を見て
+`EUFY_STATUS_DP` / `EUFY_BATTERY_DP` を設定する。
+
+```json
+{
+  "15": "Charging",
+  "104": 92
+}
+```
+
+状態名の読み替え（`Recharge` → 帰還中 など）は **MyRoom 側**（`backend/cleaner.py` の
+`EVENT_ALIASES`）に置いている。収集スクリプトは小文字にして送るだけなので、知らない状態名が
+出てきたときに直すのはサーバー側1箇所でよい。
+
+### 同じ状態を何度送っても履歴は汚れない
+
+MyRoom は**状態が変わったときだけ** `cleaner_runs` に行を足す。同じ状態が続いている間は
+最後に確認した時刻とバッテリー残量だけを進めるため、3分ごとに送り続けても履歴は
+「掃除を始めた」「充電に入った」の並びのまま保たれる。ログの `状態に変化なし` は正常な結果。
+
 ## 定期実行
 
 ユニットは [`systemd/`](systemd/) にある。`aide` と同じく
@@ -157,4 +234,5 @@ systemctl --user list-timers myroom-aircon-energy.timer
 journalctl --user -u myroom-aircon-energy.service -n 50
 ```
 
-Tapo ぶん（5分ごと）も同じ手順で、ユニット名を `myroom-tapo-energy` に読み替える。
+Tapo ぶん（5分ごと）と eufy ぶん（3分ごと）も同じ手順で、ユニット名をそれぞれ
+`myroom-tapo-energy`・`myroom-eufy-cleaner` に読み替える。

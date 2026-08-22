@@ -37,8 +37,19 @@ conntrack の ESTABLISHED に一致しない。サブPCのように ufw が `den
 同じサブネットを1台ずつ当たり直す（`--scan` で範囲を指定できる）。収集本体は最初から
 ユニキャストなので、この状態でも読み取りには影響しない。
 
+過去ぶんはプラグ本体から取る
+--------------------------
+**P110 系は日別の使用量をプラグ自身が覚えている。** `get_energy_data`（`interval=1440`）で
+月初起点の 92 日ぶんが Wh の配列として返るため、収集を始める前の日や、収集が止まっていた
+あいだの日も後から埋められる（#208）。当日ぶんだけを送っていた頃は、スクリプトを動かし
+始めた日より前がグラフから抜けていた。
+
+既定は当日を含めて `DEFAULT_DAYS` 日ぶん。**過去1か月ぶんの取り込みは `--days 31` を1度だけ
+流す。** 5分ごとの定期実行で毎回30行を書き直すのは重いので、既定にはしない。
+
 使い方:
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py
+  collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --days 31
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices --scan 192.168.2.0/24
   collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
@@ -90,6 +101,18 @@ SCAN_TIMEOUT = 3
 SCAN_CONCURRENCY = 64
 #: 走査を受け付ける最大アドレス数（/20）。家庭のLANでこれを超える指定は打ち間違い
 SCAN_MAX_HOSTS = 4096
+
+#: 既定で送り直す日数（当日を含む）。当日ぶんは1日のあいだ増えていくので、直近の確定値も
+#: 一緒に送り直して最終値へ寄せる。`collectors/aircon_energy_to_myroom.py` の
+#: `DEFAULT_DAYS` と同じ考え方。
+DEFAULT_DAYS = 3
+
+#: `--days` の上限。プラグが返す日別履歴が月初起点の92日ぶんまでのため、これより
+#: 大きい指定は受け付けても意味が無い。
+MAX_DAYS = 92
+
+#: `get_energy_data` の `interval`（分）。1440 = 1日ごと。
+DAILY_INTERVAL_MINUTES = 1440
 
 
 class ConfigError(Exception):
@@ -303,6 +326,16 @@ async def scan_subnet(
     }
 
 
+def _energy_module(device: Any) -> Optional[Any]:
+    """python-kasa 0.7 以降の Energy モジュールを返す。古い版・非対応機器では None。"""
+    try:
+        from kasa import Module  # 遅延 import（古い版には Module が無い）
+
+        return device.modules.get(Module.Energy)
+    except Exception:  # noqa: BLE001 - 古い版へのフォールバックに落とす
+        return None
+
+
 def _read_energy(device: Any) -> Dict[str, Optional[float]]:
     """python-kasa のバージョン差を吸収して、瞬時値と当日積算を取り出す。
 
@@ -312,13 +345,7 @@ def _read_energy(device: Any) -> Dict[str, Optional[float]]:
     power_w: Optional[float] = None
     kwh_today: Optional[float] = None
 
-    module = None
-    try:
-        from kasa import Module  # 遅延 import（古い版には Module が無い）
-
-        module = device.modules.get(Module.Energy)
-    except Exception:  # noqa: BLE001 - 古い版へのフォールバックに落とす
-        module = None
+    module = _energy_module(device)
 
     if module is not None:
         power_w = getattr(module, "current_consumption", None)
@@ -335,8 +362,93 @@ def _read_energy(device: Any) -> Dict[str, Optional[float]]:
     }
 
 
+def window_start(today: datetime.date, days: int) -> datetime.date:
+    """送り直す期間の先頭。`days=1` なら当日のみ（従来の挙動）。"""
+    if days < 1:
+        raise ValueError("days must be >= 1")
+    return today - datetime.timedelta(days=days - 1)
+
+
+def _day_start_timestamp(date: datetime.date) -> int:
+    return int(datetime.datetime.combine(date, datetime.time(), JST).timestamp())
+
+
+def extract_daily_history(
+    response: Any, today: datetime.date, start: datetime.date
+) -> List[Tuple[datetime.date, float]]:
+    """`get_energy_data` の応答を `(日付, kWh)` の並びへ。古い順。
+
+    応答の `data` は **Wh の配列**で、`start_timestamp` の日から1日ずつ並ぶ。要求した
+    期間より広く返る（プラグ側が起点を月初へ丸め、92日ぶん返す）ため、こちらで切り詰める。
+
+    **計測を始める前の日も `0` が返る。** 「まだ計測していない日」と「本当に0だった日」は
+    区別できないので、**配列全体で最初に0でなかった日より前は捨てる**（プラグを付ける前の
+    日が0で埋まり、グラフが平らに伸びるのを防ぐ）。その日以降の0は「使わなかった日」
+    として残す。
+
+    当日ぶんは瞬時電力と一緒に別途送るため、ここには含めない。
+    """
+    payload = response.get("get_energy_data", response) if isinstance(response, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError("get_energy_data の応答が辞書ではありません")
+
+    data = payload.get("data")
+    start_timestamp = payload.get("start_timestamp")
+    if not isinstance(data, list) or start_timestamp is None:
+        raise ValueError("get_energy_data の応答に data / start_timestamp がありません")
+
+    first_day = datetime.datetime.fromtimestamp(int(start_timestamp), JST).date()
+    first_measured = next((index for index, value in enumerate(data) if value), None)
+    if first_measured is None:
+        return []
+
+    history: List[Tuple[datetime.date, float]] = []
+    for index in range(first_measured, len(data)):
+        date = first_day + datetime.timedelta(days=index)
+        if date < start or date >= today:
+            continue
+        value = data[index]
+        if value is None:
+            continue
+        history.append((date, round(float(value) / 1000.0, 3)))
+    return history
+
+
+async def read_daily_history(
+    device: Any, today: datetime.date, start: datetime.date
+) -> List[Tuple[datetime.date, float]]:
+    """プラグ本体が持つ日別履歴を読む。読めなければ空（当日ぶんの送信は止めない）。"""
+    module = _energy_module(device)
+    if module is None:
+        return []
+
+    params = {
+        # プラグは起点を月初へ丸めるので、こちらも月初で渡して素直に受け取る
+        "start_timestamp": _day_start_timestamp(start.replace(day=1)),
+        "end_timestamp": _day_start_timestamp(today + datetime.timedelta(days=1)),
+        "interval": DAILY_INTERVAL_MINUTES,
+    }
+    try:
+        response = await asyncio.wait_for(
+            module.call("get_energy_data", params), timeout=CONNECT_TIMEOUT
+        )
+    except Exception as exc:  # noqa: BLE001 - 過去ぶんが取れなくても当日ぶんは送る
+        LOGGER.warning("日別履歴を取得できませんでした: %s", exc)
+        return []
+
+    try:
+        return extract_daily_history(response, today, start)
+    except (ValueError, TypeError, OverflowError, OSError) as exc:
+        LOGGER.warning("日別履歴を解釈できませんでした: %s", exc)
+        return []
+
+
 async def read_device(
-    host: str, name_override: Optional[str], credentials: Credentials
+    host: str,
+    name_override: Optional[str],
+    credentials: Credentials,
+    today: datetime.date,
+    start: datetime.date,
 ) -> Optional[Dict[str, Any]]:
     """1台ぶんを読む。読めなければ None（他の機器の送信は止めない）。"""
     device = None
@@ -358,23 +470,33 @@ async def read_device(
             LOGGER.warning("%s はエネルギー計測に対応していないようです", host)
             return None
 
+        history = (
+            await read_daily_history(device, today, start) if start < today else []
+        )
+
         return {
             "host": host,
             "name": name_override or getattr(device, "alias", None) or host,
             "model": getattr(device, "model", None),
+            "history": history,
             **energy,
         }
     finally:
         await close_device(device)
 
 
-async def collect(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def collect(
+    config: Dict[str, Any], today: datetime.date, start: datetime.date
+) -> List[Dict[str, Any]]:
     credentials = Credentials(config["username"], config["password"])
     for device in (await wake_up_devices(credentials)).values():
         await close_device(device)
 
     results = await asyncio.gather(
-        *(read_device(host, name, credentials) for host, name in config["hosts"])
+        *(
+            read_device(host, name, credentials, today, start)
+            for host, name in config["hosts"]
+        )
     )
     return [item for item in results if item is not None]
 
@@ -385,23 +507,36 @@ async def collect(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 def build_payload(
     readings: List[Dict[str, Any]], today: datetime.date
 ) -> Dict[str, Any]:
-    """`POST /api/energy` の本文を作る。
+    """`POST /api/energy` の本文を作る。古い日付から順に並べる。
 
     同じ (date, source) は API 側で上書きされる。当日の積算は1日のあいだ増えていくため、
     追記ではなく上書きでないと二重計上になる。
+
+    **瞬時電力（`power_w`）が付くのは当日ぶんだけ。** 過去ぶんはプラグの日別履歴から
+    取っており、その日の瞬時値は残っていない。
     """
-    return {
-        "records": [
-            {
-                "date": today.isoformat(),
-                "source": f"{SOURCE_PREFIX}{item['name']}",
-                "kwh": item["kwh_today"],
-                "power_w": item["power_w"],
-            }
-            for item in readings
-            if item["kwh_today"] is not None
-        ]
-    }
+    records: List[Dict[str, Any]] = []
+    for item in readings:
+        source = f"{SOURCE_PREFIX}{item['name']}"
+        for date, kwh in item.get("history") or ():
+            records.append(
+                {
+                    "date": date.isoformat(),
+                    "source": source,
+                    "kwh": kwh,
+                    "power_w": None,
+                }
+            )
+        if item["kwh_today"] is not None:
+            records.append(
+                {
+                    "date": today.isoformat(),
+                    "source": source,
+                    "kwh": item["kwh_today"],
+                    "power_w": item["power_w"],
+                }
+            )
+    return {"records": records}
 
 
 def post_payload(api_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -472,22 +607,25 @@ async def run_list_devices(config: Dict[str, Any], scan: Optional[str]) -> int:
     return 0
 
 
-async def run_collect(config: Dict[str, Any], dry_run: bool) -> int:
-    readings = await collect(config)
+async def run_collect(config: Dict[str, Any], dry_run: bool, days: int) -> int:
+    today = datetime.datetime.now(JST).date()
+    start = window_start(today, days)
+
+    readings = await collect(config, today, start)
     if not readings:
         LOGGER.error("どのプラグからも読み取れませんでした")
         return 1
 
-    today = datetime.datetime.now(JST).date()
     payload = build_payload(readings, today)
 
     for item in readings:
         LOGGER.info(
-            "%s (%s): %s kWh / %s W",
+            "%s (%s): %s kWh / %s W（過去 %d 日ぶん）",
             item["name"],
             item["host"],
             item["kwh_today"],
             item["power_w"],
+            len(item["history"]),
         )
 
     if not payload["records"]:
@@ -530,6 +668,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--days",
+        type=int,
+        default=DEFAULT_DAYS,
+        metavar="N",
+        help=(
+            f"当日を含めて何日ぶん送り直すか（既定 {DEFAULT_DAYS}・最大 {MAX_DAYS}）。"
+            "過去1か月ぶんの取り込みは --days 31 を1度だけ流す"
+        ),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="読み取るだけで POST しない"
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="詳細ログを出す")
@@ -539,6 +687,14 @@ def main() -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
+    if not 1 <= args.days <= MAX_DAYS:
+        LOGGER.error(
+            "--days は 1〜%d で指定してください（プラグが持つ履歴は月初起点の %d 日ぶんまで）",
+            MAX_DAYS,
+            MAX_DAYS,
+        )
+        return 2
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     apply_env_files(
@@ -566,7 +722,7 @@ def main() -> int:
 
     if args.list_devices:
         return asyncio.run(run_list_devices(config, args.scan))
-    return asyncio.run(run_collect(config, args.dry_run))
+    return asyncio.run(run_collect(config, args.dry_run, args.days))
 
 
 if __name__ == "__main__":

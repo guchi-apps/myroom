@@ -106,11 +106,53 @@ def test_build_payload_returns_today_tomorrow_and_upcoming(data_dir):
     assert payload["upcoming"][0]["notes"] == ["振替収集"]
 
 
+def test_build_payload_lists_the_next_collection_per_category(data_dir):
+    write_config(data_dir)
+    payload = garbage.build_payload(datetime.date(2026, 8, 11))
+
+    # 設定に書いた順のまま返す。カードもこの順に並べる（日付順には並べ替えない）
+    assert [entry["name"] for entry in payload["by_category"]] == ["普通ごみ", "資源ごみ"]
+
+    burnable, recyclable = payload["by_category"]
+    # 8/11（火）は普通ごみの収集日。今日も「次の収集」に含める
+    assert burnable["next"] == {"date": "2026-08-11", "weekday": "火", "days_until": 0}
+    # 8/12 は第2水曜
+    assert recyclable["next"] == {"date": "2026-08-12", "weekday": "水", "days_until": 1}
+    assert burnable["color"] == "#e67e22"
+
+
+def test_next_collection_skips_days_cancelled_by_an_exception(data_dir):
+    write_config(data_dir)
+    # 8/13（木）から見ると次の普通ごみは 8/14（金）だが、例外で中止。臨時収集の 8/16（日）になる
+    payload = garbage.build_payload(datetime.date(2026, 8, 13))
+    assert payload["by_category"][0]["next"]["date"] == "2026-08-16"
+
+
+def test_next_collection_is_none_when_the_category_has_no_rule(data_dir):
+    write_config(
+        data_dir,
+        {
+            "categories": [
+                {
+                    "id": "burnable",
+                    "name": "普通ごみ",
+                    "rules": [{"type": "weekly", "weekdays": ["tue"]}],
+                },
+                {"id": "bulky", "name": "大型可燃ごみ", "rules": []},
+            ]
+        },
+    )
+    payload = garbage.build_payload(datetime.date(2026, 8, 11))
+    assert payload["by_category"][0]["next"]["date"] == "2026-08-11"
+    assert payload["by_category"][1]["next"] is None
+
+
 def test_missing_config_is_reported_as_unconfigured(data_dir):
     payload = garbage.build_payload(datetime.date(2026, 8, 11))
     assert payload["configured"] is False
     assert payload["today"]["categories"] == []
     assert payload["upcoming"] == []
+    assert payload["by_category"] == []
 
 
 def test_broken_config_is_reported_as_unconfigured(data_dir):
@@ -200,6 +242,7 @@ def test_api_returns_schedule(authed_client, data_dir):
     assert payload["configured"] is True
     assert payload["area"] == "茨木市"
     assert set(payload["today"]) == {"date", "weekday", "days_until", "categories", "notes"}
+    assert set(payload["by_category"][0]) == {"id", "name", "color", "note", "next"}
 
 
 def test_api_requires_auth(client):

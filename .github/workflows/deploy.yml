@@ -223,6 +223,23 @@ jobs:
             pm2 delete insight-backend 2>/dev/null || true
             pm2 start ecosystem.config.js
             pm2 save
+
+            # 起動できたかを確認してからデプロイを成功にする。固定のsleep 1回だと、
+            # 起動が間に合わないだけで赤くなる／即死していても緑で終わる（#205）。
+            # 2秒間隔で最大30回（60秒）待つ。
+            echo "Health check..."
+            for i in \$(seq 1 30); do
+              if curl -fsS -o /dev/null "http://127.0.0.1:8000/api/health"; then
+                echo "Deployment successful."
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "Health check failed after 60s."
+            pm2 describe myroom-backend || true
+            pm2 logs myroom-backend --lines 50 --nostream || true
+            exit 1
           EOF
 
   release:
