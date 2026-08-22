@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.8.0",
+    date: "2026-08-22",
+    changes: [
+      "ホーム画面に「近日公開」セクションを追加し、これから追加予定の機能を確認できるようにしました。ゴミの日カードは次の収集日がひと目でわかるよう表示を見やすく刷新し、この先の収集予定もより多く表示されるようになりました。また、パソコンなど画面の広い端末では2列レイアウトで見やすく表示されます。",
+    ],
+  },
+  {
     version: "3.7.2",
     date: "2026-08-22",
     changes: [
