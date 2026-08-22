@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, cleaner, energy, garbage, garbage_notify, garbage_notion, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, cleaner, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -613,6 +613,28 @@ def get_internal_room_state(
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
     return garbage.build_payload()
+
+
+@app.get("/api/remote/buttons")
+def get_remote_buttons(_: dict = Depends(get_current_user)):
+    """押せるリモコン操作の一覧。data/remote.json の定義をそのまま返す。
+
+    ここでは Nature Remo を叩かない。外部APIへ出るのは実際に押したときだけ（#106）。
+    """
+    return remote.build_payload()
+
+
+@app.post("/api/remote/buttons/{button_id}/send")
+def send_remote_button(button_id: str, _: dict = Depends(get_current_user)):
+    """赤外線を送る。
+
+    返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは
+    赤外線が片方向のため分からない。
+    """
+    try:
+        return remote.press(button_id)
+    except remote.RemoteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
 
 
 @app.get("/api/auth/me")

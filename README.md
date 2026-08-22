@@ -201,7 +201,7 @@ SwitchBot 風のスマートホーム UI をベースに、スマホ向け（最
 
 朝いちばんに知りたい予定を先頭に置き、時系列グラフは掘り下げる情報として下へ回しています。
 
-1. **暮らし（1列）** — ゴミの日・消費電力など、推移グラフの凡例を持たないカード
+1. **暮らし（1列）** — 電気の操作・ゴミの日・消費電力など、推移グラフの凡例を持たないカード
 2. **センサー（2列グリッド・PCでは3列）** — 屋内デバイス / 屋外 / エアコン。カードタップでデバイス詳細（グラフ・記録一覧）
 3. **推移（履歴グラフ）** — 指標タブ（温度・湿度・気圧・CO2・照度）で切り替え。スマホではグラフ上と画面下部の固定バーの両方から操作可能
 4. **最近の記録** — 日ごとの最高・最低値をバー表示
@@ -462,6 +462,60 @@ cp collectors/systemd/myroom-tapo-energy.service collectors/systemd/myroom-tapo-
 systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-energy.timer
 ```
 
+### 電気の操作（Nature Remo）
+
+Nature Remo に登録済みのリモコン操作を、ダッシュボードの「暮らし」セクションのボタンから押せます。
+`data/remote.json`（**リポジトリに含まれる**手編集ファイル）に出したいボタンを書くと、そのとおりに並びます。
+
+**照明が点いているかどうかは表示しません。** 赤外線は片方向で、機器が受け取ったかは返ってこないため、
+状態を持つと画面と部屋の実態が必ずずれます。物理リモコンと同じ「押したら飛ぶだけ」に揃えることで、
+状態の同期・Cloud API のレート制限（30回/5分）・バックエンドでのポーリングがまとめて不要になります（#106）。
+そのため **Nature Remo を叩くのは押したときだけ**で、一覧の取得では叩きません。
+
+```jsonc
+{
+  "groups": [
+    {
+      "id": "light",
+      "name": "照明",
+      "buttons": [
+        // Nature Remo に「照明」として登録した機器
+        { "id": "light-on",  "label": "点ける", "appliance_id": "xxxx", "button": "on" },
+        { "id": "light-off", "label": "消す",   "appliance_id": "xxxx", "button": "off" }
+      ]
+    },
+    {
+      "id": "tv",
+      "name": "テレビ",
+      // 「その他」として登録した赤外線は signal_id で押す
+      "buttons": [{ "id": "tv-power", "label": "電源", "signal_id": "xxxx" }]
+    }
+  ]
+}
+```
+
+- **押し方は2通りあります。** Nature Remo アプリで **「照明」として登録した機器は `signals` を持ちません**。
+  `GET /1/appliances` が返す `signals` は空で、`light.buttons` に `on` / `off` / `night` などが入り、
+  `POST /1/appliances/{id}/light` でしか押せません。部屋の電気はこの登録になっていることが多いため、
+  `signal_id` だけでは肝心の照明を出せません。「その他」として登録した赤外線は `signal_id` を使います
+- **「エアコン」として登録した機器はこのカードでは押せません。** 温度・モードを持つ専用APIしか無く、
+  ボタン1つに対応しません。ボタンとして出したい場合は Nature Remo アプリで「その他」として登録し直します
+- `id` を省くと `group1` / `group1-1` のように自動で付きます。このIDが送信APIのパスになるため、
+  重複したボタンIDは（押す先が定まらないので）後から書いた方を捨てます
+- 貼り付け用の一覧はスクリプトで出せます。`data/remote.json` を書くときだけ Nature Remo を叩きます
+
+  ```bash
+  # リポジトリルートで。.env に NATURE_REMO_TOKEN があれば環境変数の指定は不要
+  python scripts/list-remo-signals.py
+  ```
+
+- 環境変数 `NATURE_REMO_TOKEN` が未設定だと、押したときに「トークンが設定されていません」を返します
+  （一覧の表示には影響しません）。トークンは https://home.nature.global/ で発行します
+- API は `GET /api/remote/buttons`（一覧）と `POST /api/remote/buttons/{id}/send`（押す）の2本で、
+  どちらも他のダッシュボードAPIと同じ Supabase JWT 認証です。実装は `backend/remote.py`
+- **signal ID・appliance ID は画面へ返しません。** 押すのに要るのはボタンIDだけで、外へ出す値は少ないほど安全です
+- カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
+
 ### ゴミの日
 
 収集日を `data/garbage.json`（**リポジトリに含まれる**手編集ファイル）に書くと、ダッシュボードの
@@ -684,6 +738,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `garbage-notion-token` | ゴミの日を書き出す Notion インテグレーションのトークン（`GARBAGE_NOTION_TOKEN` として同期） |
 | `garbage-notion-data-source-id` | 書き出し先の Notion データソースID（`GARBAGE_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
 | `internal-api-key` | サーバー間参照用APIのトークン（`INTERNAL_API_KEY` として同期）。AIDE 側の `op://apps/aide/myroom-token` と**同じ値**にする |
+| `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
@@ -768,6 +823,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 | `GARBAGE_NOTION_TOKEN` | secret `GARBAGE_NOTION_TOKEN` | このリポジトリ |
 | `GARBAGE_NOTION_DATA_SOURCE_ID` | secret `GARBAGE_NOTION_DATA_SOURCE_ID` | このリポジトリ |
 | `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
+| `NATURE_REMO_TOKEN` | secret `NATURE_REMO_TOKEN` | このリポジトリ |
 | `DB_NAME` | secret `DB_NAME` | このリポジトリ |
 | `DB_USER` | secret `SHARED_DB_USER` | organization 共通 |
 | `DB_PASSWORD` | secret `SHARED_DB_PASSWORD` | organization 共通 |
