@@ -105,6 +105,40 @@ export interface UiSettings {
   hidden_devices: string[];
   stale_alert_excluded_devices: string[];
   pressure_offsets: Record<string, number>;
+  /** 電気料金の単価（円/kWh）。使用量に掛けて電気代の目安を出す */
+  energy_unit_price: number;
+}
+
+/** `daily_energy` の1日ぶん。金額は取得元が返さなければ単価から計算した目安 */
+export interface EnergyDay {
+  /** `2026-08-22` */
+  date: string;
+  kwh: number | null;
+  cost_yen: number | null;
+}
+
+export interface EnergyTotal {
+  kwh: number;
+  cost_yen: number;
+  /** 集計に入った日数（欠けている日は数えない） */
+  days: number;
+  start: string;
+  end: string;
+}
+
+/** 電気代カードが使う集計。`GET /api/energy/summary` の戻り */
+export interface EnergySummary {
+  source: string;
+  unit_price: number;
+  today: EnergyDay | null;
+  yesterday: EnergyDay | null;
+  this_month: EnergyTotal;
+  last_month: EnergyTotal;
+  /** 先月の同じ日まで。今月とそのまま比べられる */
+  last_month_to_date: EnergyTotal;
+  daily: EnergyDay[];
+  latest_date: string | null;
+  updated_at: string | null;
 }
 
 export interface SensorDeviceStatus {

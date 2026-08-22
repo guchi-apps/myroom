@@ -34,6 +34,11 @@
 CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`（Node 20）の
 2ジョブに分かれている。**触った層のコマンドだけ実行すればよい。**
 
+**`npm run lint` は CI で実行していない。** frontend ジョブが回すのは typecheck / test / build の3つだけ。
+手元で lint を実行すると `react-hooks/refs`・「effect内の同期setState」のエラーが既存ファイル
+（`use-chart-history.ts`・`device-detail-panel.tsx`・`outdoor-detail-panel.tsx` など）で十数件出るが、
+**これは develop 時点からある。** 自分の変更が原因とは限らないので、件数を増やしていないかだけ見ればよい。
+
 `npm run dev` は `frontend/` で `next dev --port 5173`。
 
 **`npm run build` は `frontend/public/sw.js` を書き換える。** postbuild の
