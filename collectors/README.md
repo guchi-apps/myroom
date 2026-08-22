@@ -26,10 +26,13 @@ AirCloud Home (白くまくんアプリ)
 
 ## aircon_energy_to_myroom.py
 
-AirCloud Home から日別の電力使用量（kWh）を取り、`POST /api/energy` へ送る。
+AirCloud Home から日別の電力使用量（kWh）と電気代（円）を取り、`POST /api/energy` へ送る。
 
 - **エネルギー取得APIは期間の合計しか返さない**（`POST /rac/energy-consumptions/summary/v3?familyId=...`
   に `{"from": ..., "to": ...}` を渡す）。日別が要るので、**日付ごとに `from` と `to` に同じ日を入れて**引いている
+- **応答には `energyConsumed`（kWh）だけでなく `cost`（円）も入っている。** これを `cost_yen` として
+  送るので、エアコンの金額は MyRoom 側で単価を掛けた目安ではなく**白くまくんアプリと同じ実額**になる
+  （`allRacsData.currency` が `JPY` 以外なら送らない）
 - **同じ `(date, source)` は MyRoom 側で上書きされる。** 当日ぶんは1日のあいだ増えていくため、
   何度送っても二重計上にならない。既定では当日と前日の2日ぶんを送り直す（`ENERGY_DAYS`）
 - 複数台ある場合は**全台の合計**を送る。1台だけにしたいときは `--unit`（`racName` か `vendorThingId`）
@@ -69,10 +72,34 @@ python3 collectors/aircon_energy_to_myroom.py --date 2026-08-21
 python3 collectors/aircon_energy_to_myroom.py
 ```
 
-> **`api-kuma`（白くまくん＝国内向け）でエネルギー取得APIが通るかは未確認。**
 > 調査元は海外向けホスト（`api-global-prod`）の Home Assistant 統合
-> （[svmironov/aircloud_ha](https://github.com/svmironov/aircloud_ha)）。応答の形が違った場合は
-> `individualRacsData` が無いというエラーで止まるので、`--dump-raw` で実際の形を見ること。
+> （[svmironov/aircloud_ha](https://github.com/svmironov/aircloud_ha)）。`api-kuma`（白くまくん＝国内向け）
+> でも同じ形で通ることは確認済み。応答の形が変わった場合は `individualRacsData` が無いという
+> エラーで止まるので、`--dump-raw` で実際の形を見ること。
+
+### 収集が止まっていた期間を埋め直す
+
+**毎時の実行が送るのは当日と前日の2日ぶんだけ**（`ENERGY_DAYS`）なので、収集や受け口が
+半日以上止まると、その期間の日は**放っておいても埋まらない**。カードの「今月」「先月」の
+合計からエアコンぶんが抜けたままになる（#204）。
+
+AirCloud Home は過去の日付も返すので、`--days` で遡って送り直す。`(date, source)` は
+上書きなので、すでに入っている日を含めても二重計上にならない。
+
+```bash
+cd ~/apps/myroom
+
+# まず取れるか確認（POSTしない）
+python3 collectors/aircon_energy_to_myroom.py --days 53 --dry-run
+
+# 本番へ送る（日付ごとに1回・2秒間隔なので53日ぶんで2分ほどかかる）
+python3 collectors/aircon_energy_to_myroom.py --days 53
+```
+
+- **カードが使うのは「先月1日」か「今日の29日前」の古いほうから今日まで**なので、
+  月初なら60日ぶんほど遡れば足りる
+- レート制限（429）に当たったら終了コード1で止まる。`--date` で日を分けるか、
+  30分ほど空けてから残りの期間をやり直す
 
 ## tapo_to_myroom.py
 

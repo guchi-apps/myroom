@@ -117,18 +117,43 @@ def select_racs(summary: Dict[str, Any], unit: Optional[str]) -> List[Dict[str, 
     ]
 
 
-def sum_energy(summary: Dict[str, Any], unit: Optional[str] = None) -> Optional[float]:
-    """対象エアコンの `energyConsumed`（kWh）を合計する。1台も値が無ければ None。"""
+def _sum_field(
+    summary: Dict[str, Any],
+    unit: Optional[str],
+    field: str,
+    digits: int,
+) -> Optional[float]:
+    """対象エアコンの `field` を合計する。1台も値が無ければ None。"""
     total: Optional[float] = None
     for rac in select_racs(summary, unit):
-        value = rac.get("energyConsumed")
+        value = rac.get(field)
         if value is None:
             continue
         try:
             total = (total or 0.0) + float(value)
         except (TypeError, ValueError):
             continue
-    return None if total is None else round(total, 3)
+    return None if total is None else round(total, digits)
+
+
+def sum_energy(summary: Dict[str, Any], unit: Optional[str] = None) -> Optional[float]:
+    """対象エアコンの `energyConsumed`（kWh）を合計する。1台も値が無ければ None。"""
+    return _sum_field(summary, unit, "energyConsumed", 3)
+
+
+def sum_cost(summary: Dict[str, Any], unit: Optional[str] = None) -> Optional[float]:
+    """対象エアコンの `cost`（円）を合計する。1台も値が無ければ None。
+
+    エネルギー取得APIは使用量だけでなく金額も返す。MyRoom側で単価を掛けた目安を出すより、
+    白くまくんアプリと同じ実額をそのまま送るほうがずれない。
+
+    ただし `currency` が `JPY` 以外なら円ではないので送らない（MyRoomは円で持つ）。
+    """
+    all_racs = summary.get("allRacsData")
+    currency = all_racs.get("currency") if isinstance(all_racs, dict) else None
+    if currency is not None and str(currency).upper() != "JPY":
+        return None
+    return _sum_field(summary, unit, "cost", 2)
 
 
 def build_payload(records: Sequence[Dict[str, Any]], source: str = DEFAULT_SOURCE) -> Dict[str, Any]:
@@ -143,15 +168,18 @@ def collect_records(
     debug: bool = False,
     sleep: float = REQUEST_INTERVAL_SEC,
 ) -> List[Dict[str, Any]]:
-    """日付ごとに使用量を引き、`/api/energy` の `records` の形にして返す。
+    """日付ごとに使用量と金額を引き、`/api/energy` の `records` の形にして返す。
 
     エネルギー取得APIは期間の合計しか返さないため、日別が要るなら1日ずつ引くしかない。
+    金額は取得元が返す実額をそのまま載せる（`cost_yen`）。返らなかった日は載せず、
+    MyRoom側で単価を掛けた目安になる。
     """
     records: List[Dict[str, Any]] = []
     first = True
 
     for date in dates:
         daily: Optional[float] = None
+        daily_cost: Optional[float] = None
         for family_id in family_ids:
             if not first:
                 time.sleep(sleep)
@@ -159,16 +187,26 @@ def collect_records(
 
             summary = client.get_energy_summary(family_id, date, date)
             value = sum_energy(summary, unit)
+            cost = sum_cost(summary, unit)
             if debug:
-                print("fetched: date={} familyId={} kwh={}".format(date, family_id, value))
+                print(
+                    "fetched: date={} familyId={} kwh={} cost={}".format(
+                        date, family_id, value, cost
+                    )
+                )
             if value is not None:
                 daily = (daily or 0.0) + value
+            if cost is not None:
+                daily_cost = (daily_cost or 0.0) + cost
 
         if daily is None:
             if debug:
                 print("skip: date={} (no energy value)".format(date))
             continue
-        records.append({"date": date.isoformat(), "kwh": round(daily, 3)})
+        record: Dict[str, Any] = {"date": date.isoformat(), "kwh": round(daily, 3)}
+        if daily_cost is not None:
+            record["cost_yen"] = round(daily_cost, 2)
+        records.append(record)
 
     return records
 
@@ -295,7 +333,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         print(
             "read: {}".format(
-                ", ".join("{} {}kWh".format(r["date"], r["kwh"]) for r in records)
+                ", ".join(
+                    "{} {}kWh{}".format(
+                        r["date"],
+                        r["kwh"],
+                        "" if r.get("cost_yen") is None else "/{}円".format(r["cost_yen"]),
+                    )
+                    for r in records
+                )
             )
         )
         result = post_to_myroom(
