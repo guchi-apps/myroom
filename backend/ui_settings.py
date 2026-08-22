@@ -13,8 +13,14 @@ SETTING_CHART_COLORS = "chart_colors"
 SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
+SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
 
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
+
+# 電気料金の単価（円/kWh）。取得元は使用量しか返さないため、金額はこの単価から計算する。
+# 既定値は関西電力の従量電灯Aの第2段階あたりの目安。
+DEFAULT_ENERGY_UNIT_PRICE = 31.0
+MAX_ENERGY_UNIT_PRICE = 1000.0
 
 DEFAULT_CHART_COLORS: Dict[str, str] = {
     "device:1": "#3498db",
@@ -32,6 +38,7 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_HIDDEN_DEVICES: [],
         SETTING_STALE_ALERT_EXCLUDED: [],
         SETTING_PRESSURE_OFFSETS: {},
+        SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
     }
 
 
@@ -118,6 +125,17 @@ def _normalize_pressure_offsets(raw: Any) -> Dict[str, float]:
     return offsets
 
 
+def _normalize_energy_unit_price(raw: Any) -> float:
+    """円/kWh。負の値や桁違いの入力は既定値へ落とす。"""
+    try:
+        price = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_ENERGY_UNIT_PRICE
+    if price <= 0 or price > MAX_ENERGY_UNIT_PRICE:
+        return DEFAULT_ENERGY_UNIT_PRICE
+    return round(price, 2)
+
+
 def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = _default_settings()
     if not raw:
@@ -138,6 +156,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ),
         SETTING_PRESSURE_OFFSETS: _normalize_pressure_offsets(
             raw.get(SETTING_PRESSURE_OFFSETS, defaults[SETTING_PRESSURE_OFFSETS])
+        ),
+        SETTING_ENERGY_UNIT_PRICE: _normalize_energy_unit_price(
+            raw.get(SETTING_ENERGY_UNIT_PRICE, defaults[SETTING_ENERGY_UNIT_PRICE])
         ),
     }
 
@@ -214,6 +235,10 @@ def save_settings(
         ),
         SETTING_PRESSURE_OFFSETS: updates.get(
             SETTING_PRESSURE_OFFSETS, current.get(SETTING_PRESSURE_OFFSETS, {})
+        ),
+        SETTING_ENERGY_UNIT_PRICE: updates.get(
+            SETTING_ENERGY_UNIT_PRICE,
+            current.get(SETTING_ENERGY_UNIT_PRICE, DEFAULT_ENERGY_UNIT_PRICE),
         ),
     }
     normalized = _normalize_settings(merged)

@@ -51,6 +51,9 @@
   --temp-color: #3498db;
   --humid-color: #2ecc71;
   --pressure-color: #9b59b6;
+  /* 電気代。温度・湿度・CO2 の色と重ならないアンバー */
+  --energy-color: #f39c12;
+  --energy-surface: rgba(243, 156, 18, 0.13);
   --chart-grid: rgba(0, 0, 0, 0.05);
   --chart-line: rgba(0, 0, 0, 0.1);
 }
@@ -74,6 +77,8 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.72 0.17 155);
+  --energy-color: #f5b041;
+  --energy-surface: rgba(243, 156, 18, 0.16);
   --chart-grid: rgba(255, 255, 255, 0.05);
   --chart-line: rgba(255, 255, 255, 0.2);
 }

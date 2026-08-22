@@ -6,8 +6,9 @@
  * 次の3点を方針として固定する。
  *
  * 1. カードは必ずどれかのセクションに属する。
- *    - `life`（暮らし）: ゴミの日・照明の操作など、計測値ではないもの。1列で全幅。
- *      1行あたりの情報量がカードごとに大きく違い、2列に押し込むと読めなくなるため。
+ *    - `life`（暮らし）: ゴミの日・照明の操作・電気代など、推移グラフの凡例を持たないもの。
+ *      1列で全幅。1行あたりの情報量がカードごとに大きく違い、2列に押し込むと読めなくなるため。
+ *      日ごとの集計値（電気代）もここに置く。10分間隔の時系列ではないので凡例に混ぜられない。
  *    - `sensors`（センサー）: センサー・屋外・エアコンなど、時系列グラフを持つ計測値。2列グリッド。
  *    - `comingSoon`（近日公開）: まだ作っていない機能の案内。押しても何も起きない。
  *
@@ -36,9 +37,11 @@ export interface LifeCardDefinition {
 }
 
 export const GARBAGE_CARD_KEY = "garbage";
+export const ENERGY_CARD_KEY = "energy";
 
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
   { key: GARBAGE_CARD_KEY, label: "ゴミの日" },
+  { key: ENERGY_CARD_KEY, label: "エアコンの電気代" },
 ];
 
 export function getLifeCardLabel(key: string): string {
@@ -74,10 +77,5 @@ export const COMING_SOON_CARDS: readonly ComingSoonCardDefinition[] = [
     key: "remote",
     label: "電気の操作",
     description: "照明やエアコンをこの画面から操作します",
-  },
-  {
-    key: "aircon-cost",
-    label: "エアコンの電気代",
-    description: "今月ぶんの目安を出します",
   },
 ];
