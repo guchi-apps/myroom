@@ -11,28 +11,21 @@ DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
 DB_PORT = os.getenv("DB_PORT", "3307")
 DB_NAME = os.getenv("DB_NAME", "myroom")
 
-# DDL (ALTER TABLE) requires a privileged user. Set these for migrations only.
+# DDL (CREATE TABLE / ALTER TABLE) requires a privileged user. Set these for migrations only.
 DB_ADMIN_USER = os.getenv("DB_ADMIN_USER")
 DB_ADMIN_PASSWORD = os.getenv("DB_ADMIN_PASSWORD")
 
 SENSOR_TABLE = "sensor_readings"
 LEGACY_SENSOR_TABLE = "dht"
 
-MANUAL_MIGRATION_SQL = """
--- Run as a MySQL user with ALTER privilege (e.g. root):
-USE `{db_name}`;
+# DDLが権限で弾かれたときのMySQLエラー。1044はDB単位、1142はテーブル単位の拒否。
+DDL_DENIED_MARKERS = ("1044", "1142", "command denied")
 
--- Rename legacy table (skip if already renamed)
-RENAME TABLE dht TO sensor_readings;
-
--- Add CO2 column (skip if already exists)
-ALTER TABLE sensor_readings ADD COLUMN co2 INT NULL;
-
--- Add illuminance column (skip if already exists)
-ALTER TABLE sensor_readings ADD COLUMN illuminance FLOAT NULL;
-
--- Add temperature_dht11 column (skip if already exists)
-ALTER TABLE sensor_readings ADD COLUMN temperature_dht11 FLOAT NULL;
+GRANT_SQL = """
+-- Run as a MySQL admin user (e.g. root):
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP, REFERENCES
+  ON `{db_name}`.* TO '<migration user>'@'localhost';
+FLUSH PRIVILEGES;
 """.strip()
 
 
@@ -50,11 +43,16 @@ def _column_exists(conn, table_name: str, column_name: str) -> bool:
     return result.fetchone() is not None
 
 
-def _print_manual_migration_hint() -> None:
-    print("\nThe application DB user does not have ALTER privilege.")
-    print("Run the following SQL as an admin user (e.g. root), then re-run this script to verify:\n")
-    print(MANUAL_MIGRATION_SQL.format(db_name=DB_NAME))
-    print("\nAlternatively, set DB_ADMIN_USER and DB_ADMIN_PASSWORD in .env for migrations.")
+def _print_ddl_denied_hint(migrate_user: str, using_admin: bool) -> None:
+    print(f"\nDDL was denied for user '{migrate_user}' on database '{DB_NAME}'.")
+    if using_admin:
+        print("DB_ADMIN_USER is set, but it lacks DDL privileges on this database.")
+    else:
+        print("DB_ADMIN_USER is not set, so the app DB user was used.")
+        print("The app DB user only has SELECT/INSERT/UPDATE/DELETE by design;")
+        print("set DB_ADMIN_USER/DB_ADMIN_PASSWORD to the migration user for migrations.")
+    print("\nIf the migration user itself lacks privileges, grant them once:\n")
+    print(GRANT_SQL.format(db_name=DB_NAME))
 
 
 def _ensure_sensor_table(conn) -> str:
@@ -103,7 +101,7 @@ def migrate():
     using_admin = bool(DB_ADMIN_USER)
     print(f"Connecting to database at {DB_HOST}:{DB_PORT} as {migrate_user}...")
     if not using_admin:
-        print("Note: Using app DB user. Set DB_ADMIN_USER/DB_ADMIN_PASSWORD if ALTER is denied.")
+        print("Note: Using app DB user. Set DB_ADMIN_USER/DB_ADMIN_PASSWORD if DDL is denied.")
 
     try:
         engine = create_engine(_database_url(migrate_user, migrate_password))
@@ -296,11 +294,12 @@ def migrate():
         print("Migration completed.")
 
     except Exception as e:
+        # 例外そのものを必ず出す。以前は権限エラーを固定文言のヒントで握り潰しており、
+        # デプロイのログから「どのSQLがどう失敗したのか」が分からなかった（#193）。
+        print(f"\nMigration failed: {e}")
         err = str(e)
-        if "1142" in err or "ALTER command denied" in err:
-            _print_manual_migration_hint()
-            sys.exit(1)
-        print(f"Database connection failed: {e}")
+        if any(marker in err for marker in DDL_DENIED_MARKERS):
+            _print_ddl_denied_hint(migrate_user, using_admin)
         sys.exit(1)
 
 if __name__ == "__main__":
