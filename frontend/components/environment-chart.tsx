@@ -120,6 +120,8 @@ interface EnvironmentChartProps {
   onViewRangeChange: (range: ChartViewRange) => void;
   loading: boolean;
   historyLoading?: boolean;
+  /** 最新データの取得待ち。true の間はグラフを描かずスケルトンを出す */
+  awaitingLatest?: boolean;
   historyEpoch?: number;
   noMoreOlderData?: boolean;
   onVisibleDomainChange?: (visibleMin: number, visibleMax: number) => void;
@@ -131,6 +133,35 @@ interface EnvironmentChartProps {
   onLineVisibilityChange: (key: string, visible: boolean) => void;
   /** スマホ表示時に指標タブを画面下部に固定する（モーダル内では false） */
   pinMetricTabsOnMobile?: boolean;
+}
+
+/** 最新データの取得待ちに出すグラフ領域のスケルトン */
+function ChartLoadingSkeleton() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center">
+      <svg
+        className="absolute inset-0 size-full"
+        viewBox="0 0 440 240"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <g stroke="var(--chart-grid)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke">
+          <line x1="34" y1="50" x2="432" y2="50" />
+          <line x1="34" y1="110" x2="432" y2="110" />
+          <line x1="34" y1="170" x2="432" y2="170" />
+        </g>
+        <path
+          className="animate-pulse"
+          fill="var(--muted)"
+          d="M34,228 L34,150 C90,122 118,174 174,142 C230,110 258,156 316,118 C366,84 398,126 432,104 L432,228 Z"
+        />
+      </svg>
+      <div className="relative flex flex-col items-center gap-2 text-muted-foreground">
+        <div className="size-6 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground" />
+        <p className="text-sm">最新データを取得中</p>
+      </div>
+    </div>
+  );
 }
 
 interface ChartSeriesRow {
@@ -236,6 +267,7 @@ export function EnvironmentChart({
   onViewRangeChange,
   loading,
   historyLoading = false,
+  awaitingLatest = false,
   historyEpoch = 0,
   noMoreOlderData = false,
   onVisibleDomainChange,
@@ -911,6 +943,8 @@ export function EnvironmentChart({
   };
 
   const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+    // スケルトン表示中はグラフが見えないため、ドラッグでの期間移動も受け付けない
+    if (awaitingLatest) return;
     const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
     setDragStartX(clientX);
   };
@@ -961,6 +995,7 @@ export function EnvironmentChart({
       : undefined;
 
   const showSelectionOverlay =
+    !awaitingLatest &&
     lineLeft != null &&
     chartPlotData.length > 0 &&
     (plottedDeviceIds.length > 0 ||
@@ -1026,7 +1061,7 @@ export function EnvironmentChart({
 
       {chartSeriesRows.length > 0 && (
         <div className="px-3 pt-3">
-          {selectionTime != null && (
+          {selectionTime != null && !awaitingLatest && (
             <p className="mb-2 text-center text-xs whitespace-nowrap text-muted-foreground">
               {selectionLabel}
             </p>
@@ -1046,24 +1081,31 @@ export function EnvironmentChart({
                     !row.visible ? "border-muted-foreground/20" : "border-muted-foreground/40"
                   )}
                 />
-                <p
-                  className={cn("shrink-0 text-lg font-bold", !row.visible && "opacity-40")}
-                  style={{ color: row.color }}
-                >
-                  {row.minValue != null || row.maxValue != null ? (
-                    <>
-                      <span className="text-xs font-normal">最高</span>
-                      {formatMetricValue(row.maxValue, chartMetric)}
-                      {unit}
-                      {" / "}
-                      <span className="text-xs font-normal">最低</span>
-                      {formatMetricValue(row.minValue, chartMetric)}
-                      {unit}
-                    </>
-                  ) : (
-                    formatSeriesRowValue(row, chartMetric, unit)
-                  )}
-                </p>
+                {awaitingLatest ? (
+                  <span
+                    className="h-5 w-[74px] shrink-0 animate-pulse rounded-md bg-muted"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <p
+                    className={cn("shrink-0 text-lg font-bold", !row.visible && "opacity-40")}
+                    style={{ color: row.color }}
+                  >
+                    {row.minValue != null || row.maxValue != null ? (
+                      <>
+                        <span className="text-xs font-normal">最高</span>
+                        {formatMetricValue(row.maxValue, chartMetric)}
+                        {unit}
+                        {" / "}
+                        <span className="text-xs font-normal">最低</span>
+                        {formatMetricValue(row.minValue, chartMetric)}
+                        {unit}
+                      </>
+                    ) : (
+                      formatSeriesRowValue(row, chartMetric, unit)
+                    )}
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -1097,7 +1139,7 @@ export function EnvironmentChart({
         onTouchEnd={handleMouseUp}
         style={{
           touchAction: "none",
-          cursor: dragStartX !== null ? "grabbing" : "grab",
+          cursor: awaitingLatest ? "default" : dragStartX !== null ? "grabbing" : "grab",
         }}
       >
         {loading && (
@@ -1106,14 +1148,16 @@ export function EnvironmentChart({
           </div>
         )}
 
-        {historyLoading && !loading && historyData.length > 0 && (
+        {historyLoading && !loading && !awaitingLatest && historyData.length > 0 && (
           <div className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full bg-card/90 px-2.5 py-1 text-[10px] text-muted-foreground shadow-sm">
             <div className="size-3 animate-spin rounded-full border border-muted-foreground/30 border-t-muted-foreground" />
             読み込み中
           </div>
         )}
 
-        {!historyData.length ? (
+        {awaitingLatest ? (
+          <ChartLoadingSkeleton />
+        ) : !historyData.length ? (
           loading || historyLoading ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
               <div className="size-6 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground" />

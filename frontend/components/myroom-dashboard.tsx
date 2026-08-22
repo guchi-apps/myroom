@@ -457,6 +457,7 @@ export function MyRoomDashboard() {
   const {
     historyData,
     historyLoading,
+    awaitingLatest,
     loadingRange,
     historyEpoch,
     noMoreOlderData,
@@ -906,6 +907,7 @@ export function MyRoomDashboard() {
             onViewRangeChange={setViewRange}
             loading={chartLoading}
             historyLoading={historyLoading || loadingRange}
+            awaitingLatest={awaitingLatest}
             historyEpoch={historyEpoch}
             noMoreOlderData={noMoreOlderData}
             onVisibleDomainChange={ensureVisibleRangeLoaded}

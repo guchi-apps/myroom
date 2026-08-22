@@ -36,6 +36,10 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 
 `npm run dev` は `frontend/` で `next dev --port 5173`。
 
+**`npm run build` は `frontend/public/sw.js` を書き換える。** postbuild の
+`scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
+検証目的でビルドしただけでも差分が出る。**リリース作業以外では、この差分をコミットに含めないこと。**
+
 ## マルチエージェント運用（GitHub Actions 無人実行）
 
 `@claude` コメントを起点に、計画提示〜実装〜develop向けPR作成までを GitHub Actions 上で無人実行する。
