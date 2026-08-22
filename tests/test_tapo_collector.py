@@ -5,8 +5,10 @@
 import できること自体**もここで担保する。
 """
 
+import asyncio
 import datetime
 import importlib.util
+import ipaddress
 import pathlib
 
 import pytest
@@ -110,6 +112,27 @@ class TestLoadConfig:
         assert tapo.load_config()["api_url"] == tapo.DEFAULT_API_URL
 
 
+    def test_hosts_optional_for_listing(self, monkeypatch):
+        """`--list-devices` は IP を調べる機能なので TAPO_HOSTS 無しでも通す。"""
+        monkeypatch.setenv("TAPO_USERNAME", "user@example.com")
+        monkeypatch.setenv("TAPO_PASSWORD", "x")
+        monkeypatch.delenv("TAPO_HOSTS", raising=False)
+        assert tapo.load_config(require_hosts=False)["hosts"] == []
+
+    def test_broken_hosts_do_not_block_listing(self, monkeypatch):
+        monkeypatch.setenv("TAPO_USERNAME", "user@example.com")
+        monkeypatch.setenv("TAPO_PASSWORD", "x")
+        monkeypatch.setenv("TAPO_HOSTS", "=冷蔵庫")
+        assert tapo.load_config(require_hosts=False)["hosts"] == []
+
+    def test_credentials_are_still_required_for_listing(self, monkeypatch):
+        """認証情報はディスカバリーにも要るので、こちらは必須のまま。"""
+        monkeypatch.delenv("TAPO_USERNAME", raising=False)
+        monkeypatch.setenv("TAPO_PASSWORD", "x")
+        with pytest.raises(tapo.ConfigError):
+            tapo.load_config(require_hosts=False)
+
+
 class TestEnvFiles:
     def test_reads_key_value_pairs_and_ignores_comments(self, tmp_path):
         path = tmp_path / ".env"
@@ -159,3 +182,84 @@ class TestReadEnergy:
             modules = {}
 
         assert tapo._read_energy(PlainDevice()) == {"power_w": None, "kwh_today": None}
+
+
+class TestParseScanTarget:
+    """`--scan` は1アドレスずつ当たるので、広すぎる指定を弾く。"""
+
+    def test_accepts_slash_24(self):
+        assert tapo.parse_scan_target("192.168.2.0/24") == ipaddress.ip_network(
+            "192.168.2.0/24"
+        )
+
+    def test_host_bits_are_tolerated(self):
+        """`192.168.2.167/24` のように自分の IP をそのまま貼っても通す。"""
+        assert tapo.parse_scan_target("192.168.2.167/24") == ipaddress.ip_network(
+            "192.168.2.0/24"
+        )
+
+    def test_invalid_cidr_raises(self):
+        with pytest.raises(tapo.ConfigError):
+            tapo.parse_scan_target("bogus")
+
+    def test_too_wide_raises(self):
+        with pytest.raises(tapo.ConfigError):
+            tapo.parse_scan_target("10.0.0.0/8")
+
+    def test_ipv6_raises(self):
+        with pytest.raises(tapo.ConfigError):
+            tapo.parse_scan_target("fd00::/64")
+
+
+class TestLocalSubnet:
+    """ユニキャスト走査の既定範囲。実際の経路表に依存しないよう socket を差し替える。"""
+
+    def _fake_socket(self, monkeypatch, *, address=None, error=None):
+        closed = []
+
+        class FakeSocket:
+            def connect(self, target):
+                if error is not None:
+                    raise error
+
+            def getsockname(self):
+                return (address, 12345)
+
+            def close(self):
+                closed.append(True)
+
+        monkeypatch.setattr(tapo.socket, "socket", lambda *a, **kw: FakeSocket())
+        return closed
+
+    def test_derives_slash_24_from_own_address(self, monkeypatch):
+        closed = self._fake_socket(monkeypatch, address="192.168.2.167")
+        assert tapo.local_subnet() == ipaddress.ip_network("192.168.2.0/24")
+        assert closed, "ソケットを閉じていない"
+
+    def test_returns_none_when_route_lookup_fails(self, monkeypatch):
+        closed = self._fake_socket(monkeypatch, error=OSError("no route"))
+        assert tapo.local_subnet() is None
+        assert closed, "失敗時もソケットを閉じること"
+
+
+class TestCloseDevice:
+    """`Unclosed client session` を出さないための後片付け（#199）。"""
+
+    def test_disconnects_the_device(self):
+        calls = []
+
+        class Device:
+            async def disconnect(self):
+                calls.append(True)
+
+        asyncio.run(tapo.close_device(Device()))
+        assert calls == [True]
+
+    def test_failure_is_swallowed(self):
+        """切断できなくても本筋（読み取り・送信）は止めない。"""
+
+        class Device:
+            async def disconnect(self):
+                raise RuntimeError("already gone")
+
+        asyncio.run(tapo.close_device(Device()))
