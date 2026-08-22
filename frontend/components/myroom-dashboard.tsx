@@ -3,20 +3,10 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import {
-  ChevronRight,
-  Droplets,
-  Gauge,
-  RefreshCw,
-  Settings,
-  Snowflake,
-  Sun,
-  Thermometer,
-  Wind,
-} from "lucide-react";
+import { ChevronRight, CloudSun, LineChart, RefreshCw, Settings } from "lucide-react";
 import { LoginScreen } from "@/components/login-screen";
-import { EnvironmentChart } from "@/components/environment-chart";
-import { DailyStatsList } from "@/components/daily-stats-list";
+import { METRIC_ICONS } from "@/components/current-readings";
+import { TrendPanel } from "@/components/trend-panel";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { CleanerCard } from "@/components/cleaner-card";
@@ -48,6 +38,14 @@ import {
 } from "@/lib/offline-cache";
 import { useChartHistory } from "@/lib/use-chart-history";
 import {
+  buildAirconReadings,
+  buildIndoorReadings,
+  buildOutdoorReadings,
+  formatReading,
+  pickCardReadings,
+  type MetricReading,
+} from "@/lib/device-metrics";
+import {
   DISPLAY_ORDER_CHANGED_EVENT,
   buildDefaultDisplayOrder,
   type DisplayOrderItem,
@@ -56,7 +54,6 @@ import {
   buildDefaultChartColors,
   CHART_COLORS_CHANGED_EVENT,
   getDeviceChartColor,
-  getOutdoorChartColor,
   type ChartColorSettings,
 } from "@/lib/chart-colors";
 import {
@@ -70,7 +67,6 @@ import {
   getVisibleChartDeviceIds,
   getVisibleSensorDeviceIds,
   isAirconRoomVisible,
-  isAirconTargetVisible,
   isHiddenKeyVisible,
   applyHiddenDevicesToLineVisibility,
   VISIBLE_DEVICES_CHANGED_EVENT,
@@ -103,7 +99,7 @@ import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
   buildAirconStatusPill,
-  formatAirconModeTarget,
+  hasAirconData,
   getSensorDeviceIds,
   formatOutdoorApiLabel,
   pickOutdoorLatestSource,
@@ -132,32 +128,28 @@ const DeviceDetailPanel = dynamic(
   { ssr: false }
 );
 
-interface DeviceMetric {
-  key: string;
-  icon?: React.ReactNode;
-  value: React.ReactNode;
-}
-
 interface DeviceCardProps {
   title: string;
-  metrics: DeviceMetric[];
+  readings: readonly MetricReading[];
   metricsState: MetricsDisplayState;
   accentColor?: string;
   action?: React.ReactNode;
   onClick?: () => void;
   statusNote?: string;
-  /** 計測値の上に出す状態の表示（エアコンの運転状態など） */
+  /** 計測値の下に出す状態の表示（エアコンの運転状態など） */
   badge?: React.ReactNode;
+  /** 見出しの左に出すアイコン（屋外など、アクセント色を持たないカード用） */
+  titleIcon?: React.ReactNode;
 }
 
 type MetricsDisplayState = "loading" | "error" | "empty" | "ready";
 
 function resolveMetricsDisplayState(
-  metrics: DeviceMetric[],
+  readings: readonly MetricReading[],
   loadStatus: DeviceDataLoadStatus | undefined,
   dashboardDataLoaded: boolean
 ): MetricsDisplayState {
-  if (metrics.length > 0) return "ready";
+  if (readings.length > 0) return "ready";
   if (!dashboardDataLoaded) return "loading";
   if (loadStatus === "error") return "error";
   return "empty";
@@ -178,124 +170,11 @@ function metricsStateMessage(state: MetricsDisplayState): string {
 
 function DeviceCardSkeleton() {
   return (
-    <div className="device-card text-left" aria-hidden="true">
-      <div className="mb-3 h-5 w-2/3 animate-pulse rounded bg-muted" />
-      <div className="flex flex-col gap-1.5">
-        <div className="h-6 w-1/2 animate-pulse rounded bg-muted" />
-        <div className="h-6 w-2/5 animate-pulse rounded bg-muted" />
-      </div>
+    <div className="device-card-compact text-left" aria-hidden="true">
+      <div className="mb-2.5 h-5 w-2/3 animate-pulse rounded bg-muted" />
+      <div className="h-7 w-3/5 animate-pulse rounded bg-muted" />
     </div>
   );
-}
-
-function buildIndoorMetrics(
-  data: LatestData | null | undefined,
-  accentColor?: string
-): DeviceMetric[] {
-  if (!data) return [];
-
-  const iconStyle = accentColor ? { color: accentColor } : undefined;
-  const metrics: DeviceMetric[] = [];
-
-  if (data.temperature != null) {
-    metrics.push({
-      key: "temperature",
-      icon: (
-        <Thermometer className="size-5" strokeWidth={1.75} style={iconStyle} />
-      ),
-      value: `${data.temperature.toFixed(1)}°C`,
-    });
-  }
-  if (data.humidity != null) {
-    metrics.push({
-      key: "humidity",
-      icon: <Droplets className="size-5" strokeWidth={1.75} style={iconStyle} />,
-      value: `${data.humidity}%`,
-    });
-  }
-  if (data.pressure != null) {
-    metrics.push({
-      key: "pressure",
-      icon: <Gauge className="size-5" strokeWidth={1.75} style={iconStyle} />,
-      value: `${Math.round(data.pressure)} hPa`,
-    });
-  }
-  if (data.co2 != null) {
-    metrics.push({
-      key: "co2",
-      icon: <Wind className="size-5" strokeWidth={1.75} style={iconStyle} />,
-      value: `${data.co2} ppm`,
-    });
-  }
-  if (data.illuminance != null) {
-    metrics.push({
-      key: "illuminance",
-      icon: <Sun className="size-5" strokeWidth={1.75} style={iconStyle} />,
-      value: `${data.illuminance.toFixed(1)} lx`,
-    });
-  }
-
-  return metrics;
-}
-
-function buildAirconMetrics(
-  data: AirconData | null | undefined,
-  accentColor: string,
-  options?: { showRoom?: boolean; showTarget?: boolean }
-): DeviceMetric[] {
-  if (!data) return [];
-
-  const showRoom = options?.showRoom !== false;
-  const showTarget = options?.showTarget !== false;
-  const metrics: DeviceMetric[] = [];
-
-  if (showRoom && data.room_temperature != null) {
-    metrics.push({
-      key: "room_temperature",
-      icon: <Thermometer className="size-5" strokeWidth={1.75} style={{ color: accentColor }} />,
-      value: `${data.room_temperature.toFixed(1)}°C`,
-    });
-  }
-  if (showTarget && (data.target_temperature != null || data.mode || data.power)) {
-    const value = formatAirconModeTarget(data);
-    metrics.push({
-      key: "mode_target",
-      icon: <Snowflake className="size-5" strokeWidth={1.75} style={{ color: accentColor }} />,
-      value,
-    });
-  }
-
-  return metrics;
-}
-
-function buildOutdoorMetrics(data: LatestData | null | undefined): DeviceMetric[] {
-  if (!data) return [];
-
-  const metrics: DeviceMetric[] = [];
-
-  if (data.outdoor_temperature != null) {
-    metrics.push({
-      key: "outdoor_temperature",
-      icon: <Thermometer className="size-5 text-[#f1c40f]" strokeWidth={1.75} />,
-      value: `${data.outdoor_temperature.toFixed(1)}°C`,
-    });
-  }
-  if (data.outdoor_humidity != null) {
-    metrics.push({
-      key: "outdoor_humidity",
-      icon: <Droplets className="size-5 text-[#56ccf2]" strokeWidth={1.75} />,
-      value: `${data.outdoor_humidity}%`,
-    });
-  }
-  if (data.outdoor_pressure != null) {
-    metrics.push({
-      key: "outdoor_pressure",
-      icon: <Gauge className="size-5 text-[#bb86fc]" strokeWidth={1.75} />,
-      value: `${Math.round(data.outdoor_pressure)} hPa`,
-    });
-  }
-
-  return metrics;
 }
 
 function buildLoadStatusFromLatest(
@@ -309,49 +188,71 @@ function buildLoadStatusFromLatest(
   return status;
 }
 
+/**
+ * 「いまの部屋」のカード。
+ *
+ * 計測値は先頭2つだけを出す（`pickCardReadings`）。1つ目を大きく、2つ目を右へ添えて
+ * 高さを1行に収める。気圧・CO2・照度は詳細パネルの「いまの値」が受け持つ（#226）。
+ */
 function DeviceCard({
   title,
-  metrics,
+  readings,
   metricsState,
   accentColor,
   action,
   onClick,
   statusNote,
   badge,
+  titleIcon,
 }: DeviceCardProps) {
   const className = onClick
-    ? "device-card cursor-pointer text-left transition-transform active:scale-[0.98]"
-    : "device-card text-left";
+    ? "device-card-compact cursor-pointer text-left transition-transform active:scale-[0.98]"
+    : "device-card-compact text-left";
   const cardStyle = accentColor
     ? ({ borderLeft: `4px solid ${accentColor}` } satisfies CSSProperties)
     : undefined;
+  const [primary, ...secondary] = readings;
   const content = (
     <>
-      <div className="mb-3 flex items-start justify-between gap-2">
+      <div className="mb-1.5 flex items-start justify-between gap-2">
         <p
-          className="device-card-title min-w-0 flex-1"
+          className="device-card-title flex min-w-0 flex-1 items-center gap-1.5"
           style={accentColor ? { color: accentColor } : undefined}
         >
-          {title}
+          {titleIcon}
+          <span className="min-w-0 truncate">{title}</span>
         </p>
         {action && <div className="flex shrink-0 items-center">{action}</div>}
       </div>
       {statusNote && (
-        <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <p className="mb-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
           {statusNote}
         </p>
       )}
-      {badge && <div className="mb-2">{badge}</div>}
       {metricsState === "ready" ? (
-        <div className="flex flex-col gap-1.5">
-          {metrics.map((metric) => (
-            <div key={metric.key} className="flex items-center gap-2">
-              {metric.icon}
-              <span className="text-lg font-bold leading-none text-foreground">
-                {metric.value}
+        <div className="flex flex-col gap-2">
+          {primary && (
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+              <span className="device-card-value">
+                {primary.text}
+                <span className="device-card-unit">
+                  {primary.unit === "°C" || primary.unit === "%"
+                    ? primary.unit
+                    : ` ${primary.unit}`}
+                </span>
               </span>
+              {secondary.map((reading) => {
+                const Icon = METRIC_ICONS[reading.metric];
+                return (
+                  <span key={reading.metric} className="device-card-sub">
+                    <Icon className="size-3.5 shrink-0" strokeWidth={1.75} />
+                    {formatReading(reading)}
+                  </span>
+                );
+              })}
             </div>
-          ))}
+          )}
+          {badge}
         </div>
       ) : (
         <p
@@ -410,6 +311,7 @@ export function MyRoomDashboard() {
   const [dailyLimit, setDailyLimit] = useState(7);
   const [outdoorLocation, setOutdoorLocation] = useState<OutdoorLocation | null>(null);
   const [outdoorPanelOpen, setOutdoorPanelOpen] = useState(false);
+  const [trendPanelOpen, setTrendPanelOpen] = useState(false);
   const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
@@ -911,7 +813,7 @@ export function MyRoomDashboard() {
     };
 
   const outdoorLatest = pickOutdoorLatestSource(latestByDevice);
-  const outdoorMetrics = buildOutdoorMetrics(outdoorLatest);
+  const outdoorReadings = buildOutdoorReadings(outdoorLatest);
   const airconTitle = airconChartTitle;
   const lastUpdatedMs = getLatestDataTimestamp(latestByDevice, airconLatest);
   const lastUpdated =
@@ -935,7 +837,7 @@ export function MyRoomDashboard() {
     : null;
 
   return (
-    <div className="mx-auto w-full max-w-[480px] pb-28 sm:pb-10 lg:max-w-[1040px]">
+    <div className="mx-auto w-full max-w-[480px] pb-10 lg:max-w-[1040px]">
       <div className="space-y-6 px-5 pt-12 lg:px-8">
         {isOfflineMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
@@ -979,14 +881,174 @@ export function MyRoomDashboard() {
           </div>
         </header>
 
-        {/* PCでは左に計測値、右に暮らし・近日公開。スマホでは上から順に1列で並ぶ */}
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
+        {/*
+          上段に「いまの部屋」、下段に暮らし。センサーの計測値を2つへ絞ってカードが
+          低くなったため、いまの状態をひと目で見せる位置へ上げた（#226）。
+          PCは上段を4列、下段を2列にして、左右の列の長さが極端に食い違わないようにする。
+        */}
+        <div className="space-y-6">
+          <section>
+            <div className="mb-3 flex items-center justify-between gap-2 px-0.5">
+              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.sensors}</h2>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setTrendPanelOpen(true)}
+                  className="flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs font-bold text-foreground transition-colors hover:bg-accent"
+                >
+                  <LineChart className="size-4" strokeWidth={1.75} />
+                  推移
+                </button>
+                <Link
+                  href="/devices"
+                  className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Settings className="size-4" strokeWidth={1.75} />
+                  表示設定
+                </Link>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {!layoutReady
+                ? buildDefaultDisplayOrder().map((_, index) => (
+                    <DeviceCardSkeleton key={`device-skeleton-${index}`} />
+                  ))
+                : visibleDisplayOrder.map((item) => {
+                if (item.type === "device") {
+                  const deviceId = item.deviceId;
+                  const device = getDeviceInfo(deviceId);
+                  const accentColor = getDeviceChartColor(chartColors, deviceId);
+                  const indoorReadings = buildIndoorReadings(latestByDevice[deviceId]);
+                  return (
+                    <DeviceCard
+                      key={`device-${deviceId}`}
+                      title={device.name}
+                      accentColor={accentColor}
+                      action={
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      }
+                      onClick={() => {
+                        setDevicePanelId(deviceId);
+                        setDevicePanelOpen(true);
+                      }}
+                      readings={pickCardReadings(indoorReadings)}
+                      metricsState={resolveMetricsDisplayState(
+                        indoorReadings,
+                        latestLoadStatusByDevice[deviceId],
+                        dashboardDataLoaded
+                      )}
+                      statusNote={formatStaleNote(deviceId)}
+                    />
+                  );
+                }
+
+                if (item.type === "outdoor") {
+                  const outdoorLoadStatus = resolveOutdoorBatchLoadStatus(
+                    latestByDevice,
+                    latestLoadStatusByDevice
+                  );
+                  return (
+                    <DeviceCard
+                      key="outdoor"
+                      title={formatOutdoorApiLabel(outdoorLocation?.name)}
+                      titleIcon={
+                        <CloudSun
+                          className="size-4 shrink-0 text-muted-foreground"
+                          strokeWidth={1.75}
+                        />
+                      }
+                      readings={pickCardReadings(outdoorReadings)}
+                      metricsState={resolveMetricsDisplayState(
+                        outdoorReadings,
+                        outdoorLoadStatus,
+                        dashboardDataLoaded
+                      )}
+                      action={
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      }
+                      onClick={() => setOutdoorPanelOpen(true)}
+                    />
+                  );
+                }
+
+                // 室温だけをカードに出す。運転モードと設定温度はバッジが持っており、
+                // 計測値にも同じ文字列を並べると同じことを2回言うことになる（#226）
+                const airconReadings = isAirconRoomVisible(hiddenDeviceKeys)
+                  ? buildAirconReadings(airconLatest?.room_temperature)
+                  : [];
+                // 操作できるときだけ開けるようにする。ログイン情報が無いバックエンドでは
+                // パネルを開いても何も操作できないため、入口ごと出さない（#213）
+                const airconControllable = airconControlEnabled && !isOfflineMode;
+                const airconPill = buildAirconStatusPill(airconLatest);
+                const airconState = resolveMetricsDisplayState(
+                  airconReadings,
+                  airconLoadStatus,
+                  dashboardDataLoaded
+                );
+                return (
+                  <DeviceCard
+                    key="aircon"
+                    title={airconTitle}
+                    accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
+                    badge={
+                      airconPill.color ? (
+                        <span
+                          className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
+                          style={{
+                            color: airconPill.color,
+                            backgroundColor: `${airconPill.color}24`,
+                          }}
+                        >
+                          <span
+                            className="size-1.5 rounded-full bg-current"
+                            aria-hidden
+                          />
+                          {airconPill.label}
+                        </span>
+                      ) : airconLatest ? (
+                        <span className="inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
+                          {airconPill.label}
+                        </span>
+                      ) : null
+                    }
+                    action={
+                      airconControllable ? (
+                        <ChevronRight
+                          className="size-5 shrink-0 text-muted-foreground/60"
+                          strokeWidth={1.75}
+                        />
+                      ) : undefined
+                    }
+                    onClick={
+                      airconControllable
+                        ? () => setAirconControlOpen(true)
+                        : undefined
+                    }
+                    readings={airconReadings}
+                    // 室温が無くても運転状態のバッジが出ているなら「データがありません」とは言わない
+                    metricsState={
+                      airconState !== "ready" && hasAirconData(airconLatest)
+                        ? "ready"
+                        : airconState
+                    }
+                  />
+                );
+              })}
+            </div>
+          </section>
+
           {(remoteCardVisible || garbageCardVisible || energyCardVisible || cleanerCardVisible) && (
-            <section className="lg:col-start-2 lg:row-start-1">
+            <section>
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
               </div>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:items-start">
                 {remoteCardVisible && (
                   <RemoteCard
                     buttons={remoteButtons}
@@ -1020,201 +1082,14 @@ export function MyRoomDashboard() {
             </section>
           )}
 
-          <section className="lg:col-start-1 lg:row-start-1">
-            <div className="mb-3 flex items-center justify-between px-0.5">
-              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.sensors}</h2>
-              <Link
-                href="/devices"
-                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Settings className="size-4" strokeWidth={1.75} />
-                表示設定
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-              {!layoutReady
-                ? buildDefaultDisplayOrder().map((_, index) => (
-                    <DeviceCardSkeleton key={`device-skeleton-${index}`} />
-                  ))
-                : visibleDisplayOrder.map((item) => {
-                if (item.type === "device") {
-                  const deviceId = item.deviceId;
-                  const device = getDeviceInfo(deviceId);
-                  const accentColor = getDeviceChartColor(chartColors, deviceId);
-                  const indoorMetrics = buildIndoorMetrics(
-                    latestByDevice[deviceId],
-                    accentColor
-                  );
-                  return (
-                    <DeviceCard
-                      key={`device-${deviceId}`}
-                      title={device.name}
-                      accentColor={accentColor}
-                      action={
-                        <ChevronRight
-                          className="size-5 shrink-0 text-muted-foreground/60"
-                          strokeWidth={1.75}
-                        />
-                      }
-                      onClick={() => {
-                        setDevicePanelId(deviceId);
-                        setDevicePanelOpen(true);
-                      }}
-                      metrics={indoorMetrics}
-                      metricsState={resolveMetricsDisplayState(
-                        indoorMetrics,
-                        latestLoadStatusByDevice[deviceId],
-                        dashboardDataLoaded
-                      )}
-                      statusNote={formatStaleNote(deviceId)}
-                    />
-                  );
-                }
-
-                if (item.type === "outdoor") {
-                  const outdoorLoadStatus = resolveOutdoorBatchLoadStatus(
-                    latestByDevice,
-                    latestLoadStatusByDevice
-                  );
-                  return (
-                    <DeviceCard
-                      key="outdoor"
-                      title={formatOutdoorApiLabel(outdoorLocation?.name)}
-                      metrics={outdoorMetrics}
-                      metricsState={resolveMetricsDisplayState(
-                        outdoorMetrics,
-                        outdoorLoadStatus,
-                        dashboardDataLoaded
-                      )}
-                      action={
-                        <ChevronRight
-                          className="size-5 shrink-0 text-muted-foreground/60"
-                          strokeWidth={1.75}
-                        />
-                      }
-                      onClick={() => setOutdoorPanelOpen(true)}
-                    />
-                  );
-                }
-
-                const airconMetrics = buildAirconMetrics(
-                  airconLatest,
-                  getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID),
-                  {
-                    showRoom: isAirconRoomVisible(hiddenDeviceKeys),
-                    showTarget: isAirconTargetVisible(hiddenDeviceKeys),
-                  }
-                );
-                // 操作できるときだけ開けるようにする。ログイン情報が無いバックエンドでは
-                // パネルを開いても何も操作できないため、入口ごと出さない（#213）
-                const airconControllable = airconControlEnabled && !isOfflineMode;
-                const airconPill = buildAirconStatusPill(airconLatest);
-                return (
-                  <DeviceCard
-                    key="aircon"
-                    title={airconTitle}
-                    accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
-                    badge={
-                      airconPill.color ? (
-                        <span
-                          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11.5px] font-bold"
-                          style={{
-                            color: airconPill.color,
-                            backgroundColor: `${airconPill.color}24`,
-                          }}
-                        >
-                          <span
-                            className="size-1.5 rounded-full bg-current"
-                            aria-hidden
-                          />
-                          {airconPill.label}
-                        </span>
-                      ) : airconLatest ? (
-                        <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
-                          {airconPill.label}
-                        </span>
-                      ) : null
-                    }
-                    action={
-                      airconControllable ? (
-                        <ChevronRight
-                          className="size-5 shrink-0 text-muted-foreground/60"
-                          strokeWidth={1.75}
-                        />
-                      ) : undefined
-                    }
-                    onClick={
-                      airconControllable
-                        ? () => setAirconControlOpen(true)
-                        : undefined
-                    }
-                    metrics={airconMetrics}
-                    metricsState={resolveMetricsDisplayState(
-                      airconMetrics,
-                      airconLoadStatus,
-                      dashboardDataLoaded
-                    )}
-                  />
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="lg:col-start-1 lg:row-start-2">
-            <div className="mb-3 px-0.5">
-              <h2 className="section-title">推移</h2>
-            </div>
-
-            <EnvironmentChart
-              historyData={historyData}
-              deviceIds={chartDeviceIds}
-              deviceNames={deviceNames}
-              chartMetric={chartMetric}
-              onChartMetricChange={setChartMetric}
-              viewRange={viewRange}
-              onViewRangeChange={setViewRange}
-              loading={chartLoading}
-              historyLoading={historyLoading || loadingRange}
-              awaitingLatest={awaitingLatest}
-              historyEpoch={historyEpoch}
-              noMoreOlderData={noMoreOlderData}
-              onVisibleDomainChange={ensureVisibleRangeLoaded}
-              airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
-              outdoorLocationName={outdoorLocation?.name}
-              legendOrder={visibleDisplayOrder}
-              chartColors={chartColors}
-              lineVisibility={effectiveLineVisibility}
-              onLineVisibilityChange={handleChartLineVisibleChange}
-            />
-          </section>
-
-          <section className="lg:col-start-1 lg:row-start-3">
-            <div className="mb-3 px-0.5">
-              <h2 className="section-title">最近の記録</h2>
-            </div>
-
-            <DailyStatsList
-              dailyStatsByDevice={mergedDailyStatsByDevice}
-              deviceIds={dailyStatsDeviceIds}
-              deviceNames={deviceNames}
-              chartMetric={chartMetric}
-              latestByDevice={latestForDailyStats}
-              dailyLimit={dailyLimit}
-              chartColors={chartColors}
-              onLoadMore={() =>
-                setDailyLimit((prev) => Math.min(prev + 7, maxDailyStatsDays))
-              }
-            />
-          </section>
-
           {comingSoonVisible && COMING_SOON_CARDS.length > 0 && (
-            <section className="lg:col-start-2 lg:row-start-2">
+            <section>
               <div className="mb-3 px-0.5">
                 <h2 className="section-title text-muted-foreground">
                   {DASHBOARD_SECTION_LABELS.comingSoon}
                 </h2>
               </div>
-              <div className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-2.5 lg:grid lg:grid-cols-2 lg:items-start">
                 {COMING_SOON_CARDS.map((card) => (
                   <ComingSoonCard key={card.key} card={card} />
                 ))}
@@ -1248,10 +1123,42 @@ export function MyRoomDashboard() {
         </button>
       </div>
 
+      <TrendPanel
+        open={trendPanelOpen}
+        onClose={() => setTrendPanelOpen(false)}
+        historyData={historyData}
+        chartDeviceIds={chartDeviceIds}
+        deviceNames={deviceNames}
+        chartMetric={chartMetric}
+        onChartMetricChange={setChartMetric}
+        viewRange={viewRange}
+        onViewRangeChange={setViewRange}
+        chartLoading={chartLoading}
+        historyLoading={historyLoading || loadingRange}
+        awaitingLatest={awaitingLatest}
+        historyEpoch={historyEpoch}
+        noMoreOlderData={noMoreOlderData}
+        onVisibleDomainChange={ensureVisibleRangeLoaded}
+        airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
+        outdoorLocationName={outdoorLocation?.name}
+        legendOrder={visibleDisplayOrder}
+        chartColors={chartColors}
+        lineVisibility={effectiveLineVisibility}
+        onLineVisibilityChange={handleChartLineVisibleChange}
+        dailyStatsByDevice={mergedDailyStatsByDevice}
+        dailyStatsDeviceIds={dailyStatsDeviceIds}
+        latestByDevice={latestForDailyStats}
+        dailyLimit={dailyLimit}
+        onLoadMoreDailyStats={() =>
+          setDailyLimit((prev) => Math.min(prev + 7, maxDailyStatsDays))
+        }
+      />
+
       <DeviceDetailPanel
         open={devicePanelOpen}
         deviceId={devicePanelId}
         locationName={getLocationName(devicePanelId, devices, deviceNames)}
+        latest={latestByDevice[devicePanelId] ?? null}
         chartColors={chartColors}
         lineVisibility={effectiveLineVisibility}
         devices={devices}
@@ -1267,6 +1174,7 @@ export function MyRoomDashboard() {
         <OutdoorDetailPanel
           open={outdoorPanelOpen}
           locationName={outdoorLocation?.name}
+          latest={outdoorLatest}
           chartColors={chartColors}
           lineVisibility={defaultLineVisibility}
           isOfflineMode={isOfflineMode}
