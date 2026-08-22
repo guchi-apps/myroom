@@ -62,6 +62,28 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 - **マイグレーション専用ユーザーにそのDBのGRANTが無ければ、上記を渡しても落ちる。**
   その場合はVPS上で管理者ユーザーからGRANTを1度だけ実行する必要がある（手作業。Git管理外）
 
+## デプロイの値の取得先
+
+**ワークフローは実行時に1Passwordを呼ばない。** 以前は実行のたびに `1password/load-secrets-action`
+で読んでいたが、1Passwordサービスアカウントの日次レート制限（**1Passwordアカウント全体で
+1,000リクエスト/日**。サービスアカウントを分けても分割されない）を使い切り、フリート全体の
+デプロイが止まった（guchi-apps/issue-deck#1302・#1307）。実行時の取得先はGitHubの
+secret / variable で、1Passwordは「人が管理する唯一の正」として残す。
+
+**どの値をGitHubのどこから取るかの正は `.github/secrets-manifest.tsv`。**
+`SCOPE` が `inherit` の行はorganizationの共通値（このリポジトリでは同期しない）、
+`repo` の行はこのリポジトリのsecret。
+
+- **デプロイで使う値を増やすときは、まずマニフェストに行を足す。**
+  `deploy.yml` の `env:` ブロックは `scripts/generate-workflow-env-block.sh` で生成する。
+  ワークフローに直接書き足すとマニフェストと食い違う
+- **順序は「値の投入 → ワークフロー切り替え」。** 投入前にワークフローを切り替えるとデプロイが失敗する
+- 1Password側の値を変えたときだけGitHubへ同期する（デプロイのたびには実行しない）。
+  `sync-secrets.yml` を `workflow_dispatch` で起こすか、手元で `scripts/sync-github-secrets.sh` を実行する。
+  **後者は個人アカウントのセッションが必要**（サービスアカウントではGitHubへ書き込めない）
+- `OP_SERVICE_ACCOUNT_TOKEN` のrepository secretは残してある。使うのは上記の同期のときだけで、
+  デプロイでは使わない
+
 ## マルチエージェント運用（GitHub Actions 無人実行）
 
 `@claude` コメントを起点に、計画提示〜実装〜develop向けPR作成までを GitHub Actions 上で無人実行する。
@@ -152,7 +174,7 @@ Claude が二重に走る（`subscription-lists` で実際に起きた）。
 - DBスキーマ変更・マイグレーション（`init_db.py`・`migrate_db.py`）
 - 本番環境の設定（`deployment/`・`ecosystem.config.js`）
 - GitHub Actionsやデプロイ設定（`.github/workflows/**`）
-- Secretsや環境変数（`.env.tpl`・1Password関連）
+- Secretsや環境変数（`.github/secrets-manifest.tsv`・1Password関連）
 - 大規模な依存関係の更新（`requirements.txt`・`frontend/package.json`）
 - `develop` → `main` のマージ
 
