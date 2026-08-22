@@ -1,0 +1,11 @@
+# collectors/tapo_to_myroom.py 専用の依存。
+#
+# このディレクトリの他の収集スクリプトは requests だけで動くが、Tapo は LAN 直結の
+# 独自プロトコル（KLAP）なので python-kasa が要る。サブPCのシステムPythonには
+# 入っていないため、専用の venv を作って使う。
+#
+#   python3 -m venv collectors/.venv-tapo
+#   collectors/.venv-tapo/bin/pip install -r collectors/requirements-tapo.txt
+#
+# バックエンドの requirements.txt には入れない。VPS はプラグと同じLANにいないため。
+python-kasa>=0.7

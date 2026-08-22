@@ -1,0 +1,22 @@
+[Unit]
+# Tapo スマートプラグ（P110系）の消費電力を LAN 経由で読み、MyRoom へ送る。
+# 計測のみで、ON/OFF の制御は行わない。
+#
+# ラズパイではなくサブPCで動かす。python-kasa が Python 3.11 以上と cryptography を
+# 要求し、armv6 の Pi Zero W では導入が現実的でないため。
+Description=MyRoom: Tapo スマートプラグの消費電力を取得して送る
+Documentation=https://github.com/guchi-apps/myroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# ディスカバリー（5秒）＋機器ごとの接続。数台なら十数秒で終わる。
+TimeoutStartSec=3min
+
+# **専用の venv を使う。** このスクリプトだけ python-kasa が要り、サブPCの
+# システムPythonには入っていない。リポジトリの venv/ はメインPCのpyenv向けで動かない。
+WorkingDirectory=%h/apps/myroom
+ExecStart=%h/apps/myroom/collectors/.venv-tapo/bin/python %h/apps/myroom/collectors/tapo_to_myroom.py
+Nice=10

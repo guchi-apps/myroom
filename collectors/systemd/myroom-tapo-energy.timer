@@ -1,0 +1,14 @@
+[Unit]
+Description=MyRoom: Tapo スマートプラグの消費電力の取得（5分ごと）
+
+[Timer]
+# ローカルAPIなのでレート制限が無く、短い間隔で回せる。カードに出す「いまのW」を
+# 実際の「いま」に近づけたいので、エアコン（1時間ごと）より細かくする。
+OnCalendar=*:0/5
+# 停止中に逃した実行を起動直後に走らせる。当日ぶんは上書きなので取り直して問題ない。
+Persistent=true
+# 毎5分ちょうどに他のタイマーと一斉に走らせない。
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

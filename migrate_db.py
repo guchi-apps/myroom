@@ -274,11 +274,24 @@ def migrate():
                         source VARCHAR(64) NOT NULL,
                         kwh FLOAT NULL,
                         cost_yen FLOAT NULL,
+                        power_w FLOAT NULL,
                         updated_at DATETIME NULL,
                         PRIMARY KEY (date, source)
                     )
                 """))
                 print("Table 'daily_energy' created.")
+
+            # power_w はスマートプラグ対応（#109）で後から足した列。
+            # daily_energy を先に作った環境にも入るよう、テーブル作成とは別に確認する。
+            print("Checking if 'power_w' column exists on 'daily_energy'...")
+            if _column_exists(conn, "daily_energy", "power_w"):
+                print("Column 'power_w' already exists.")
+            else:
+                print("Adding column 'power_w'...")
+                conn.execute(
+                    text("ALTER TABLE daily_energy ADD COLUMN power_w FLOAT NULL")
+                )
+                print("Column 'power_w' added.")
 
         print("Migration completed.")
 

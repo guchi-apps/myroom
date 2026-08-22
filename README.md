@@ -201,7 +201,7 @@ SwitchBot 風のスマートホーム UI をベースに、スマホ向け（最
 
 朝いちばんに知りたい予定を先頭に置き、時系列グラフは掘り下げる情報として下へ回しています。
 
-1. **暮らし（1列）** — ゴミの日・エアコンの電気代など、推移グラフの凡例を持たないカード
+1. **暮らし（1列）** — ゴミの日・消費電力など、推移グラフの凡例を持たないカード
 2. **センサー（2列グリッド・PCでは3列）** — 屋内デバイス / 屋外 / エアコン。カードタップでデバイス詳細（グラフ・記録一覧）
 3. **推移（履歴グラフ）** — 指標タブ（温度・湿度・気圧・CO2・照度）で切り替え。スマホではグラフ上と画面下部の固定バーの両方から操作可能
 4. **最近の記録** — 日ごとの最高・最低値をバー表示
@@ -350,22 +350,28 @@ Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.co
 python3 migrate_db.py   # aircon / daily_energy テーブルを作成
 ```
 
-### 電気代（日別の電力使用量）
+### 消費電力（日別の電力使用量）
 
 取得元を問わない日別テーブル `daily_energy` に使用量（kWh）をためて、ダッシュボードの「暮らし」
-セクションに電気代の目安を出します。エアコンぶんは AirCloud Home の
+セクションに「消費電力」カードとして出します。**エアコンもスマートプラグも1枚のカードにまとめます**
+——知りたいのは「家全体で今月いくらか」で、取得元ごとにカードを分けると足し算が読み手の仕事に
+なるためです。カードには取得元ごとの行が並び、家全体の合計と先月同日との差が出ます。
+
+エアコンぶんは AirCloud Home の
 `rac/energy-consumptions/summary/v3` から取れるため、**運転状態とは別枠（1時間間隔）で**送ります
 （状態の取得は5分間隔・レート制限があるため同じ間隔では回せません）。
 
-**送り手は Raspberry Pi ではなくサブPC**です。この取得はクラウドAPI同士で完結し BLE を使わないため、
-センサーの近くに居る必要がありません。スクリプトは [`collectors/`](collectors/README.md)、
-定期実行の systemd ユニットは [`collectors/systemd/`](collectors/systemd/) にあります
-（運転状態と CO2 の収集は引き続き Raspberry Pi 側）。
+**送り手はエアコン・スマートプラグとも Raspberry Pi ではなくサブPC**です。エアコンの取得は
+クラウドAPI同士で完結し BLE を使わないため、センサーの近くに居る必要がありません（運転状態と
+CO2 の収集は引き続き Raspberry Pi 側）。スクリプトは [`collectors/`](collectors/README.md)、
+定期実行の systemd ユニットは [`collectors/systemd/`](collectors/systemd/) にあります。
+スマートプラグぶんの詳細は後述の「消費電力の収集（Tapo スマートプラグ + サブPC）」を参照してください。
 
 | 用途 | URL |
 |------|-----|
 | API（日別使用量 POST） | https://myroom.gucchii.com/api/energy |
-| API（集計 GET・要ログイン） | https://myroom.gucchii.com/api/energy/summary |
+| API（カード用の集計 GET・要ログイン） | https://myroom.gucchii.com/api/energy/breakdown |
+| API（取得元1つの集計 GET・要ログイン） | https://myroom.gucchii.com/api/energy/summary |
 
 ```bash
 # 1日ぶん、または複数日まとめて送る
@@ -382,14 +388,77 @@ curl -X POST "https://myroom.gucchii.com/api/energy" \
 - **金額は目安です。** 取得元が返すのは使用量だけなので、`ui_settings` の `energy_unit_price`
   （円/kWh・既定 31）を掛けて計算します。単価はカードをタップした詳細パネルから変更できます。
   取得元が `cost_yen` を返した場合だけ、その値をそのまま使います
-- 集計（`/api/energy/summary?source=aircon&days=30`）は今日・昨日・今月・先月・先月の同じ日まで・
-  日別を1度に返します。「今月 vs 先月の同じ時期」の比較はこれを使っています
+- `records[].power_w` は**いまの消費電力（W）**。スマートプラグだけが返します。日別の集計には
+  使わず、カードに「動いているか」を出すために**その日の最後の値だけ**を持ちます。エアコンは
+  瞬時値を返さないため NULL のままで、カードの行では「—」になります
+- 集計（`/api/energy/breakdown?days=30`）は、取得元ごとの行と、家全体の今日・今月・先月・
+  先月の同じ日まで・日別の内訳を1度に返します。カードと詳細パネルはこれだけを使います
+- `/api/energy/summary?source=aircon&days=30` は取得元を1つに絞った集計です。カードは使いません
+- **欠測は 0 として扱いません。** プラグは停電明けにローカル API が黙ることがあり、抜けた日を
+  0 kWh として描くと「その日は使っていない」に見えてしまうため、棒を描かず集計の日数からも外します
 - カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
 
 **DB マイグレーション**（本番 DB 利用時）:
 
 ```bash
-python3 migrate_db.py   # daily_energy テーブルを作成
+python3 migrate_db.py   # daily_energy テーブルの作成と power_w 列の追加
+```
+
+### 消費電力の収集（Tapo スマートプラグ + サブPC）
+
+TP-Link Tapo スマートプラグ（P110 系）の消費電力を LAN 経由で読み、日別の使用量として
+記録します。**計測のみで、ON/OFF の操作はできません。**
+
+エアコン（`source='aircon'`）と同じ `daily_energy` テーブルへ `source='tapo:<表示名>'` として
+入り、ダッシュボードの「消費電力」カードに1枚でまとまって出ます。
+
+収集スクリプトは `collectors/tapo_to_myroom.py`。**ラズパイではなくサブPCで動かします。**
+`python-kasa` が Python 3.11 以上と `cryptography` を要求し、armv6 の Pi Zero W では導入が
+現実的でないためです。プラグと同じ LAN にいればどこからでも読めます。
+
+**前提**
+
+- Tapo アプリでプラグをセットアップ済み（TP-Link アカウントに紐付いていること）
+- プラグとサブPC が同じ LAN にいること（KLAP プロトコル・TCP 80、ディスカバリーは UDP 20002）
+- プラグの IP を DHCP 予約などで固定してあること
+
+**セットアップ**
+
+```bash
+cd ~/apps/myroom
+
+# このスクリプトだけ依存がある（python-kasa）。専用の venv を作る
+python3 -m venv collectors/.venv-tapo
+collectors/.venv-tapo/bin/pip install -r collectors/requirements-tapo.txt
+
+# collectors/tapo.env.example の内容を collectors/.env へ追記し、実値を入れる
+# （実値は 1Password の apps/MyRoom から取る。.env は gitignore 済み）
+
+# LAN 上のプラグを探して IP と名前を確認する
+collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
+
+# 読み取りだけ試す（POST しない）
+collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
+```
+
+`TAPO_HOSTS` は `192.168.2.21=冷蔵庫,192.168.2.22=テレビ` のように書き、`=表示名` を省くと
+プラグ自身の名前を使います。
+
+> **表示名はあとから変えないこと。**
+> 表示名はそのまま `daily_energy.source`（`tapo:<表示名>`）になるため、変更すると
+> 別の機器として記録され、グラフが途中で途切れます。
+
+> **停電・ブレーカー断のあと、Tapo のローカル API はディスカバリー通信を受け取るまで応答しない。**
+> 遅延初期化のためで、放っておくと数分〜場合によっては復活しません。収集スクリプトは各機器へ
+> 接続する前に必ずブロードキャストのディスカバリーを1回投げてこれを回避しています
+> （`wake_up_devices()`）。この順序を崩さないでください。
+
+**定期実行**は systemd user timer（5分ごと）で行います。
+
+```bash
+cd ~/apps/myroom
+cp collectors/systemd/myroom-tapo-energy.service collectors/systemd/myroom-tapo-energy.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-energy.timer
 ```
 
 ### ゴミの日

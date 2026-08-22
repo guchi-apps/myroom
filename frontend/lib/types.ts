@@ -109,14 +109,6 @@ export interface UiSettings {
   energy_unit_price: number;
 }
 
-/** `daily_energy` の1日ぶん。金額は取得元が返さなければ単価から計算した目安 */
-export interface EnergyDay {
-  /** `2026-08-22` */
-  date: string;
-  kwh: number | null;
-  cost_yen: number | null;
-}
-
 export interface EnergyTotal {
   kwh: number;
   cost_yen: number;
@@ -126,17 +118,51 @@ export interface EnergyTotal {
   end: string;
 }
 
-/** 電気代カードが使う集計。`GET /api/energy/summary` の戻り */
-export interface EnergySummary {
+/**
+ * 消費電力カードの1行。`daily_energy` の取得元（`aircon` / `tapo:<機器名>`）ごとに1件。
+ */
+export interface EnergySourceRow {
+  /** `aircon` / `tapo:冷蔵庫` */
   source: string;
+  /** 画面に出す名前。`tapo:` は落とし、`aircon` は「エアコン」になる */
+  label: string;
+  today_kwh: number | null;
+  today_cost_yen: number | null;
+  /** いまの消費電力（W）。返すのはスマートプラグだけで、エアコンは null */
+  power_w: number | null;
+  this_month_kwh: number;
+  latest_date: string | null;
+}
+
+/** 日別の合計と、その日の取得元ごとの内訳（積み上げグラフに使う） */
+export interface EnergyBreakdownDay {
+  /** `2026-08-22` */
+  date: string;
+  kwh: number;
+  cost_yen: number;
+  /** `{ "aircon": 1.86, "tapo:冷蔵庫": 0.86 }`。値の無い取得元は入らない */
+  by_source: Record<string, number>;
+}
+
+/** 家全体の1日ぶん。日数は常に1だが、期間合計と同じ形にして扱いを揃える */
+export interface EnergyDayTotal {
+  date: string;
+  kwh: number;
+  cost_yen: number;
+  days: number;
+}
+
+/** 消費電力カードが使う集計。`GET /api/energy/breakdown` の戻り */
+export interface EnergyBreakdown {
   unit_price: number;
-  today: EnergyDay | null;
-  yesterday: EnergyDay | null;
+  /** エアコンが先頭、以降は今月の使用量が多い順 */
+  sources: EnergySourceRow[];
+  today: EnergyDayTotal;
   this_month: EnergyTotal;
   last_month: EnergyTotal;
   /** 先月の同じ日まで。今月とそのまま比べられる */
   last_month_to_date: EnergyTotal;
-  daily: EnergyDay[];
+  daily: EnergyBreakdownDay[];
   latest_date: string | null;
   updated_at: string | null;
 }

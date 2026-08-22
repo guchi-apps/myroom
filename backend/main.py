@@ -181,6 +181,9 @@ class DailyEnergyItem(BaseModel):
     source: Optional[str] = None
     kwh: Optional[float] = None
     cost_yen: Optional[float] = None
+    #: いまの消費電力（W）。スマートプラグだけが返す。集計には使わず、
+    #: カードに「動いているか」を出すためだけに最後の値を持つ。
+    power_w: Optional[float] = None
 
     @model_validator(mode="after")
     def at_least_one_value(self):
@@ -971,6 +974,7 @@ async def create_daily_energy(
                 "source": item.source or default_source,
                 "kwh": item.kwh,
                 "cost_yen": item.cost_yen,
+                "power_w": item.power_w,
             }
             for item in payload.records
         ]
@@ -992,8 +996,22 @@ def get_energy_summary(
     db: Session = Depends(database.get_db),
     _: dict = Depends(get_current_user),
 ):
-    """ダッシュボードの電気代カード用。今日・昨日・今月・先月と日別を1度に返す。"""
+    """取得元を1つに絞った集計。カードは `/api/energy/breakdown` を使う。"""
     return energy.get_summary(db, get_now_jst().date(), source=source, history_days=days)
+
+
+@app.get("/api/energy/breakdown")
+def get_energy_breakdown(
+    days: int = Query(default=energy.DEFAULT_HISTORY_DAYS, ge=1, le=400),
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """ダッシュボードの消費電力カード用。
+
+    エアコン（`aircon`）とスマートプラグ（`tapo:*`）を取得元ごとの行に分けたうえで、
+    家全体の今日・今月・先月同日までの合計と、日別の内訳を1度に返す。
+    """
+    return energy.get_breakdown(db, get_now_jst().date(), history_days=days)
 
 
 @app.get("/api/aircon/latest")
