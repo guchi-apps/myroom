@@ -76,11 +76,11 @@ python3 collectors/aircon_energy_to_myroom.py
 
 ## 定期実行
 
-ユニットは [`../deployment/subpc/`](../deployment/subpc/) にある。`aide` と同じく
+ユニットは [`systemd/`](systemd/) にある。`aide` と同じく
 **サブPCの `~/.config/systemd/user/` へ手でコピーする**（リポジトリからは自動反映されない）。
 
 ```bash
-cp deployment/subpc/myroom-aircon-energy.service deployment/subpc/myroom-aircon-energy.timer \
+cp collectors/systemd/myroom-aircon-energy.service collectors/systemd/myroom-aircon-energy.timer \
   ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now myroom-aircon-energy.timer

@@ -16,8 +16,7 @@ myroom/
 │   ├── devices.json           # デバイス表示名
 │   └── outdoor_location.json  # 屋外地点
 ├── scripts/           # 開発用起動スクリプト
-├── collectors/        # サブPCで動かす収集スクリプト（エアコンの日別使用量）
-├── deployment/        # 本番（VPS）と サブPC（subpc/）の配置用ファイル
+├── collectors/        # サブPCで動かす収集スクリプト＋systemdユニット
 └── migrate_db.py      # DB スキーマ更新
 ```
 
@@ -301,7 +300,7 @@ curl -X POST "https://myroom.gucchii.com/api/sensor?device=2" \
 - CO2 値は UI のセンサーカードに ppm として表示
 
 **Raspberry Pi 上のスクリプト・セットアップ手順**（WinSCP、SSH、BLE/`btmon`、systemd、トラブルシューティング）は  
-[m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。`myroom-api/README.md` を参照してください。
+[guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。`myroom-api/README.md` を参照してください。
 
 ### エアコン（白くまくんアプリ / AirCloud Home + Raspberry Pi）
 
@@ -332,7 +331,7 @@ sudo ./install.sh
 sudo systemctl start aircon-myroom.timer
 ```
 
-Raspberry Pi 上のスクリプトは [m-guchi/pi0w_260719](https://github.com/m-guchi/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
+Raspberry Pi 上のスクリプトは [guchi-apps/pi0w_260719](https://github.com/guchi-apps/pi0w_260719) リポジトリに移管しました。詳細は `myroom-api/README.md` を参照。
 
 取得できる主な項目: 室温、設定温度、運転モード、電源 ON/OFF、風量・風向、オンライン状態など（詳細は下記参照）。
 
@@ -360,7 +359,7 @@ python3 migrate_db.py   # aircon / daily_energy テーブルを作成
 
 **送り手は Raspberry Pi ではなくサブPC**です。この取得はクラウドAPI同士で完結し BLE を使わないため、
 センサーの近くに居る必要がありません。スクリプトは [`collectors/`](collectors/README.md)、
-定期実行の systemd ユニットは [`deployment/subpc/`](deployment/subpc/) にあります
+定期実行の systemd ユニットは [`collectors/systemd/`](collectors/systemd/) にあります
 （運転状態と CO2 の収集は引き続き Raspberry Pi 側）。
 
 | 用途 | URL |
