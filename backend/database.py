@@ -71,6 +71,9 @@ class DailyEnergyRecord(Base):
 
     kwh = Column(Float, nullable=True)
     cost_yen = Column(Float, nullable=True)
+    #: その日に最後に観測した瞬時値（W）。日別の集計値ではなく「いま動いているか」の
+    #: 確認用で、返すのはスマートプラグだけ。エアコン（AirCloud Home）は NULL のまま。
+    power_w = Column(Float, nullable=True)
     updated_at = Column(
         DateTime,
         default=datetime.datetime.utcnow,
@@ -255,6 +258,38 @@ def generate_mock_daily_energy(source: str = "aircon", days: int = 75) -> list:
         data.append({"date": d, "source": source, "kwh": round(kwh, 2), "cost_yen": None})
     data.sort(key=lambda x: x["date"])
     return data
+
+
+#: モックの取得元。(source, 使用量の倍率, いまの W)。
+#: エアコンは AirCloud Home から瞬時値を取れないので W は None。
+MOCK_ENERGY_SOURCES = (
+    ("aircon", 1.0, None),
+    ("tapo:冷蔵庫", 0.46, 38.2),
+    ("tapo:テレビ", 0.17, 72.0),
+    ("tapo:デスク", 0.13, 0.0),
+)
+
+
+def generate_mock_energy_rows(days: int = 75) -> list:
+    """モック用の、取得元を横断した日別使用量。
+
+    消費電力カードはエアコンとスマートプラグを1枚にまとめるため、
+    モックでも複数の取得元が混ざった状態を作る。
+    """
+    today = datetime.date.today()
+    rows = []
+    for source, factor, power_w in MOCK_ENERGY_SOURCES:
+        for row in generate_mock_daily_energy(source, days):
+            rows.append(
+                {
+                    **row,
+                    "kwh": round(row["kwh"] * factor, 2),
+                    # 瞬時値は「いま」の値なので、当日ぶんにだけ入る
+                    "power_w": power_w if row["date"] == today else None,
+                }
+            )
+    rows.sort(key=lambda item: (item["date"], item["source"]))
+    return rows
 
 
 import math

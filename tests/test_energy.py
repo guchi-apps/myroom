@@ -120,3 +120,148 @@ def test_energy_post_rejects_record_without_values(client):
         json={"records": [{"date": "2026-08-22"}]},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------- 取得元をまたぐ集計
+
+
+def _mixed_rows(values):
+    """(日付文字列, source, kWh, W) の並びから `_fetch_all_rows` 相当の行を作る。"""
+    return [
+        {
+            "date": datetime.date.fromisoformat(date),
+            "source": source,
+            "kwh": kwh,
+            "cost_yen": None,
+            "power_w": power_w,
+            "updated_at": None,
+        }
+        for date, source, kwh, power_w in values
+    ]
+
+
+def test_source_label_strips_the_namespace():
+    assert energy.source_label("aircon") == "エアコン"
+    assert energy.source_label("tapo:冷蔵庫") == "冷蔵庫"
+    # 知らない取得元は生の値を出す（原因を追えるようにするため）
+    assert energy.source_label("kepco") == "kepco"
+
+
+def test_breakdown_sums_across_sources():
+    rows = _mixed_rows(
+        [
+            ("2026-08-22", "aircon", 1.86, None),
+            ("2026-08-22", "tapo:冷蔵庫", 0.86, 38.2),
+            ("2026-08-22", "tapo:テレビ", 0.31, 72.0),
+        ]
+    )
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+
+    assert result["today"]["kwh"] == 3.03
+    assert result["this_month"]["kwh"] == 3.03
+    # 3.03 kWh × 31円 は行ごとに丸めてから足す（57.7 + 26.7 + 9.6）
+    assert result["today"]["cost_yen"] == 94
+    assert [row["source"] for row in result["sources"]] == [
+        "aircon",
+        "tapo:冷蔵庫",
+        "tapo:テレビ",
+    ]
+
+
+def test_breakdown_counts_days_not_rows():
+    """取得元が増えても日数は増えない（`len(rows)` を日数にすると4台で4倍になる）。"""
+    rows = _mixed_rows(
+        [
+            ("2026-08-21", "aircon", 1.0, None),
+            ("2026-08-21", "tapo:冷蔵庫", 1.0, 10.0),
+            ("2026-08-22", "aircon", 1.0, None),
+            ("2026-08-22", "tapo:冷蔵庫", 1.0, 10.0),
+        ]
+    )
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+    assert result["this_month"]["days"] == 2
+
+
+def test_breakdown_puts_aircon_first_then_heaviest_plug():
+    rows = _mixed_rows(
+        [
+            ("2026-08-22", "tapo:テレビ", 0.3, 72.0),
+            ("2026-08-22", "tapo:冷蔵庫", 0.9, 38.0),
+            ("2026-08-22", "aircon", 0.1, None),
+        ]
+    )
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+    assert [row["label"] for row in result["sources"]] == ["エアコン", "冷蔵庫", "テレビ"]
+
+
+def test_breakdown_keeps_watts_only_for_today():
+    rows = _mixed_rows(
+        [
+            ("2026-08-21", "tapo:冷蔵庫", 1.0, 99.0),
+            ("2026-08-22", "tapo:冷蔵庫", 0.5, 38.2),
+            ("2026-08-22", "aircon", 1.0, None),
+        ]
+    )
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+    by_source = {row["source"]: row for row in result["sources"]}
+    assert by_source["tapo:冷蔵庫"]["power_w"] == 38.2
+    # エアコンは瞬時値を返さない
+    assert by_source["aircon"]["power_w"] is None
+
+
+def test_breakdown_daily_carries_the_split_per_source():
+    rows = _mixed_rows(
+        [
+            ("2026-08-22", "aircon", 1.86, None),
+            ("2026-08-22", "tapo:冷蔵庫", 0.86, 38.2),
+        ]
+    )
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+    assert result["daily"] == [
+        {
+            "date": "2026-08-22",
+            "kwh": 2.72,
+            "cost_yen": 84,
+            "by_source": {"aircon": 1.86, "tapo:冷蔵庫": 0.86},
+        }
+    ]
+
+
+def test_breakdown_without_records_is_empty_but_valid():
+    result = energy.build_breakdown([], datetime.date(2026, 8, 22), 31.0)
+    assert result["sources"] == []
+    assert result["daily"] == []
+    assert result["today"]["kwh"] == 0
+    assert result["latest_date"] is None
+
+
+def test_energy_breakdown_requires_auth(client):
+    response = client.get("/api/energy/breakdown")
+    assert response.status_code == 401
+
+
+def test_energy_breakdown_returns_mock_data(authed_client):
+    response = authed_client.get("/api/energy/breakdown")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unit_price"] > 0
+    assert len(payload["daily"]) == 30
+    labels = [row["label"] for row in payload["sources"]]
+    assert labels[0] == "エアコン"
+    assert "冷蔵庫" in labels
+    # 内訳を足すとその日の合計になる
+    day = payload["daily"][-1]
+    assert round(sum(day["by_source"].values()), 2) == day["kwh"]
+
+
+def test_energy_post_accepts_watts(client):
+    response = client.post(
+        "/api/energy",
+        json={
+            "records": [
+                {"date": "2026-08-22", "source": "tapo:冷蔵庫", "kwh": 0.86, "power_w": 38.2}
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "mock_ok"

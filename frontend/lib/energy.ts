@@ -1,10 +1,10 @@
-import type { EnergyDay, EnergySummary } from "@/lib/types";
-
-/** 電気を表すアンバー。温度・湿度・CO2 の色とは重ねない（globals.css の --energy-color と対） */
-export const ENERGY_ACCENT_VAR = "var(--energy-color)";
-
-/** カードの棒グラフに出す日数 */
-export const ENERGY_SPARKLINE_DAYS = 14;
+import { CHART_COLOR_PALETTE } from "@/lib/chart-colors";
+import type {
+  EnergyBreakdown,
+  EnergyBreakdownDay,
+  EnergySourceRow,
+  EnergyTotal,
+} from "@/lib/types";
 
 export function formatYen(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -47,7 +47,10 @@ export interface EnergyComparison {
  * 月をまたいだ直後や先月ぶんが無いときは比較そのものを出さない（null）。
  */
 export function buildEnergyComparison(
-  summary: EnergySummary | null
+  summary: {
+    this_month: EnergyTotal;
+    last_month_to_date: EnergyTotal;
+  } | null
 ): EnergyComparison | null {
   if (!summary) return null;
   const base = summary.last_month_to_date;
@@ -64,39 +67,19 @@ export function buildEnergyComparison(
   };
 }
 
-export interface EnergySparkBar {
+/** 日別の並びに要るのはこの2つだけ。取得元1つの集計にも家全体の集計にも使う */
+interface DailyLike {
   date: string;
-  kwh: number;
-  /** 期間内の最大値を 1 とした高さの比 */
-  ratio: number;
-  isLast: boolean;
-}
-
-/** カード下部の棒グラフ。直近 `days` 日ぶんを、期間内の最大値で正規化して返す */
-export function buildEnergySparkline(
-  daily: readonly EnergyDay[],
-  days: number = ENERGY_SPARKLINE_DAYS
-): EnergySparkBar[] {
-  const recent = daily.slice(-days).filter((day) => day.kwh != null);
-  if (recent.length === 0) return [];
-
-  const max = Math.max(...recent.map((day) => day.kwh ?? 0));
-  return recent.map((day, index) => ({
-    date: day.date,
-    kwh: day.kwh ?? 0,
-    ratio: max > 0 ? (day.kwh ?? 0) / max : 0,
-    isLast: index === recent.length - 1,
-  }));
+  kwh: number | null;
 }
 
 /** 詳細パネルの日別一覧。新しい日が上に来るように並べ替える */
-export function buildEnergyDailyRows(summary: EnergySummary | null): EnergyDay[] {
-  if (!summary) return [];
-  return [...summary.daily].reverse();
+export function buildEnergyDailyRows<T extends DailyLike>(daily: readonly T[]): T[] {
+  return [...daily].reverse();
 }
 
 /** 日別一覧の棒の長さ（期間内の最大値で正規化） */
-export function energyRowRatio(rows: readonly EnergyDay[], day: EnergyDay): number {
+export function energyRowRatio(rows: readonly DailyLike[], day: DailyLike): number {
   const max = Math.max(...rows.map((row) => row.kwh ?? 0), 0);
   if (max <= 0) return 0;
   return (day.kwh ?? 0) / max;
@@ -107,7 +90,7 @@ export function energyRowRatio(rows: readonly EnergyDay[], day: EnergyDay): numb
  * 「昨日ぶんも無い」ときだけ止まっていると見なす。
  */
 export function isEnergyStale(
-  summary: EnergySummary | null,
+  summary: { latest_date: string | null } | null,
   todayIso: string
 ): boolean {
   if (!summary || !summary.latest_date) return false;
@@ -116,6 +99,126 @@ export function isEnergyStale(
   return summary.latest_date < yesterday.toISOString().slice(0, 10);
 }
 
-export function hasEnergyData(summary: EnergySummary | null): boolean {
+export function hasEnergyData(
+  summary: { daily: readonly unknown[] } | null
+): boolean {
   return Boolean(summary && summary.daily.length > 0);
+}
+
+// ------------------------------------------------------------ 取得元ごとの色と積み上げ
+//
+// 消費電力カードはエアコンとスマートプラグを1枚に並べるため、取得元ごとに色が要る。
+// センサーのグラフと同じ配色（CHART_COLOR_PALETTE）から採り、画面をまたいで
+// 同じ色が同じものを指すようにする。
+
+/** エアコンの色。センサーのグラフで室温に使っているものと同じ */
+export const AIRCON_ENERGY_COLOR = "#1abc9c";
+
+/** プラグに割り当てる色。エアコンの色とは重ねない */
+const PLUG_COLOR_PALETTE = CHART_COLOR_PALETTE.filter(
+  (color) => color !== AIRCON_ENERGY_COLOR
+);
+
+export const AIRCON_ENERGY_SOURCE = "aircon";
+
+/**
+ * 取得元 → 色。エアコンは固定で、それ以外は `sources` の並び順に配色する。
+ *
+ * 並び順はサーバーが「エアコン → 今月の使用量が多い順」で決めているため、
+ * 機器を足しても既存の機器の色は変わらない……とは限らない（使用量で順が入れ替わる）。
+ * 色は凡例と同時に出るので、入れ替わっても読めなくはならない。
+ */
+export function buildEnergySourceColors(
+  sources: readonly EnergySourceRow[]
+): Record<string, string> {
+  const colors: Record<string, string> = {};
+  let plugIndex = 0;
+  for (const row of sources) {
+    if (row.source === AIRCON_ENERGY_SOURCE) {
+      colors[row.source] = AIRCON_ENERGY_COLOR;
+      continue;
+    }
+    colors[row.source] = PLUG_COLOR_PALETTE[plugIndex % PLUG_COLOR_PALETTE.length];
+    plugIndex += 1;
+  }
+  return colors;
+}
+
+export interface EnergyStackSegment {
+  source: string;
+  label: string;
+  kwh: number;
+  /** その日の合計に対する割合（0〜1） */
+  share: number;
+  color: string;
+}
+
+/** 1日ぶんを取得元ごとのセグメントへ。値の無い取得元は入れない */
+export function buildEnergyStackSegments(
+  day: EnergyBreakdownDay,
+  sources: readonly EnergySourceRow[],
+  colors: Record<string, string>
+): EnergyStackSegment[] {
+  const total = sources.reduce(
+    (sum, row) => sum + (day.by_source[row.source] ?? 0),
+    0
+  );
+  if (total <= 0) return [];
+
+  return sources
+    .map((row) => ({
+      source: row.source,
+      label: row.label,
+      kwh: day.by_source[row.source] ?? 0,
+      share: (day.by_source[row.source] ?? 0) / total,
+      color: colors[row.source] ?? "#95a5a6",
+    }))
+    .filter((segment) => segment.kwh > 0);
+}
+
+export interface EnergyStackColumn {
+  date: string;
+  kwh: number;
+  /** 期間内の最大値を 1 とした高さの比 */
+  ratio: number;
+  segments: EnergyStackSegment[];
+}
+
+/**
+ * 詳細パネルの積み上げ棒グラフ。
+ *
+ * **記録の無い日は棒そのものを作らない。** 0 kWh として描くと「その日は使っていない」に
+ * 見えるが、実際には収集が止まっていただけのことがある（プラグは停電明けに黙る）。
+ */
+export function buildEnergyStackColumns(
+  breakdown: EnergyBreakdown | null
+): EnergyStackColumn[] {
+  if (!breakdown) return [];
+  const colors = buildEnergySourceColors(breakdown.sources);
+  const max = Math.max(...breakdown.daily.map((day) => day.kwh), 0);
+
+  return breakdown.daily
+    .filter((day) => day.kwh > 0)
+    .map((day) => ({
+      date: day.date,
+      kwh: day.kwh,
+      ratio: max > 0 ? day.kwh / max : 0,
+      segments: buildEnergyStackSegments(day, breakdown.sources, colors),
+    }));
+}
+
+/** いまの消費電力。返さない取得元（エアコン）は「—」 */
+export function formatWatts(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${Math.round(value)} W`;
+}
+
+/** カードの行に出す棒の長さ。その日いちばん使った取得元を 1 とする */
+export function energySourceRatio(
+  sources: readonly EnergySourceRow[],
+  row: EnergySourceRow
+): number {
+  const max = Math.max(...sources.map((item) => item.today_kwh ?? 0), 0);
+  if (max <= 0) return 0;
+  return (row.today_kwh ?? 0) / max;
 }

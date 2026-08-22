@@ -19,15 +19,15 @@ import { EnvironmentChart } from "@/components/environment-chart";
 import { DailyStatsList } from "@/components/daily-stats-list";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
-import { EnergyCard } from "@/components/energy-card";
-import { EnergyDetailPanel } from "@/components/energy-detail-panel";
+import { PowerCard } from "@/components/power-card";
+import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { Button } from "@/components/ui/button";
 import {
   fetchDashboardData,
   fetchDevices,
-  fetchEnergySummary,
+  fetchEnergyBreakdown,
   fetchGarbageSchedule,
   fetchOutdoorLocation,
   fetchAirconUnits,
@@ -109,7 +109,7 @@ import {
   type DailyStat,
   type DeviceDataLoadStatus,
   type DeviceInfo,
-  type EnergySummary,
+  type EnergyBreakdown,
   type LatestData,
   type OutdoorLocation,
   type SensorDeviceStatus,
@@ -401,7 +401,7 @@ export function MyRoomDashboard() {
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
-  const [energySummary, setEnergySummary] = useState<EnergySummary | null>(null);
+  const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
   const [energyError, setEnergyError] = useState(false);
   const [energyPanelOpen, setEnergyPanelOpen] = useState(false);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
@@ -604,10 +604,10 @@ export function MyRoomDashboard() {
   }, [reloadUiSettings]);
 
   /** 単価を変えたあとの再集計。金額はサーバー側で単価を掛けているため取り直す */
-  const refreshEnergySummary = useCallback(async () => {
+  const refreshEnergyBreakdown = useCallback(async () => {
     try {
-      const summary = await fetchEnergySummary();
-      setEnergySummary(summary);
+      const breakdown = await fetchEnergyBreakdown();
+      setEnergyBreakdown(breakdown);
       setEnergyError(false);
     } catch {
       setEnergyError(true);
@@ -633,7 +633,7 @@ export function MyRoomDashboard() {
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
           fetchGarbageSchedule().catch(() => null),
-          fetchEnergySummary().catch(() => null),
+          fetchEnergyBreakdown().catch(() => null),
         ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
@@ -650,7 +650,7 @@ export function MyRoomDashboard() {
         // 取得できなかったときは直前の内容を残したまま、エラー表示だけを出す
         if (garbage) setGarbageSchedule(garbage);
         setGarbageError(garbage == null);
-        if (energy) setEnergySummary(energy);
+        if (energy) setEnergyBreakdown(energy);
         setEnergyError(energy == null);
         if (reloadHistory) {
           await resetAndLoad();
@@ -939,10 +939,10 @@ export function MyRoomDashboard() {
                   />
                 )}
                 {energyCardVisible && (
-                  <EnergyCard
-                    summary={energySummary}
-                    loading={!dashboardDataLoaded && energySummary == null}
-                    error={energyError && energySummary == null}
+                  <PowerCard
+                    breakdown={energyBreakdown}
+                    loading={!dashboardDataLoaded && energyBreakdown == null}
+                    error={energyError && energyBreakdown == null}
                     onOpenDetail={() => setEnergyPanelOpen(true)}
                   />
                 )}
@@ -1170,12 +1170,12 @@ export function MyRoomDashboard() {
       )}
 
       {energyPanelOpen && (
-        <EnergyDetailPanel
+        <PowerDetailPanel
           open={energyPanelOpen}
-          summary={energySummary}
+          breakdown={energyBreakdown}
           onClose={() => setEnergyPanelOpen(false)}
           onUnitPriceSaved={() => {
-            void refreshEnergySummary();
+            void refreshEnergyBreakdown();
           }}
         />
       )}
