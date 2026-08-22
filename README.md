@@ -226,6 +226,12 @@ PC では 1〜6 のうち、左カラムに センサー・推移・最近の記
   セクションごと `COMING_SOON_SECTION_KEY` で表示・非表示を切り替える。実装が済んだカードは
   ここから消し、センサーか暮らしの本物のカードに置き換える
 
+**表示・非表示のキーを増やしたら `buildAllDashboardTargetKeys` へ必ず登録すること**
+（`frontend/lib/visible-devices.ts`）。`normalizeHiddenDeviceKeys` はこの集合に無いキーを
+エラーにせず黙って捨てるため、登録し忘れると「オフにできるがリロードすると復活する」という
+分かりにくい症状になる。バックエンド（`backend/ui_settings.py`）は任意の文字列を素通しするので、
+API・DB側の変更は要らない。
+
 ### 単位と表示
 
 | 項目 | 単位 | 表示 |
