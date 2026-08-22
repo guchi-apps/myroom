@@ -10,6 +10,7 @@ import {
   type AirconUnitInfo,
   type DailyStat,
   type DeviceDataLoadStatus,
+  type CleanerSummary,
   type DeviceInfo,
   type EnergyBreakdown,
   type HistoryPoint,
@@ -329,6 +330,11 @@ export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
 export async function fetchEnergyBreakdown(days = 30): Promise<EnergyBreakdown> {
   const params = new URLSearchParams({ days: String(days) });
   return fetchJson<EnergyBreakdown>(`/api/energy/breakdown?${params.toString()}`);
+}
+
+/** お掃除ロボットカード用。最終起動・いまの状態・直近の稼働をまとめて取る */
+export async function fetchCleanerSummary(): Promise<CleanerSummary> {
+  return fetchJson<CleanerSummary>("/api/cleaner/summary");
 }
 
 export interface LatestBatchResult {
