@@ -1,0 +1,131 @@
+"""`collectors/aircon_energy_to_myroom.py` の変換まわり。
+
+AirCloud Home へは実際に繋がないので、応答をモックして「何を送るか」だけを見る。
+"""
+
+import datetime
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "collectors"))
+
+import aircon_energy_to_myroom as collector  # noqa: E402
+from aircloudhome_client import AirCloudHomeError  # noqa: E402
+
+
+def _summary(*racs):
+    return {"individualRacsData": list(racs)}
+
+
+def _rac(name, kwh, vendor_id="VT-1"):
+    return {"racName": name, "vendorThingId": vendor_id, "energyConsumed": kwh}
+
+
+class _FakeClient:
+    """日付ごとの応答を辞書で持つだけのスタブ。"""
+
+    def __init__(self, by_date):
+        self.by_date = by_date
+        self.calls = []
+
+    def get_energy_summary(self, family_id, date_from, date_to):
+        self.calls.append((family_id, date_from, date_to))
+        return self.by_date[date_from]
+
+
+def test_target_dates_returns_oldest_first():
+    today = datetime.date(2026, 8, 22)
+    assert collector.target_dates(today, 1) == [today]
+    assert collector.target_dates(today, 3) == [
+        datetime.date(2026, 8, 20),
+        datetime.date(2026, 8, 21),
+        today,
+    ]
+    with pytest.raises(ValueError):
+        collector.target_dates(today, 0)
+
+
+def test_sum_energy_adds_all_units_by_default():
+    summary = _summary(_rac("リビング", 1.5, "A"), _rac("寝室", 2.25, "B"))
+    assert collector.sum_energy(summary) == 3.75
+
+
+def test_sum_energy_filters_by_name_or_vendor_id():
+    summary = _summary(_rac("リビング", 1.5, "A"), _rac("寝室", 2.25, "B"))
+    assert collector.sum_energy(summary, "寝室") == 2.25
+    assert collector.sum_energy(summary, "a") == 1.5
+    # 一致しない指定は合計対象が無いので None（0.0 にすると使っていない日と区別できない）
+    assert collector.sum_energy(summary, "書斎") is None
+
+
+def test_sum_energy_ignores_missing_and_broken_values():
+    summary = _summary(_rac("リビング", None), _rac("寝室", "こわれた値", "B"))
+    assert collector.sum_energy(summary) is None
+
+
+def test_sum_energy_rejects_unexpected_response_shape():
+    # api-kuma で形が違った場合に黙って0を送らず、--dump-raw へ誘導する
+    with pytest.raises(AirCloudHomeError, match="dump-raw"):
+        collector.sum_energy({"result": []})
+
+
+def test_collect_records_queries_each_date_and_sums_families():
+    d20 = datetime.date(2026, 8, 20)
+    d21 = datetime.date(2026, 8, 21)
+    client = _FakeClient({d20: _summary(_rac("リビング", 1.0)), d21: _summary(_rac("リビング", 2.5))})
+
+    records = collector.collect_records(client, [7], [d20, d21], None, sleep=0)
+
+    assert records == [
+        {"date": "2026-08-20", "kwh": 1.0},
+        {"date": "2026-08-21", "kwh": 2.5},
+    ]
+    # 期間の合計しか返らないため、日付ごとに from=to で引いている
+    assert client.calls == [(7, d20, d20), (7, d21, d21)]
+
+
+def test_collect_records_skips_dates_without_value():
+    d20 = datetime.date(2026, 8, 20)
+    d21 = datetime.date(2026, 8, 21)
+    client = _FakeClient({d20: _summary(_rac("リビング", None)), d21: _summary(_rac("リビング", 2.0))})
+
+    records = collector.collect_records(client, [7], [d20, d21], None, sleep=0)
+
+    assert records == [{"date": "2026-08-21", "kwh": 2.0}]
+
+
+def test_build_payload_matches_api_energy_contract():
+    records = [{"date": "2026-08-22", "kwh": 2.4}]
+    assert collector.build_payload(records) == {
+        "source": "aircon",
+        "records": [{"date": "2026-08-22", "kwh": 2.4}],
+    }
+
+
+def test_load_env_file_reads_quotes_export_and_comments(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text(
+        "\n".join(
+            [
+                "# コメント",
+                "",
+                "AIRCON_EMAIL=a@example.com",
+                'AIRCON_PASSWORD="pa ss#word"',
+                "export ENERGY_DAYS=3",
+                "壊れた行",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert collector.load_env_file(str(env)) == {
+        "AIRCON_EMAIL": "a@example.com",
+        "AIRCON_PASSWORD": "pa ss#word",
+        "ENERGY_DAYS": "3",
+    }
+
+
+def test_load_env_file_returns_empty_when_missing(tmp_path):
+    assert collector.load_env_file(str(tmp_path / "none.env")) == {}

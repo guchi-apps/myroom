@@ -16,6 +16,8 @@ myroom/
 │   ├── devices.json           # デバイス表示名
 │   └── outdoor_location.json  # 屋外地点
 ├── scripts/           # 開発用起動スクリプト
+├── collectors/        # サブPCで動かす収集スクリプト（エアコンの日別使用量）
+├── deployment/        # 本番（VPS）と サブPC（subpc/）の配置用ファイル
 └── migrate_db.py      # DB スキーマ更新
 ```
 
@@ -353,8 +355,13 @@ python3 migrate_db.py   # aircon / daily_energy テーブルを作成
 
 取得元を問わない日別テーブル `daily_energy` に使用量（kWh）をためて、ダッシュボードの「暮らし」
 セクションに電気代の目安を出します。エアコンぶんは AirCloud Home の
-`rac/energy-consumptions/summary/v3` から取れるため、**運転状態とは別枠（1時間間隔）で** Raspberry Pi
-から送ります（状態の取得は5分間隔・レート制限があるため同じ間隔では回せません）。
+`rac/energy-consumptions/summary/v3` から取れるため、**運転状態とは別枠（1時間間隔）で**送ります
+（状態の取得は5分間隔・レート制限があるため同じ間隔では回せません）。
+
+**送り手は Raspberry Pi ではなくサブPC**です。この取得はクラウドAPI同士で完結し BLE を使わないため、
+センサーの近くに居る必要がありません。スクリプトは [`collectors/`](collectors/README.md)、
+定期実行の systemd ユニットは [`deployment/subpc/`](deployment/subpc/) にあります
+（運転状態と CO2 の収集は引き続き Raspberry Pi 側）。
 
 | 用途 | URL |
 |------|-----|
