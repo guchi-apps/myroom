@@ -15,6 +15,8 @@ data/garbage_notion_state.json
 __pycache__/
 *.pyc
 venv/
+# collectors/tapo_to_myroom.py 用の専用venv（python-kasa）
+collectors/.venv-tapo/
 .pytest_cache/
 .tools/
 .claude/

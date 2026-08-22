@@ -1,6 +1,6 @@
-"""Tapo 収集スクリプト（scripts/tapo_to_myroom.py）の、機器に繋がない部分のテスト。
+"""Tapo 収集スクリプト（collectors/tapo_to_myroom.py）の、機器に繋がない部分のテスト。
 
-`scripts/` はパッケージではないため、ファイルパスから直接読み込む。
+`collectors/` はパッケージではないため、ファイルパスから直接読み込む。
 `python-kasa` はサブPCの収集用 venv にしか入っていないので、**入っていなくても
 import できること自体**もここで担保する。
 """
@@ -11,7 +11,7 @@ import pathlib
 
 import pytest
 
-MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "tapo_to_myroom.py"
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "collectors" / "tapo_to_myroom.py"
 
 
 def _load_module():
@@ -93,14 +93,51 @@ class TestLoadConfig:
         with pytest.raises(tapo.ConfigError):
             tapo.load_config()
 
-    def test_api_base_trailing_slash_is_stripped(self, monkeypatch):
+    def test_api_url_is_overridable(self, monkeypatch):
         monkeypatch.setenv("TAPO_USERNAME", "user@example.com")
         monkeypatch.setenv("TAPO_PASSWORD", "x")
         monkeypatch.setenv("TAPO_HOSTS", "192.168.1.21=冷蔵庫")
-        monkeypatch.setenv("MYROOM_API_BASE", "https://myroom.example.com/")
+        monkeypatch.setenv("MYROOM_ENERGY_API_URL", "http://localhost:8000/api/energy")
         config = tapo.load_config()
-        assert config["api_base"] == "https://myroom.example.com"
+        assert config["api_url"] == "http://localhost:8000/api/energy"
         assert config["hosts"] == [("192.168.1.21", "冷蔵庫")]
+
+    def test_api_url_defaults_to_production(self, monkeypatch):
+        monkeypatch.setenv("TAPO_USERNAME", "user@example.com")
+        monkeypatch.setenv("TAPO_PASSWORD", "x")
+        monkeypatch.setenv("TAPO_HOSTS", "192.168.1.21")
+        monkeypatch.delenv("MYROOM_ENERGY_API_URL", raising=False)
+        assert tapo.load_config()["api_url"] == tapo.DEFAULT_API_URL
+
+
+class TestEnvFiles:
+    def test_reads_key_value_pairs_and_ignores_comments(self, tmp_path):
+        path = tmp_path / ".env"
+        path.write_text(
+            "# コメント\n"
+            "export TAPO_HOSTS=\"192.168.1.21=冷蔵庫\"\n"
+            "\n"
+            "TAPO_USERNAME = user@example.com \n"
+            "壊れた行\n",
+            encoding="utf-8",
+        )
+        assert tapo.load_env_file(str(path)) == {
+            "TAPO_HOSTS": "192.168.1.21=冷蔵庫",
+            "TAPO_USERNAME": "user@example.com",
+        }
+
+    def test_missing_file_is_not_an_error(self, tmp_path):
+        assert tapo.load_env_file(str(tmp_path / "nope.env")) == {}
+
+    def test_existing_environment_wins(self, tmp_path, monkeypatch):
+        """systemd や op run で渡した値を .env が上書きしないこと。"""
+        path = tmp_path / ".env"
+        path.write_text("TAPO_USERNAME=from-file\n", encoding="utf-8")
+        monkeypatch.setenv("TAPO_USERNAME", "from-env")
+        tapo.apply_env_files([str(path)])
+        import os
+
+        assert os.environ["TAPO_USERNAME"] == "from-env"
 
 
 class TestReadEnergy:

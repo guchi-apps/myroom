@@ -406,8 +406,9 @@ TP-Link Tapo スマートプラグ（P110 系）の消費電力を LAN 経由で
 エアコン（`source='aircon'`）と同じ `daily_energy` テーブルへ `source='tapo:<表示名>'` として
 入り、ダッシュボードの「消費電力」カードに1枚でまとまって出ます。
 
-**収集はサブPC で動かします。** Pi Zero W ではありません。`python-kasa` が Python 3.11 以上と
-`cryptography` を要求し、armv6 の Pi Zero W では導入が現実的でないためです。
+収集スクリプトは `collectors/tapo_to_myroom.py`。**ラズパイではなくサブPCで動かします。**
+`python-kasa` が Python 3.11 以上と `cryptography` を要求し、armv6 の Pi Zero W では導入が
+現実的でないためです。プラグと同じ LAN にいればどこからでも読めます。
 
 **前提**
 
@@ -418,19 +419,23 @@ TP-Link Tapo スマートプラグ（P110 系）の消費電力を LAN 経由で
 **セットアップ**
 
 ```bash
-# 収集専用の venv を作る（バックエンドの venv とは分ける）
-python3 -m venv .venv-collector
-.venv-collector/bin/pip install -r requirements-collector.txt
+cd ~/apps/myroom
+
+# このスクリプトだけ依存がある（python-kasa）。専用の venv を作る
+python3 -m venv collectors/.venv-tapo
+collectors/.venv-tapo/bin/pip install -r collectors/requirements-tapo.txt
+
+# collectors/tapo.env.example の内容を collectors/.env へ追記し、実値を入れる
+# （実値は 1Password の apps/MyRoom から取る。.env は gitignore 済み）
 
 # LAN 上のプラグを探して IP と名前を確認する
-op run --env-file=scripts/tapo.env.tpl -- .venv-collector/bin/python scripts/tapo_to_myroom.py --list-devices
+collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
 
 # 読み取りだけ試す（POST しない）
-op run --env-file=scripts/tapo.env.tpl -- .venv-collector/bin/python scripts/tapo_to_myroom.py --dry-run
+collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
 ```
 
-資格情報は `scripts/tapo.env.tpl` の `op://` 参照から注入します（実値は書きません）。
-`TAPO_HOSTS` は `192.168.1.21=冷蔵庫,192.168.1.22=テレビ` のように書き、`=表示名` を省くと
+`TAPO_HOSTS` は `192.168.2.21=冷蔵庫,192.168.2.22=テレビ` のように書き、`=表示名` を省くと
 プラグ自身の名前を使います。
 
 > **表示名はあとから変えないこと。**
@@ -442,8 +447,13 @@ op run --env-file=scripts/tapo.env.tpl -- .venv-collector/bin/python scripts/tap
 > 接続する前に必ずブロードキャストのディスカバリーを1回投げてこれを回避しています
 > （`wake_up_devices()`）。この順序を崩さないでください。
 
-**定期実行**は サブPC の systemd タイマー（5分間隔）で行います。ユニットの定義は
-[guchi-apps/subpc](https://github.com/guchi-apps/subpc) 側で管理します。
+**定期実行**は systemd user timer（5分ごと）で行います。
+
+```bash
+cd ~/apps/myroom
+cp collectors/systemd/myroom-tapo-energy.service collectors/systemd/myroom-tapo-energy.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now myroom-tapo-energy.timer
+```
 
 ### ゴミの日
 

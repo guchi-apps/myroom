@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Tapo スマートプラグ（P110系）の消費電力を読んで MyRoom へ送る。
+"""Tapo スマートプラグ（P110系）の消費電力を読んで MyRoom の `/api/energy` へ送る。
 
 **計測のみ。ON/OFF の制御は行わない。**
 
+サブPCの systemd user timer から5分ごとに実行する想定
+（`collectors/systemd/myroom-tapo-energy.timer`）。`/api/energy` は同じ
+`(date, source)` を上書きするため、当日ぶんを何度送っても二重計上しない。
+
 置き場所と実行環境
 ------------------
-サブPC（Ubuntu Server・常時起動・宅内LAN）から systemd タイマーで5分ごとに動かす。
-Pi Zero W ではなくサブPCにしたのは、`python-kasa` が Python 3.11 以上と
-`cryptography` を要求し、armv6 の Pi Zero W では導入が現実的でないため。
+ラズパイではなくサブPCで動かす。`python-kasa` が Python 3.11 以上と `cryptography` を
+要求し、armv6 の Pi Zero W では導入が現実的でないため。プラグと同じ LAN にいれば
+どこからでも読める（KLAP・TCP 80、ディスカバリーは UDP 20002）。
 
-依存は `requirements-collector.txt`（`python-kasa` のみ）。
-バックエンドの `requirements.txt` には入れない——VPS 側はプラグと同じ LAN にいないので
-使い道が無く、入れるとデプロイのたびに無関係なビルドが走る。
+**このディレクトリの他の収集スクリプトと違い、依存が要る。** `python-kasa` はサブPCの
+システムPythonに入っていないので、専用の venv を作って使う（`collectors/requirements-tapo.txt`）。
+
+    python3 -m venv collectors/.venv-tapo
+    collectors/.venv-tapo/bin/pip install -r collectors/requirements-tapo.txt
 
 なぜ毎回ディスカバリーを投げるのか
 ----------------------------------
@@ -20,16 +26,10 @@ Pi Zero W ではなくサブPCにしたのは、`python-kasa` が Python 3.11 �
 ホストを直接叩く前に必ずブロードキャストのディスカバリー（UDP/20002）を1回投げ、
 その後で各機器へ接続する。1回あたり数百ミリ秒で済むので、毎回投げてよい。
 
-使い方
-------
-    # 1Password から資格情報を注入して実行する（サブPC）
-    op run --env-file=scripts/tapo.env.tpl -- python3 scripts/tapo_to_myroom.py
-
-    # LAN 上のプラグを探して IP と名前を出す（初回の設定用）
-    op run --env-file=scripts/tapo.env.tpl -- python3 scripts/tapo_to_myroom.py --list-devices
-
-    # 読むだけで POST しない
-    op run --env-file=scripts/tapo.env.tpl -- python3 scripts/tapo_to_myroom.py --dry-run
+使い方:
+  collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py
+  collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --list-devices
+  collectors/.venv-tapo/bin/python collectors/tapo_to_myroom.py --dry-run -v
 """
 
 from __future__ import annotations
@@ -42,7 +42,8 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+import os.path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:
     from kasa import Credentials, Discover
@@ -59,6 +60,9 @@ LOGGER = logging.getLogger("tapo_to_myroom")
 #: `daily_energy.source` の前置き。エアコン（`aircon`）と同じテーブルに混ぜるための名前空間
 SOURCE_PREFIX = "tapo:"
 
+#: 送り先。`collectors/aircon_energy_to_myroom.py` と同じ環境変数名で上書きできる
+DEFAULT_API_URL = "https://myroom.gucchii.com/api/energy"
+
 #: JST。MyRoom の集計は JST の暦日で区切る（backend/main.py の `get_now_jst()` と同じ）
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -72,6 +76,44 @@ class ConfigError(Exception):
 
 
 # ---------------------------------------------------------------- 設定
+
+
+def load_env_file(path: str) -> Dict[str, str]:
+    """`KEY=value` 形式を読む簡易パーサ。
+
+    `python-dotenv` はサブPCのシステムPythonに入っていない。ここで要るのは数行の
+    `KEY=value` だけなので、依存を増やさず自前で読む。
+    （`collectors/aircon_energy_to_myroom.py` にも同じものがある。片方だけの都合で
+    直さないこと。）
+    """
+    values: Dict[str, str] = {}
+    if not os.path.isfile(path) or not os.access(path, os.R_OK):
+        return values
+
+    with open(path, encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            key, sep, value = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            if key:
+                values[key] = value
+    return values
+
+
+def apply_env_files(paths: Sequence[str]) -> None:
+    """先に挙げたファイルを優先して環境変数へ載せる（既存の環境変数は上書きしない）。"""
+    for path in paths:
+        for key, value in load_env_file(path).items():
+            os.environ.setdefault(key, value)
 
 
 def _require_env(name: str) -> str:
@@ -103,12 +145,11 @@ def parse_hosts(raw: str) -> List[Tuple[str, Optional[str]]]:
 
 
 def load_config() -> Dict[str, Any]:
-    api_base = os.getenv("MYROOM_API_BASE", "https://myroom.gucchii.com").strip()
     return {
         "username": _require_env("TAPO_USERNAME"),
         "password": _require_env("TAPO_PASSWORD"),
         "hosts": parse_hosts(_require_env("TAPO_HOSTS")),
-        "api_base": api_base.rstrip("/"),
+        "api_url": os.getenv("MYROOM_ENERGY_API_URL", DEFAULT_API_URL).strip(),
     }
 
 
@@ -226,11 +267,10 @@ def build_payload(
     }
 
 
-def post_payload(api_base: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    url = f"{api_base}/api/energy"
+def post_payload(api_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+        api_url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     with urllib.request.urlopen(request, timeout=POST_TIMEOUT) as response:
         return json.loads(response.read().decode("utf-8"))
@@ -289,7 +329,7 @@ async def run_collect(config: Dict[str, Any], dry_run: bool) -> int:
         return 0
 
     try:
-        result = post_payload(config["api_base"], payload)
+        result = post_payload(config["api_url"], payload)
     except urllib.error.HTTPError as exc:
         LOGGER.error("POST が %s で失敗しました: %s", exc.code, exc.read().decode("utf-8", "replace"))
         return 1
@@ -322,10 +362,19 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    apply_env_files(
+        [
+            os.path.join(script_dir, ".env"),
+            os.path.join(os.path.dirname(script_dir), ".env"),
+        ]
+    )
+
     if Discover is None:
         LOGGER.error(
             "python-kasa が見つかりません。"
-            "`pip install -r requirements-collector.txt` を実行してください。"
+            "`collectors/.venv-tapo/bin/pip install -r collectors/requirements-tapo.txt` "
+            "を実行し、その venv の python で動かしてください。"
         )
         return 2
 
@@ -333,7 +382,7 @@ def main() -> int:
         config = load_config()
     except ConfigError as exc:
         LOGGER.error("%s", exc)
-        LOGGER.error("scripts/tapo.env.tpl を参照してください。")
+        LOGGER.error("collectors/tapo.env.example を参照してください。")
         return 2
 
     if args.list_devices:
