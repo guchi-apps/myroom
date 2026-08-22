@@ -15,12 +15,18 @@ import aircon_energy_to_myroom as collector  # noqa: E402
 from aircloudhome_client import AirCloudHomeError  # noqa: E402
 
 
-def _summary(*racs):
-    return {"individualRacsData": list(racs)}
+def _summary(*racs, currency=None):
+    summary = {"individualRacsData": list(racs)}
+    if currency is not None:
+        summary["allRacsData"] = {"currency": currency}
+    return summary
 
 
-def _rac(name, kwh, vendor_id="VT-1"):
-    return {"racName": name, "vendorThingId": vendor_id, "energyConsumed": kwh}
+def _rac(name, kwh, vendor_id="VT-1", cost=None):
+    rac = {"racName": name, "vendorThingId": vendor_id, "energyConsumed": kwh}
+    if cost is not None:
+        rac["cost"] = cost
+    return rac
 
 
 class _FakeClient:
@@ -71,6 +77,29 @@ def test_sum_energy_rejects_unexpected_response_shape():
         collector.sum_energy({"result": []})
 
 
+def test_sum_cost_adds_all_units_by_default():
+    # 取得元が金額まで返すので、単価を掛けた目安ではなくこの実額を送る
+    summary = _summary(
+        _rac("リビング", 1.5, "A", cost=45.0),
+        _rac("寝室", 2.25, "B", cost=67.5),
+        currency="JPY",
+    )
+    assert collector.sum_cost(summary) == 112.5
+    assert collector.sum_cost(summary, "寝室") == 67.5
+
+
+def test_sum_cost_returns_none_when_cost_is_absent():
+    # 金額を返さない応答では None にして、MyRoom側の単価計算に任せる
+    summary = _summary(_rac("リビング", 1.5), currency="JPY")
+    assert collector.sum_cost(summary) is None
+
+
+def test_sum_cost_rejects_non_jpy_currency():
+    # MyRoomは円で持つので、円以外は送らない（そのまま入れると桁が狂う）
+    summary = _summary(_rac("リビング", 1.5, cost=45.0), currency="USD")
+    assert collector.sum_cost(summary) is None
+
+
 def test_collect_records_queries_each_date_and_sums_families():
     d20 = datetime.date(2026, 8, 20)
     d21 = datetime.date(2026, 8, 21)
@@ -94,6 +123,25 @@ def test_collect_records_skips_dates_without_value():
     records = collector.collect_records(client, [7], [d20, d21], None, sleep=0)
 
     assert records == [{"date": "2026-08-21", "kwh": 2.0}]
+
+
+def test_collect_records_carries_cost_yen_when_returned():
+    d20 = datetime.date(2026, 8, 20)
+    d21 = datetime.date(2026, 8, 21)
+    client = _FakeClient(
+        {
+            d20: _summary(_rac("リビング", 1.0, cost=30.5), currency="JPY"),
+            # 金額が返らない日は cost_yen を載せず、MyRoom側の単価計算に任せる
+            d21: _summary(_rac("リビング", 2.5), currency="JPY"),
+        }
+    )
+
+    records = collector.collect_records(client, [7], [d20, d21], None, sleep=0)
+
+    assert records == [
+        {"date": "2026-08-20", "kwh": 1.0, "cost_yen": 30.5},
+        {"date": "2026-08-21", "kwh": 2.5},
+    ]
 
 
 def test_build_payload_matches_api_energy_contract():

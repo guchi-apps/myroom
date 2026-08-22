@@ -203,7 +203,7 @@ export function PowerDetailPanel({
               </div>
               {error && <p className="text-xs text-destructive">{error}</p>}
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-                取得できるのは使用量（kWh）だけなので、金額はこの単価を掛けた目安です。取得元をまたいで同じ単価を使います。
+                エアコンの金額は白くまくんアプリが返す実額をそのまま使うため、この単価の影響を受けません。単価を掛けた目安になるのは、使用量（kWh）しか返さないスマートプラグなどです。
               </p>
             </div>
 
