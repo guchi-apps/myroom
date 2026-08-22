@@ -326,7 +326,11 @@ def generate_mock_cleaner_rows(now=None) -> list:
     本物と同じく**状態が変わった行だけ**を返す（`backend/cleaner.py` の前提）。
     """
     if now is None:
-        now = datetime.datetime.now()
+        # 呼び出し側（`backend/cleaner.py`）は必ず `get_now_jst()` を渡す。
+        # ここの既定値は単体で試すとき用で、本番VPSがUTCで動くぶんJSTへ寄せる。
+        now = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=9))
+        ).replace(tzinfo=None)
 
     # 直近の稼働は「3時間前」に固定する。実行した時刻によってカードが
     # 「何日も動いていない」ように見えるのを避けるため。
