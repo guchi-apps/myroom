@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="MyRoom">
+  <!--
+    MyRoom アプリアイコン（Issue #230 / 候補B「コンフォート・マスコット」）。
+    アプリ内の components/comfort-mascot.tsx と同じ形。色は快適域の緑で固定する。
+    transform は maskable 用のセーフゾーン（中央 80% の円）に収まるよう調整済み。
+    ここを編集したら scripts/generate-icons.mjs で PNG を書き出し直す。
+  -->
+  <rect width="512" height="512" fill="#e9f9f0"/>
+  <g transform="translate(34,29.8) scale(5.55)">
+    <ellipse cx="40" cy="48" rx="28" ry="26" fill="#2ecc71"/>
+    <ellipse cx="40" cy="44" rx="22" ry="20" fill="#48dd88"/>
+    <circle cx="30" cy="40" r="3.4" fill="#ffffff"/>
+    <circle cx="50" cy="40" r="3.4" fill="#ffffff"/>
+    <path d="M32 50 Q40 56.5 48 50" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="40" y1="17" x2="40" y2="26" stroke="#2ecc71" stroke-width="3" stroke-linecap="round"/>
+    <polygon points="40,7.5 45.4,19 34.6,19" fill="#f1c40f"/>
+  </g>
+</svg>

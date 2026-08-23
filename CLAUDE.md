@@ -53,6 +53,25 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 `scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
 検証目的でビルドしただけでも差分が出る。**リリース作業以外では、この差分をコミットに含めないこと。**
 
+## アプリアイコン
+
+**アイコンの正は `frontend/assets/app-icon-source.svg`。** ここを編集して
+`cd frontend && node scripts/generate-icons.mjs` を実行すると、`public/` の
+`icon-512.png` / `icon-192.png` / `apple-touch-icon.png` / `favicon.png` と
+`app/apple-icon.png` / `app/icon.png`、それに旧経路の入力である
+`assets/app-icon-source.png`（1024px）がまとめて書き出される。
+
+ラスタライズには **sharp** を使う。これは Next.js が連れてくる既存の依存なので、
+`npm ci` 済みなら追加インストールは要らない。
+
+**`frontend/scripts/generate-icons.py` は旧経路。** PNG を入力に取る Pillow 版だが、
+**Pillow は `requirements.txt` にも `requirements-dev.txt` にも入っていない。**
+素の worktree では動かないので、アイコンを作り直すときは `.mjs` のほうを使う。
+
+**`manifest.json` の `icon-512.png` には `purpose: "maskable"` が付いている。**
+Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・半径 204.8 の円に収める。
+はみ出すと端が欠ける。
+
 ## 本番DBのマイグレーション
 
 **テーブルや列を増やす変更（`migrate_db.py` へのDDL追加）は、本番の「アプリ用DBユーザー」では実行できない。**
