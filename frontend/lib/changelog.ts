@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.14.1",
+    date: "2026-08-23",
+    changes: [
+      "アプリアイコンのデザインを「コンフォート・マスコット」に変更しました。",
+    ],
+  },
+  {
     version: "3.14.0",
     date: "2026-08-23",
     changes: [
