@@ -92,6 +92,41 @@ class DailyEnergyRecord(Base):
     )
 
 
+class UtilityBillRecord(Base):
+    """月ごとの確定請求（電気・ガス）。はぴeみる電のお知らせメール由来。
+
+    `daily_energy` と分けているのは、粒度も出どころも違うため。あちらは機器ごとの
+    日別の実測で、こちらは**電力会社が確定させた1か月ぶんの請求**。1つのテーブルに
+    混ぜると「家全体の請求」と「エアコンの使用量」が足し合わされて二重計上になる。
+
+    `contract_key` はお客さま番号そのものではなく**ハッシュの先頭12文字**。引越しの月は
+    旧契約と新契約の2通が届くため、契約を区別できないと片方が上書きで消える
+    （2026年4月に実例）。番号そのものを持つ必要は無いので、区別だけできる形にする。
+    """
+
+    __tablename__ = "utility_bills"
+
+    #: 請求年月。月の1日で持つ（`2026-08-01` = 2026年8月分）
+    billing_month = Column(Date, primary_key=True)
+    #: `electricity` / `gas`
+    kind = Column(String(16), primary_key=True)
+    contract_key = Column(String(32), primary_key=True)
+
+    #: 契約種別（`なっトクでんき`）。メールに載っていなければ NULL
+    plan_name = Column(String(64), nullable=True)
+    amount_yen = Column(Integer, nullable=False)
+    #: 使用量。電気は kWh、ガスは m3
+    usage_value = Column(Float, nullable=True)
+    usage_unit = Column(String(8), nullable=True)
+    #: お知らせメールを受け取った日時（検針日そのものではない）
+    received_at = Column(DateTime, nullable=True)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+    )
+
+
 class DisplayEntity(Base):
     __tablename__ = "display_entities"
 
@@ -316,6 +351,66 @@ def generate_mock_energy_rows(days: int = 75) -> list:
                 }
             )
     rows.sort(key=lambda item: (item["date"], item["source"]))
+    return rows
+
+
+#: モックの請求（電気）。(請求月からさかのぼる月数, 金額, kWh)。
+#: 実データと同じ「夏と冬が高い」形にしておかないと、グラフの見た目が確かめられない。
+MOCK_ELECTRICITY_BILLS = (
+    15760, 12900, 9100, 7600, 8200, 11400,
+    13100, 13600, 11200, 8900, 9800, 12400,
+)
+MOCK_GAS_BILLS = (
+    2060, 2315, 2483, 2261, 2177, 5363,
+    5198, 5471, 5205, 4766, 2970, 2452,
+)
+
+
+def generate_mock_utility_bills(months: int = 12) -> list:
+    """モック用の請求。最新の請求月は「先月分」にする。
+
+    今月ぶんは検針が終わるまで確定しないため、実データでも最新は先月分になる。
+    モックだけ今月分があると、画面の「いつまでのデータか」の見え方がずれる。
+    """
+    today = _today_jst()
+    latest = (today.replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
+
+    rows = []
+    for index in range(min(months, len(MOCK_ELECTRICITY_BILLS))):
+        month = latest
+        for _ in range(index):
+            month = (month - datetime.timedelta(days=1)).replace(day=1)
+        electricity = MOCK_ELECTRICITY_BILLS[index]
+        gas = MOCK_GAS_BILLS[index]
+        rows.append(
+            {
+                "billing_month": month,
+                "kind": "electricity",
+                "contract_key": "mock",
+                "plan_name": "なっトクでんき",
+                "amount_yen": electricity,
+                # 単価は概ね29円/kWh。端数は月ごとに散らす
+                "usage_value": round(electricity / 29.2, 1),
+                "usage_unit": "kWh",
+                "received_at": None,
+                "updated_at": None,
+            }
+        )
+        rows.append(
+            {
+                "billing_month": month,
+                "kind": "gas",
+                "contract_key": "mock",
+                "plan_name": "なっトクプラン",
+                "amount_yen": gas,
+                "usage_value": round(gas / 190.0, 1),
+                "usage_unit": "m3",
+                "received_at": None,
+                "updated_at": None,
+            }
+        )
+
+    rows.sort(key=lambda item: (item["billing_month"], item["kind"]))
     return rows
 
 

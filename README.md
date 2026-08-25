@@ -668,6 +668,8 @@ Nature Remo に登録済みのリモコン操作を、ダッシュボードの�
   - 本番: GitHub の organization variable `SUPABASE_PROJECT_URL` / `SUPABASE_PUBLISHABLE_KEY` と、このリポジトリの secret `ALLOWED_GOOGLE_EMAILS` を、それぞれ `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`・`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `ALLOWED_GOOGLE_EMAILS` としてサーバー `.env` と GitHub Actions のフロントエンドビルドへ反映（`deploy.yml`。対応表は `.github/secrets-manifest.tsv`）
   - ローカル開発: 本番と誤って同じ Supabase プロジェクトを操作しないよう、1Password 共有アイテム `Supabase` の `dev-project-url` / `dev-publishable-key`（開発用の別 Supabase プロジェクト）を使用。**ローカルは自動同期されない**ため、バックエンドはローカルの `.env` に `SUPABASE_URL` を、フロントエンドは `frontend/.env.local` に `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を、それぞれ 1Password アプリから値をコピーして書き込む（詳細は「3. フロントエンド (Next.js)」参照）
   - Supabase ダッシュボードの Authentication → URL Configuration → Redirect URLs に、本番用プロジェクトには本番ドメインの、開発用プロジェクトにはローカル開発用の `/auth/callback` を、それぞれ**完全一致**で登録しておく必要がある（生の IP アドレスをホスト名にした URL は無条件で拒否される）
+  - ログイン成功時: Signaly へ通知（`LOGIN_WEBHOOK_URL`）。Supabase Auth ではコールバックが Supabase 側にあり、バックエンドに「ログインした瞬間」が通らないため、フロントエンドの `/auth/callback` が `POST /api/auth/login-notify` を1回だけ叩いて起点にしている（#240）。宛先は**全アプリ共通の1チャンネル**で、どのアプリのログインかはペイロードの `source`（`backend/login_notify.py` の `APP_NAME`）で見分ける（guchi-apps/signaly#192）。**未設定なら通知が飛ばないだけで、ログイン自体は通る**
+    - **`/auth/callback` に来たこと自体を「いまログインした」の合図にしている。** URL の `?code=` の有無では判定できない。Supabase クライアント（`frontend/lib/supabase-client.ts`）は `flowType` を指定しておらず、既定の **implicit フロー**で動くため、本物のログインではアクセストークンがハッシュ（`#access_token=...`）で返り、`code` は付かない
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
   - ゴミの日の前日夜: 同じ Signaly の宛先へ通知（`GARBAGE_WEBHOOK_URL` で分離可能）
   - GitHub Actions（CI / デプロイ）の成功・失敗: Signaly へ通知
@@ -678,6 +680,7 @@ Nature Remo に登録済みのリモコン操作を、ダッシュボードの�
 |----------|------|------|
 | GET/HEAD | `/api/health` | 死活監視 |
 | GET | `/api/auth/me` | ログイン確認（Supabaseセッションの許可判定、要認証） |
+| POST | `/api/auth/login-notify` | ログイン成功を Signaly へ通知（要認証。フロントの `/auth/callback` から呼ぶ） |
 | GET | `/api/latest?device=1` | 最新の屋内＋屋外データ（要認証） |
 | GET | `/api/history?range=day&device=1` | 履歴（`range`: day/week/month/year、または `start`/`end`、要認証） |
 | GET | `/api/daily-stats?device=1` | 日次統計（最近の記録、要認証） |
@@ -795,6 +798,12 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
 
+**アイテム `Notify`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
+
+| フィールド名 | 内容 |
+|-------------|------|
+| `login-webhook-url` | 全アプリ共通のログイン通知用 Signaly Webhook URL。organization secret `SIGNALY_LOGIN_WEBHOOK_URL` として GitHub へ入っており、`LOGIN_WEBHOOK_URL` としてサーバー `.env` に同期される（guchi-apps/signaly#192） |
+
 **アイテム `Server`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
 
 | フィールド名 | 内容 |
@@ -873,6 +882,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 | `SUPABASE_URL` | variable `SUPABASE_PROJECT_URL` | organization 共通 |
 | `ALLOWED_GOOGLE_EMAILS` | secret `ALLOWED_GOOGLE_EMAILS` | このリポジトリ |
 | `SENSOR_WEBHOOK_URL` | secret `SENSOR_WEBHOOK_URL` | このリポジトリ |
+| `LOGIN_WEBHOOK_URL` | secret `SIGNALY_LOGIN_WEBHOOK_URL` | organization 共通 |
 | `GARBAGE_NOTION_TOKEN` | secret `GARBAGE_NOTION_TOKEN` | このリポジトリ |
 | `GARBAGE_NOTION_DATA_SOURCE_ID` | secret `GARBAGE_NOTION_DATA_SOURCE_ID` | このリポジトリ |
 | `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
@@ -892,7 +902,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. GitHub の secret / variable から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期（対応は「1-4. 本番サーバーの `.env`」の表）
+4. GitHub の secret / variable から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `LOGIN_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期（対応は「1-4. 本番サーバーの `.env`」の表）
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成

@@ -135,10 +135,13 @@ def _serialize_rows(rows: Sequence[Any]) -> List[Dict[str, Any]]:
     ]
 
 
-def _fetch_all_rows(
+def fetch_all_rows(
     db: Session, start: datetime.date, end: datetime.date
 ) -> List[Dict[str, Any]]:
-    """取得元を絞らずに引く。消費電力カードはエアコンとプラグを1枚にまとめるため。"""
+    """取得元を絞らずに引く。消費電力カードはエアコンとプラグを1枚にまとめるため。
+
+    `backend/bills.py` も、請求額に対して実測がどのくらいを占めるかを出すのに使う。
+    """
     rows = (
         db.query(database.DailyEnergyRecord)
         .filter(
@@ -462,6 +465,6 @@ def get_breakdown(
             _previous_month_start(today),
             today - datetime.timedelta(days=history_days - 1),
         )
-        rows = _fetch_all_rows(db, start, today)
+        rows = fetch_all_rows(db, start, today)
 
     return build_breakdown(rows, today, unit_price, history_days=history_days)

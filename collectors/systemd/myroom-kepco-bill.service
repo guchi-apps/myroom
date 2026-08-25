@@ -1,0 +1,20 @@
+[Unit]
+# 関西電力「はぴeみる電」のお知らせメールから、月ごとの確定請求を取り MyRoom へ送る。
+# はぴeみる電に公開APIは無く、サイトはCapyのパズル認証と2段階認証で守られているため、
+# 画面を読みに行くのではなく届いているメールをIMAPで読む。
+Description=MyRoom: はぴeみる電のお知らせメールから電気・ガスの請求額を取得して送る
+Documentation=https://github.com/guchi-apps/myroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# 既定では25か月ぶんのメールを読むが、1通ずつの取得でも1分とかからない。
+TimeoutStartSec=5min
+
+# venv は使わない。リポジトリの venv/ はメインPCのpyenv向けでサブPCでは動かず、
+# このスクリプトの依存は requests だけ（IMAPとメールの解析は標準ライブラリ）。
+WorkingDirectory=%h/apps/myroom
+ExecStart=/usr/bin/python3 %h/apps/myroom/collectors/kepco_bill_to_myroom.py
+Nice=10

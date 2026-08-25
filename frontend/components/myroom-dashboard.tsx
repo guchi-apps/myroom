@@ -4,19 +4,23 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronRight, CloudSun, LineChart, RefreshCw, Settings } from "lucide-react";
+import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { METRIC_ICONS } from "@/components/current-readings";
 import { TrendPanel } from "@/components/trend-panel";
+import { BillCard } from "@/components/bill-card";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { PowerCard } from "@/components/power-card";
 import { RemoteCard } from "@/components/remote-card";
+import { BillDetailPanel } from "@/components/bill-detail-panel";
 import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { AirconControlPanel } from "@/components/aircon-control-panel";
 import { Button } from "@/components/ui/button";
 import {
+  fetchBillsSummary,
   fetchDashboardData,
   fetchDevices,
   fetchEnergyBreakdown,
@@ -72,6 +76,7 @@ import {
 } from "@/lib/visible-devices";
 import {
   COMING_SOON_CARDS,
+  BILL_CARD_KEY,
   COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
   ENERGY_CARD_KEY,
@@ -92,7 +97,7 @@ import {
 } from "@/lib/device-inheritance";
 import { AuthError } from "@/lib/auth";
 import { supabase } from "@/lib/supabase-client";
-import { useAuthState } from "@/lib/use-auth";
+import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
@@ -116,6 +121,7 @@ import {
   type LatestData,
   type OutdoorLocation,
   type SensorDeviceStatus,
+  type UtilityBillSummary,
 } from "@/lib/types";
 
 const DeviceDetailPanel = dynamic(
@@ -162,15 +168,6 @@ function metricsStateMessage(state: MetricsDisplayState): string {
     default:
       return "";
   }
-}
-
-function DeviceCardSkeleton() {
-  return (
-    <div className="device-card-compact text-left" aria-hidden="true">
-      <div className="mb-2.5 h-5 w-2/3 animate-pulse rounded bg-muted" />
-      <div className="h-7 w-3/5 animate-pulse rounded bg-muted" />
-    </div>
-  );
 }
 
 function buildLoadStatusFromLatest(
@@ -319,6 +316,9 @@ export function MyRoomDashboard() {
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
   const [energyError, setEnergyError] = useState(false);
   const [energyPanelOpen, setEnergyPanelOpen] = useState(false);
+  const [billSummary, setBillSummary] = useState<UtilityBillSummary | null>(null);
+  const [billError, setBillError] = useState(false);
+  const [billPanelOpen, setBillPanelOpen] = useState(false);
   const [staleAlertDismissed, setStaleAlertDismissed] = useState(false);
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
   const [displayOrder, setDisplayOrder] = useState<DisplayOrderItem[]>(() =>
@@ -384,6 +384,7 @@ export function MyRoomDashboard() {
   const remoteCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, REMOTE_CARD_KEY);
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
   const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
+  const billCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, BILL_CARD_KEY);
   const comingSoonVisible = isHiddenKeyVisible(hiddenDeviceKeys, COMING_SOON_SECTION_KEY);
 
   const {
@@ -552,12 +553,13 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage, energy, remote] = await Promise.all([
+        const [data, sensorsStatus, garbage, energy, remote, bills] = await Promise.all([
           fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
           fetchSensorsStatus().catch(() => null),
           fetchGarbageSchedule().catch(() => null),
           fetchEnergyBreakdown().catch(() => null),
           fetchRemoteButtons().catch(() => null),
+          fetchBillsSummary().catch(() => null),
         ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
@@ -578,6 +580,8 @@ export function MyRoomDashboard() {
         setEnergyError(energy == null);
         if (remote) setRemoteButtons(remote);
         setRemoteError(remote == null);
+        if (bills) setBillSummary(bills);
+        setBillError(bills == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -792,7 +796,12 @@ export function MyRoomDashboard() {
     return "データ未到達";
   };
 
-  if (!isAuthenticated) {
+  // ログイン状態が確定するまでと、確定後の初期読み込みが終わるまでは読み込み画面（#250）
+  const authGate = resolveAuthGate(isAuthenticated, layoutReady);
+  if (authGate === "loading") {
+    return <AppLoadingScreen />;
+  }
+  if (authGate === "login") {
     return <LoginScreen />;
   }
 
@@ -899,11 +908,7 @@ export function MyRoomDashboard() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {!layoutReady
-                ? buildDefaultDisplayOrder().map((_, index) => (
-                    <DeviceCardSkeleton key={`device-skeleton-${index}`} />
-                  ))
-                : visibleDisplayOrder.map((item) => {
+              {visibleDisplayOrder.map((item) => {
                 if (item.type === "device") {
                   const deviceId = item.deviceId;
                   const device = getDeviceInfo(deviceId);
@@ -1034,7 +1039,10 @@ export function MyRoomDashboard() {
             </div>
           </section>
 
-          {(remoteCardVisible || garbageCardVisible || energyCardVisible) && (
+          {(remoteCardVisible ||
+            garbageCardVisible ||
+            energyCardVisible ||
+            billCardVisible) && (
             <section>
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
@@ -1060,6 +1068,14 @@ export function MyRoomDashboard() {
                     loading={!dashboardDataLoaded && energyBreakdown == null}
                     error={energyError && energyBreakdown == null}
                     onOpenDetail={() => setEnergyPanelOpen(true)}
+                  />
+                )}
+                {billCardVisible && (
+                  <BillCard
+                    summary={billSummary}
+                    loading={!dashboardDataLoaded && billSummary == null}
+                    error={billError && billSummary == null}
+                    onOpenDetail={() => setBillPanelOpen(true)}
                   />
                 )}
               </div>
@@ -1177,6 +1193,14 @@ export function MyRoomDashboard() {
           onUnitPriceSaved={() => {
             void refreshEnergyBreakdown();
           }}
+        />
+      )}
+
+      {billPanelOpen && (
+        <BillDetailPanel
+          open={billPanelOpen}
+          summary={billSummary}
+          onClose={() => setBillPanelOpen(false)}
         />
       )}
 
