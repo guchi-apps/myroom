@@ -456,3 +456,75 @@ def test_internal_room_state_uses_camel_case_only(client, internal_api_key):
     data = response.json()
     keys = set(data) | set(data["sensors"][0]) | set(data["outdoor"]) | set(data["aircons"][0])
     assert not [key for key in keys if "_" in key]
+
+
+def test_bills_summary_requires_auth(client):
+    response = client.get("/api/bills/summary")
+    assert response.status_code == 401
+
+
+def test_bills_summary_returns_mock_months(authed_client):
+    response = authed_client.get("/api/bills/summary?months=12")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data["months"]) == 12
+    # 今月ぶんは検針が終わるまで確定しないので、最新は先月分になる
+    latest = data["latest"]
+    assert latest["billing_month"] == data["months"][-1]["billing_month"]
+    assert latest["electricity"]["usage_unit"] == "kWh"
+    assert latest["gas"]["usage_unit"] == "m3"
+    assert (
+        latest["total_yen"]
+        == latest["electricity"]["amount_yen"] + latest["gas"]["amount_yen"]
+    )
+
+
+def test_post_bills_is_accepted_in_mock_mode(client):
+    response = client.post(
+        "/api/bills",
+        json={
+            "records": [
+                {
+                    "billing_month": "2026-08",
+                    "kind": "electricity",
+                    "contract_key": "c1",
+                    "plan_name": "なっトクでんき",
+                    "amount_yen": 15760,
+                    "usage_value": 540,
+                    "usage_unit": "kWh",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["received"] == 1
+
+
+def test_post_bills_rejects_a_missing_amount(client):
+    response = client.post(
+        "/api/bills",
+        json={"records": [{"billing_month": "2026-08", "kind": "electricity"}]},
+    )
+    assert response.status_code == 422
+
+
+def test_post_bills_rejects_an_unknown_kind_even_in_mock_mode(client):
+    # モックの開発サーバー相手に試したときに書式の誤りを見逃さない
+    response = client.post(
+        "/api/bills",
+        json={"records": [{"billing_month": "2026-08", "kind": "water", "amount_yen": 100}]},
+    )
+    assert response.status_code == 422
+
+
+def test_post_bills_rejects_a_malformed_billing_month(client):
+    response = client.post(
+        "/api/bills",
+        json={
+            "records": [
+                {"billing_month": "2026年8月", "kind": "electricity", "amount_yen": 100}
+            ]
+        },
+    )
+    assert response.status_code == 422
