@@ -152,3 +152,28 @@
     @apply text-[11.5px] font-bold text-muted-foreground;
   }
 }
+
+/*
+ * 起動中の読み込み画面のプログレスバー（#250）。
+ * 残り時間が分からないので、進捗率ではなく一定速度で流れる帯にする。
+ */
+@keyframes app-progress-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(240%);
+  }
+}
+
+.app-progress-sweep {
+  animation: app-progress-sweep 1.5s cubic-bezier(0.65, 0.05, 0.36, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-progress-sweep {
+    animation: none;
+    width: 60%;
+    transform: none;
+  }
+}

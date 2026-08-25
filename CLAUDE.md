@@ -53,6 +53,21 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 `scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
 検証目的でビルドしただけでも差分が出る。**リリース作業以外では、この差分をコミットに含めないこと。**
 
+## 認証状態と起動時の画面
+
+**`output: "export"` の静的書き出しなので、クライアントコンポーネントの `useState` 初期値は
+そのまま `out/index.html` に焼き込まれる。** `lib/use-auth.ts` の `isAuthenticated` を
+`false`（未ログイン）で始めると、書き出されたHTMLにログイン画面が入り、`getSession()` が
+解決するまでの数百msだけログイン済みのユーザーにもログイン画面が見える（#250）。
+**判定中は `null` にして、`resolveAuthGate()` で読み込み画面に倒すこと。**
+
+確認は `npm run build` 後に `grep -o "Googleでログイン" out/index.html` が空になることで足りる
+（開発サーバーの `curl http://localhost:13250/` でも同じHTMLが返る）。
+
+起動直後の画面（読み込み中・ログイン）は `components/app-entry-screen.tsx` の
+`AppEntryScreen` にアイコン・アプリ名・説明文の配置を固定し、下段のブロックだけを差し替える。
+片方だけ余白を変えると、切り替わった瞬間に要素が飛び跳ねる。
+
 ## アプリアイコン
 
 **アイコンの正は `frontend/assets/app-icon-source.svg`。** ここを編集して

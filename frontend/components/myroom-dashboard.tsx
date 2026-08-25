@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronRight, CloudSun, LineChart, RefreshCw, Settings } from "lucide-react";
+import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { METRIC_ICONS } from "@/components/current-readings";
 import { TrendPanel } from "@/components/trend-panel";
@@ -92,7 +93,7 @@ import {
 } from "@/lib/device-inheritance";
 import { AuthError } from "@/lib/auth";
 import { supabase } from "@/lib/supabase-client";
-import { useAuthState } from "@/lib/use-auth";
+import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import {
   AIRCON_CHART_DEVICE_ID,
@@ -162,15 +163,6 @@ function metricsStateMessage(state: MetricsDisplayState): string {
     default:
       return "";
   }
-}
-
-function DeviceCardSkeleton() {
-  return (
-    <div className="device-card-compact text-left" aria-hidden="true">
-      <div className="mb-2.5 h-5 w-2/3 animate-pulse rounded bg-muted" />
-      <div className="h-7 w-3/5 animate-pulse rounded bg-muted" />
-    </div>
-  );
 }
 
 function buildLoadStatusFromLatest(
@@ -792,7 +784,12 @@ export function MyRoomDashboard() {
     return "データ未到達";
   };
 
-  if (!isAuthenticated) {
+  // ログイン状態が確定するまでと、確定後の初期読み込みが終わるまでは読み込み画面（#250）
+  const authGate = resolveAuthGate(isAuthenticated, layoutReady);
+  if (authGate === "loading") {
+    return <AppLoadingScreen />;
+  }
+  if (authGate === "login") {
     return <LoginScreen />;
   }
 
@@ -899,11 +896,7 @@ export function MyRoomDashboard() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {!layoutReady
-                ? buildDefaultDisplayOrder().map((_, index) => (
-                    <DeviceCardSkeleton key={`device-skeleton-${index}`} />
-                  ))
-                : visibleDisplayOrder.map((item) => {
+              {visibleDisplayOrder.map((item) => {
                 if (item.type === "device") {
                   const deviceId = item.deviceId;
                   const device = getDeviceInfo(deviceId);
