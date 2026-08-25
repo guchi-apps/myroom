@@ -167,51 +167,6 @@ export interface EnergyBreakdown {
   updated_at: string | null;
 }
 
-/** 1回ぶんの稼働。`cleaner_runs` の `cleaning` の行と、その次の行から組み立てる */
-export interface CleanerRun {
-  /** `2026-08-22T14:32:00` */
-  started_at: string;
-  /** まだ動いている最中なら null */
-  ended_at: string | null;
-  /** 動いている最中は「いま」までの経過時間 */
-  duration_minutes: number;
-  running: boolean;
-}
-
-/** いまの状態。`cleaner_runs` のいちばん新しい行そのもの */
-export interface CleanerCurrent {
-  /** `cleaning` / `charging` / `docked` など */
-  event: string;
-  /** 画面に出す名前（「掃除中」「充電中」…） */
-  label: string;
-  /** その状態になった時刻 */
-  since: string;
-  /** その状態で最後に観測した残量（%）。取れていなければ null */
-  battery: number | null;
-}
-
-/** お掃除ロボットカードが使う集計。`GET /api/cleaner/summary` の戻り */
-export interface CleanerSummary {
-  current: CleanerCurrent | null;
-  last_run: CleanerRun | null;
-  /** 新しい順。既定で4件 */
-  recent_runs: CleanerRun[];
-  this_month: {
-    count: number;
-    /** 終わった稼働だけの平均。1件も終わっていなければ null */
-    average_minutes: number | null;
-    start: string;
-  };
-  /** 最後の稼働と、その1つ前の稼働の間隔（日）。稼働が1回だけなら null */
-  days_since_previous_run: number | null;
-  /** 収集スクリプトから最後に受け取った時刻 */
-  last_seen_at: string | null;
-  /** 受信が途絶えている（最後の受信から30分以上） */
-  stale: boolean;
-  /** サーバーが決めた「いま」。端末の時計に寄せずに経過時間を出すため */
-  now: string;
-}
-
 export interface SensorDeviceStatus {
   device_id: number;
   name: string;
