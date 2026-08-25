@@ -12,7 +12,8 @@ SENSOR_WEBHOOK_URL = os.getenv("SENSOR_WEBHOOK_URL", "").strip()
 GARBAGE_WEBHOOK_URL = os.getenv("GARBAGE_WEBHOOK_URL", "").strip() or SENSOR_WEBHOOK_URL
 
 
-def _post(webhook_url: str, payload: dict) -> None:
+def post_notification(webhook_url: str, payload: dict) -> None:
+    """Signaly の Webhook へ1件送る。失敗しても呼び出し元の処理は止めない。"""
     try:
         response = requests.post(webhook_url, json=payload, timeout=5)
         response.raise_for_status()
@@ -37,7 +38,7 @@ def send_sensor_stale_notification(
     else:
         last_seen_value = "なし（一度も届いていません）"
 
-    _post(SENSOR_WEBHOOK_URL, {
+    post_notification(SENSOR_WEBHOOK_URL, {
         "title": "⚠️ センサーデータが届いていません",
         "color": "#ed4245",
         "fields": [
@@ -62,7 +63,7 @@ def send_sensor_recovered_notification(
     if last_seen:
         fields.append({"name": "最終受信", "value": last_seen, "inline": True})
 
-    _post(SENSOR_WEBHOOK_URL, {
+    post_notification(SENSOR_WEBHOOK_URL, {
         "title": "✅ センサーデータが復旧しました",
         "color": "#57f287",
         "fields": fields,
@@ -86,7 +87,7 @@ def send_garbage_notification(
     if notes:
         fields.append({"name": "備考", "value": "\n".join(notes), "inline": False})
 
-    _post(GARBAGE_WEBHOOK_URL, {
+    post_notification(GARBAGE_WEBHOOK_URL, {
         "title": "🗑️ 明日はゴミの日です",
         "color": "#3498db",
         "fields": fields,

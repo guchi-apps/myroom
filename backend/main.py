@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, energy, garbage, garbage_notify, garbage_notion, login_notify, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -640,6 +640,28 @@ def send_remote_button(button_id: str, _: dict = Depends(get_current_user)):
 @app.get("/api/auth/me")
 async def auth_me(user: dict = Depends(get_current_user)):
     return {"email": user.get("email")}
+
+
+@app.post("/api/auth/login-notify", status_code=204)
+def notify_login(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """ログイン成功を Signaly へ通知する（#240）。
+
+    Supabase Auth ではコールバックが Supabase 側にあるため、バックエンドには
+    「ログインした瞬間」が通らない。フロントエンドの `/auth/callback` が
+    OAuth のコード交換を終えた直後に1回だけ叩く。
+
+    **通知の送信はレスポンスを返した後に回す。** Webhook が詰まっている間
+    ログイン後の画面遷移を待たせないため。送信の成否は呼び出し元へ返さない。
+    """
+    payload = login_notify.build_login_notification(
+        str(user.get("email") or ""),
+        request,
+    )
+    background_tasks.add_task(login_notify.send_login_notification, payload)
 
 
 @app.get("/api/outdoor-location")
