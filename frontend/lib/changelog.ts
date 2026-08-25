@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.1.0",
+    date: "2026-08-25",
+    changes: [
+      "電気・ガスの毎月の請求額をダッシュボードで確認できるようになりました。届いたお知らせメールから自動で金額を取り込み、前月との比較や過去の推移をひと目で見られます。また、ログインした際に通知が届くようになりました。あわせて、アプリ起動直後に一瞬ログイン画面がちらつく不具合を修正しました。",
+    ],
+  },
+  {
     version: "4.0.0",
     date: "2026-08-25",
     changes: [
