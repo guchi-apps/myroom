@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "3.14.3",
+    date: "2026-08-25",
+    changes: [
+      "今回のリリースはアプリの機能追加や変更はなく、デプロイ・通知まわりの内部的な安定性向上のみです。利用者が体感する画面や操作の変化はありません。",
+    ],
+  },
+  {
     version: "3.14.2",
     date: "2026-08-24",
     changes: [
