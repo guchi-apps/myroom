@@ -309,6 +309,29 @@ def migrate():
                 """))
                 print("Table 'cleaner_runs' created.")
 
+            # 月ごとの確定請求（#249）。はぴeみる電のお知らせメール由来。
+            # 引越しの月は旧契約と新契約の2通が届くため、contract_key まで主キーに含める。
+            print("Checking if 'utility_bills' table exists...")
+            if _table_exists(conn, "utility_bills"):
+                print("Table 'utility_bills' already exists.")
+            else:
+                print("Creating table 'utility_bills'...")
+                conn.execute(text("""
+                    CREATE TABLE utility_bills (
+                        billing_month DATE NOT NULL,
+                        kind VARCHAR(16) NOT NULL,
+                        contract_key VARCHAR(32) NOT NULL,
+                        plan_name VARCHAR(64) NULL,
+                        amount_yen INT NOT NULL,
+                        usage_value FLOAT NULL,
+                        usage_unit VARCHAR(8) NULL,
+                        received_at DATETIME NULL,
+                        updated_at DATETIME NULL,
+                        PRIMARY KEY (billing_month, kind, contract_key)
+                    )
+                """))
+                print("Table 'utility_bills' created.")
+
         print("Migration completed.")
 
     except Exception as e:

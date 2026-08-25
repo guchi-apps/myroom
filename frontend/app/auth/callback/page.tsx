@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { authHeaders } from "@/lib/auth";
 import { notifyLogin } from "@/lib/api";
 import { supabase } from "@/lib/supabase-client";
@@ -45,5 +46,6 @@ export default function AuthCallbackPage() {
     })();
   }, [router]);
 
-  return null;
+  // 何も描かないと真っ白な画面になる。ホームと同じ読み込み画面でつなぐ（#250）
+  return <AppLoadingScreen label="ログインしています" />;
 }

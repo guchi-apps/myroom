@@ -23,6 +23,7 @@ import {
   type TimeRange,
   type ChartViewRange,
   type UiSettings,
+  type UtilityBillSummary,
 } from "@/lib/types";
 import type { GarbageSchedule } from "@/lib/garbage";
 import type { RemoteButtons, RemoteSendResult } from "@/lib/remote";
@@ -422,6 +423,12 @@ export async function sendRemoteButton(buttonId: string): Promise<RemoteSendResu
 export async function fetchEnergyBreakdown(days = 30): Promise<EnergyBreakdown> {
   const params = new URLSearchParams({ days: String(days) });
   return fetchJson<EnergyBreakdown>(`/api/energy/breakdown?${params.toString()}`);
+}
+
+/** 電気・ガス料金カード用。はぴeみる電のメール由来の月次請求を取る */
+export async function fetchBillsSummary(months = 12): Promise<UtilityBillSummary> {
+  const params = new URLSearchParams({ months: String(months) });
+  return fetchJson<UtilityBillSummary>(`/api/bills/summary?${params.toString()}`);
 }
 
 export interface LatestBatchResult {

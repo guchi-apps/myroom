@@ -45,15 +45,20 @@ export interface LifeCardDefinition {
 export const GARBAGE_CARD_KEY = "garbage";
 export const ENERGY_CARD_KEY = "energy";
 export const REMOTE_CARD_KEY = "remote";
+export const BILL_CARD_KEY = "bill";
 
 /**
  * 「電気の操作」だけは押すためのカードで、他は読むためのカード。
  * 目的があって開いたときに最初に触れるよう先頭へ置く。
+ *
+ * 電気・ガス料金は消費電力のすぐ後ろに置く。片方が「計測できている分」で
+ * もう片方が「実際の請求」なので、離すと突き合わせられない。
  */
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
   { key: REMOTE_CARD_KEY, label: "電気の操作" },
   { key: GARBAGE_CARD_KEY, label: "ゴミの日" },
   { key: ENERGY_CARD_KEY, label: "消費電力" },
+  { key: BILL_CARD_KEY, label: "電気・ガス料金" },
 ];
 
 export function getLifeCardLabel(key: string): string {

@@ -3,14 +3,19 @@
 MyRoom へデータを送る収集処理のうち、**外部のクラウドAPIを叩くだけで完結するもの**を置く。
 
 ```
-AirCloud Home (白くまくんアプリ)
-        │ HTTPS
-        ▼
-     サブPC（systemd user timer・1時間ごと）
-        │ HTTPS
-        ▼
-  myroom.gucchii.com/api/energy  →  MySQL (daily_energy)
+AirCloud Home (白くまくんアプリ)        はぴeみる電のお知らせメール (Gmail)
+        │ HTTPS                                │ IMAP
+        ▼                                      ▼
+     サブPC（systemd user timer・1時間ごと / 1日1回）
+        │ HTTPS                                │ HTTPS
+        ▼                                      ▼
+  myroom.gucchii.com/api/energy          .../api/bills
+        →  MySQL (daily_energy)                →  MySQL (utility_bills)
 ```
+
+**日別の実測（`daily_energy`）と月次の請求（`utility_bills`）は別物。** 前者は機器ごとに
+計測できている分、後者は電力会社が確定させた家全体の請求で、足し合わせると二重計上になる。
+画面では並べて「請求のうちどこまでを機器ごとに追えているか」を出している。
 
 ## ラズパイとサブPCの分担
 
@@ -161,6 +166,60 @@ python-kasa の `Device` は aiohttp のセッションを握る。`disconnect()
 `Unclosed client session` を **ERROR で** 吐き、送信自体は成功しているのに
 `journalctl --user -u myroom-tapo-energy.service` では失敗に見える。`close_device()` を通すこと。
 
+## kepco_bill_to_myroom.py
+
+関西電力「はぴeみる電」が検針のたびに送ってくる**お知らせメール**を Gmail から IMAP で読み、
+月ごとの確定請求（電気・ガス）を `POST /api/bills` へ送る。設定は `kepco.env.example` を
+`collectors/.env` へ追記する。
+
+**依存は `requests` だけ。** IMAP もメールの解析も Python 標準ライブラリ（`imaplib` / `email`）
+で足りる。
+
+```bash
+cd ~/apps/myroom
+
+# 取得のみ（POSTしない）。何通が請求として読めたかが出る
+python3 collectors/kepco_bill_to_myroom.py --dry-run --debug
+
+# 直近3か月だけ見る
+python3 collectors/kepco_bill_to_myroom.py --months 3 --dry-run
+
+# 該当したメールの本文をそのまま出す（書式が変わったときの調査用）
+python3 collectors/kepco_bill_to_myroom.py --dump-raw
+
+# 本番へ送る
+python3 collectors/kepco_bill_to_myroom.py
+```
+
+### なぜサイトを読みに行かないのか
+
+**はぴeみる電に公開APIは無い。** サイトはCapyのパズル認証で守られており、さらに
+**2026年3月10日から「初めての環境からのログインは2段階認証が必須」**になった
+（マイページで「希望しない」に設定していても、新しい端末・ブラウザ・通信環境からは
+認証番号の入力を求められる）。自動ログインで画面を読む方式は、いつ止まってもおかしくない。
+
+`curl` で `kepco.jp` を叩くと **403** が返る点も同じ話で、素のHTTPクライアントは弾かれる。
+
+いっぽうお知らせメールは検針のたびに決まった書式で届き、請求金額・使用量・契約種別が
+そのまま本文に載っている。**サイトのCSVも月次の検針結果しか持たない**ので、メールから
+取れる情報はCSVと同じ粒度になる。
+
+### 本文の書式で気をつける点
+
+- **見出しは行頭に固定して探す。** 電気のメールには前置きとして
+  「メール本文に、【契約種別】の記載がある場合はご請求金額のお知らせ、…」という説明文があり、
+  固定しないと契約種別としてこの一文を拾う
+- **電気とガスで見出しの文言が違う。** 電気は太陽光発電の振込通知にも同じ件名を使うため
+  `【ご請求（振込）年月】`・`【ご請求（予定）金額】` のように括弧が挟まる。ガスは
+  `【ご請求年月】`・`【ご請求金額】`
+- **`【契約種別】` が無い電気のメールは請求ではない。** 太陽光発電等を契約している場合の
+  「振込金額のお知らせ」で、請求として数えると売電が支出に混ざる（本文にその旨が書かれている）
+- **種別は使用量の単位で決める**（`kWh` なら電気、`立方メートル` ならガス）。件名の文言より確実
+- **引越しの月は旧契約と新契約の2通が届く**（2026年4月に実例）。`utility_bills` は
+  お客さま番号のハッシュ（先頭12文字）まで主キーに含めるので、片方が上書きで消えない。
+  画面では月ごとに合算して出す
+- 本文の文字コードは **ISO-2022-JP**
+
 ## 定期実行
 
 ユニットは [`systemd/`](systemd/) にある。`aide` と同じく
@@ -177,3 +236,4 @@ journalctl --user -u myroom-aircon-energy.service -n 50
 ```
 
 Tapo ぶん（5分ごと）も同じ手順で、ユニット名を `myroom-tapo-energy` に読み替える。
+はぴeみる電ぶん（1日1回）は `myroom-kepco-bill` に読み替える。
