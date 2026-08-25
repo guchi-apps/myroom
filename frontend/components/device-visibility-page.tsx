@@ -11,6 +11,7 @@ import {
   Thermometer,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { DeviceEditSheet } from "@/components/device-edit-sheet";
 import {
@@ -91,7 +92,7 @@ import {
 
 export const STALE_ALERT_EXCLUDED_CHANGED_EVENT = "stalealertexcluded_changed";
 import { AuthError } from "@/lib/auth";
-import { useAuthState } from "@/lib/use-auth";
+import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 
 type EditableTarget =
   | { kind: "device"; item: Extract<DisplayOrderItem, { type: "device" }> }
@@ -834,7 +835,12 @@ export function DeviceVisibilityPage() {
     );
   };
 
-  if (!isAuthenticated) {
+  // ログイン状態が確定するまではログイン画面を出さない（#250）
+  const authGate = resolveAuthGate(isAuthenticated);
+  if (authGate === "loading") {
+    return <AppLoadingScreen />;
+  }
+  if (authGate === "login") {
     return <LoginScreen />;
   }
 
