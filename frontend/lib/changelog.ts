@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.0.0",
+    date: "2026-08-25",
+    changes: [
+      "お掃除ロボット（eufy連携）カードを廃止しました。ダッシュボードから該当カードが表示されなくなります。",
+    ],
+  },
+  {
     version: "3.14.3",
     date: "2026-08-25",
     changes: [
