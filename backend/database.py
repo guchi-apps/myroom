@@ -92,25 +92,6 @@ class DailyEnergyRecord(Base):
     )
 
 
-class CleanerRunRecord(Base):
-    """お掃除ロボットの稼働履歴。**状態が変わった瞬間だけ1行**入る。
-
-    `datetime` はその状態になった時刻、`updated_at` は同じ状態を最後に確認した時刻。
-    収集は数分おきに送ってくるが、状態が変わっていなければ行は増やさず `updated_at`
-    （と `battery`）だけを進める。そのため `battery` は「その状態で最後に観測した残量」で、
-    充電中の行は充電が進むにつれて上がっていく。
-    """
-
-    __tablename__ = "cleaner_runs"
-
-    datetime = Column(DateTime, primary_key=True)
-
-    #: `cleaning` / `charging` / `docked` など（`backend/cleaner.py` の EVENT_LABELS）
-    event = Column(String(20), nullable=False)
-    battery = Column(Integer, nullable=True)
-    updated_at = Column(DateTime, nullable=True)
-
-
 class DisplayEntity(Base):
     __tablename__ = "display_entities"
 
@@ -335,77 +316,6 @@ def generate_mock_energy_rows(days: int = 75) -> list:
                 }
             )
     rows.sort(key=lambda item: (item["date"], item["source"]))
-    return rows
-
-
-#: モックの稼働開始時刻。午前と午後を交互にして、カードの「最終起動」が
-#: いつも同じ時刻に見えないようにする
-MOCK_CLEANER_START_HOURS = (9, 14)
-
-#: モックで作る履歴の長さ（日）。当月の回数と平均を出せればよい
-MOCK_CLEANER_DAYS = 45
-
-
-def generate_mock_cleaner_rows(now=None) -> list:
-    """モック用のお掃除ロボットの稼働履歴。
-
-    2〜3日おきに1回動き、終わると充電して待機に戻る、という実機に近い並びを作る。
-    本物と同じく**状態が変わった行だけ**を返す（`backend/cleaner.py` の前提）。
-    """
-    if now is None:
-        # 呼び出し側（`backend/cleaner.py`）は必ず `get_now_jst()` を渡す。
-        # ここの既定値は単体で試すとき用で、本番VPSがUTCで動くぶんJSTへ寄せる。
-        now = datetime.datetime.now(
-            datetime.timezone(datetime.timedelta(hours=9))
-        ).replace(tzinfo=None)
-
-    # 直近の稼働は「3時間前」に固定する。実行した時刻によってカードが
-    # 「何日も動いていない」ように見えるのを避けるため。
-    starts = [(now - datetime.timedelta(hours=3)).replace(second=0, microsecond=0)]
-    while (now - starts[-1]).days < MOCK_CLEANER_DAYS:
-        index = len(starts)
-        starts.append(
-            (starts[-1] - datetime.timedelta(days=2 if index % 2 else 3)).replace(
-                hour=MOCK_CLEANER_START_HOURS[index % 2],
-                minute=(5 + index * 7) % 55,
-            )
-        )
-
-    rows = []
-    for index, start in enumerate(reversed(starts)):
-        duration = 26 + (index * 5) % 20  # 26〜45分
-        end = start + datetime.timedelta(minutes=duration)
-        docked = end + datetime.timedelta(minutes=110)
-
-        # battery は「その状態で最後に観測した残量」。掃除中は減り、充電中は増える
-        rows.append(
-            {
-                "datetime": start,
-                "event": "cleaning",
-                "battery": max(20, 92 - duration),
-                "updated_at": end,
-            }
-        )
-        rows.append(
-            {
-                "datetime": end,
-                "event": "charging",
-                "battery": 99,
-                "updated_at": docked,
-            }
-        )
-        rows.append(
-            {
-                "datetime": docked,
-                "event": "docked",
-                "battery": 100,
-                "updated_at": docked,
-            }
-        )
-
-    if rows:
-        # 最後の行だけは「いま」まで確認できていることにする（受信途絶の警告を出さない）
-        rows[-1]["updated_at"] = now
     return rows
 
 
