@@ -5,7 +5,7 @@ import { LoginScreen } from "@/components/login-screen";
 describe("LoginScreen", () => {
   it("アプリアイコンとGoogleログインのボタンを出す", () => {
     const html = renderToStaticMarkup(<LoginScreen />);
-    expect(html).toContain('aria-label="MyRoom"');
+    expect(html).toContain('alt="MyRoom"');
     expect(html).toContain("Googleでログイン");
   });
 

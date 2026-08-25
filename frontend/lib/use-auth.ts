@@ -28,9 +28,16 @@ export function useAuthState() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setIsAuthenticated(data.session != null);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setIsAuthenticated(data.session != null);
+      })
+      // 判定できないまま`null`で固まると、プログレスバーが回り続ける画面から抜けられない。
+      // オフライン起動でも踏むため、失敗したら未ログインに倒してログイン画面を出す（#250）
+      .catch(() => {
+        setIsAuthenticated(false);
+      });
 
     const {
       data: { subscription },

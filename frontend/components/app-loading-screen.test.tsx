@@ -5,7 +5,7 @@ import { AppLoadingScreen } from "@/components/app-loading-screen";
 describe("AppLoadingScreen", () => {
   it("アプリアイコンとプログレスバーを出す", () => {
     const html = renderToStaticMarkup(<AppLoadingScreen />);
-    expect(html).toContain('aria-label="MyRoom"');
+    expect(html).toContain('alt="MyRoom"');
     expect(html).toContain('role="progressbar"');
     expect(html).toContain("読み込み中");
   });
