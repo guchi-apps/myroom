@@ -167,6 +167,60 @@ export interface EnergyBreakdown {
   updated_at: string | null;
 }
 
+/**
+ * 請求1か月ぶんの、電気またはガスの合計。
+ * 引越しの月は契約が2つあるため、金額も使用量も足したものが入る（`contracts` が2になる）。
+ */
+export interface UtilityBillKindTotal {
+  amount_yen: number;
+  /** 電気は kWh、ガスは m3 */
+  usage_value: number | null;
+  usage_unit: string | null;
+  /** `なっトクでんき`。契約が複数あれば ` / ` でつなぐ */
+  plan_name: string | null;
+  contracts: number;
+}
+
+/** 請求1か月ぶん。`GET /api/bills/summary` の `months` の1件 */
+export interface UtilityBillMonth {
+  /** `2026-08`。請求年月なので日にちは持たない */
+  billing_month: string;
+  electricity: UtilityBillKindTotal | null;
+  gas: UtilityBillKindTotal | null;
+  total_yen: number;
+}
+
+/** 最新の請求月と1つ前の比較。ガスの有無に振り回されないよう電気だけで比べる */
+export interface UtilityBillComparison {
+  cheaper: boolean;
+  percent: number;
+  base_amount_yen: number;
+  base_billing_month: string;
+}
+
+/** 請求月の暦月ぶんの実測（エアコン＋スマートプラグ）。検針期間とはずれるので目安 */
+export interface UtilityBillMeasured {
+  kwh: number;
+  cost_yen: number;
+  /** 電気の請求額に対する割合（%）。請求が0円なら null */
+  share_percent: number | null;
+  start: string;
+  end: string;
+}
+
+/** 電気・ガス料金カードが使う集計。`GET /api/bills/summary` の戻り */
+export interface UtilityBillSummary {
+  latest: UtilityBillMonth | null;
+  previous: UtilityBillMonth | null;
+  comparison: UtilityBillComparison | null;
+  /** 記録のある月だけ。古い順。届いていない月は入らない */
+  months: UtilityBillMonth[];
+  total_yen: number;
+  measured: UtilityBillMeasured | null;
+  unit_price: number;
+  updated_at: string | null;
+}
+
 export interface SensorDeviceStatus {
   device_id: number;
   name: string;

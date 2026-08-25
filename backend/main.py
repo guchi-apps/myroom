@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, energy, garbage, garbage_notify, garbage_notion, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -210,6 +210,39 @@ class DailyEnergyPayload(BaseModel):
 
     source: Optional[str] = None
     records: List[DailyEnergyItem]
+
+
+class UtilityBillItem(BaseModel):
+    """月ごとの確定請求1件。はぴeみる電のお知らせメール1通ぶん。"""
+
+    #: `2026-08` か `2026-08-01`
+    billing_month: str
+    #: `electricity` / `gas`
+    kind: str
+    #: お客さま番号のハッシュ先頭12文字。引越しの月に契約を区別するためだけに使う
+    contract_key: Optional[str] = None
+    plan_name: Optional[str] = None
+    amount_yen: int
+    usage_value: Optional[float] = None
+    #: 電気は `kWh`、ガスは `m3`
+    usage_unit: Optional[str] = None
+    received_at: Optional[datetime.datetime] = None
+
+    @model_validator(mode="after")
+    def check_month_and_kind(self):
+        """請求月と種別はここで弾く。
+
+        保存の直前（`bills.upsert_records`）でも同じ検証をしているが、`DB_MOCK` では
+        そこまで行かずに返す。モックの開発サーバー相手に収集スクリプトを試したときに
+        書式の誤りが素通りすると、本番へ向けた瞬間に落ちる。
+        """
+        bills.parse_billing_month(self.billing_month)
+        bills.normalize_kind(self.kind)
+        return self
+
+
+class UtilityBillPayload(BaseModel):
+    records: List[UtilityBillItem]
 
 class AirconData(BaseModel):
     datetime: str
@@ -1114,6 +1147,62 @@ def get_energy_breakdown(
     家全体の今日・今月・先月同日までの合計と、日別の内訳を1度に返す。
     """
     return energy.get_breakdown(db, get_now_jst().date(), history_days=days)
+
+
+@app.post("/api/bills")
+async def create_utility_bills(
+    payload: UtilityBillPayload,
+    db: Session = Depends(database.get_db),
+):
+    """月ごとの確定請求を受け取る（サブPCの `kepco_bill_to_myroom.py` から）。
+
+    同じ (請求月, 種別, 契約) は上書きする。収集側は受信箱に残っているメールを
+    毎回そのまま送ってよく、送り直しても件数は増えない。
+
+    **認証は付けていない。** 収集側からのPOST（`/api/sensor`・`/api/aircon`・`/api/energy`）は
+    どれも無認証で、ここだけ固定トークンを要求すると収集スクリプトの作りが揃わなくなる。
+    `internal_auth` は用途を「読み取り専用の内部API」と定めているので、書き込みへ広げるなら
+    その方針ごと決め直す話になる。付けるかどうかは収集経路全体でまとめて判断する（#249）。
+    """
+    if database.DB_MOCK:
+        return {"status": "mock_ok", "received": len(payload.records)}
+
+    try:
+        records = [
+            {
+                "billing_month": item.billing_month,
+                "kind": item.kind,
+                "contract_key": item.contract_key,
+                "plan_name": item.plan_name,
+                "amount_yen": item.amount_yen,
+                "usage_value": item.usage_value,
+                "usage_unit": item.usage_unit,
+                "received_at": item.received_at,
+            }
+            for item in payload.records
+        ]
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    try:
+        written = bills.upsert_records(db, records)
+        return {"status": "ok", "written": written}
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/bills/summary")
+def get_bills_summary(
+    months: int = Query(default=bills.DEFAULT_HISTORY_MONTHS, ge=1, le=25),
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """電気・ガス料金カード用。最新の請求月・1つ前との比較・月別の推移をまとめて返す。"""
+    return bills.get_summary(db, get_now_jst().date(), months=months)
 
 
 @app.get("/api/aircon/latest")

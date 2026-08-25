@@ -1,0 +1,14 @@
+[Unit]
+Description=MyRoom: はぴeみる電の請求額の取得（1日1回）
+
+[Timer]
+# 請求は月に1回しか増えない。検針日から原則5営業日以内にメールが届くので、
+# 1日1回見れば十分（1時間ごとに回しても同じ値を読み直すだけになる）。
+OnCalendar=*-*-* 07:30:00
+# 停止中に逃した実行を起動直後に走らせる。同じ請求月は上書きなので取り直して問題ない。
+Persistent=true
+# 他のタイマーと一斉に外へ出さない。
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target
