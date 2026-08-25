@@ -1158,6 +1158,11 @@ async def create_utility_bills(
 
     同じ (請求月, 種別, 契約) は上書きする。収集側は受信箱に残っているメールを
     毎回そのまま送ってよく、送り直しても件数は増えない。
+
+    **認証は付けていない。** 収集側からのPOST（`/api/sensor`・`/api/aircon`・`/api/energy`）は
+    どれも無認証で、ここだけ固定トークンを要求すると収集スクリプトの作りが揃わなくなる。
+    `internal_auth` は用途を「読み取り専用の内部API」と定めているので、書き込みへ広げるなら
+    その方針ごと決め直す話になる。付けるかどうかは収集経路全体でまとめて判断する（#249）。
     """
     if database.DB_MOCK:
         return {"status": "mock_ok", "received": len(payload.records)}

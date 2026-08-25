@@ -35,25 +35,37 @@ function CardShell({
   billingMonth?: string | null;
 }) {
   const head = (
-    <div className="flex items-start justify-between gap-2">
-      <p className="device-card-title flex min-w-0 items-center gap-2">
-        <ReceiptText
-          className="size-5 shrink-0"
-          strokeWidth={1.9}
-          style={{ color: "var(--bill-color)" }}
-        />
-        電気・ガス料金
-      </p>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-start justify-between gap-2">
+        <p className="device-card-title flex min-w-0 items-center gap-2">
+          <ReceiptText
+            className="size-5 shrink-0"
+            strokeWidth={1.9}
+            style={{ color: "var(--bill-color)" }}
+          />
+          電気・ガス料金
+        </p>
+        {billingMonth && (
+          <span
+            className="shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabular-nums"
+            style={{
+              backgroundColor: "var(--bill-surface)",
+              color: "var(--bill-color)",
+            }}
+          >
+            {formatBillingMonth(billingMonth)}
+          </span>
+        )}
+      </div>
+      {/*
+        同じ「暮らし」に、消費電力カードの「今月 ◯◯円」（機器ごとの実測に単価を掛けた目安・
+        暦月）と、このカードの請求額（検針期間・実額）が並ぶ。どちらが電気代なのか
+        読み手に決めさせないよう、出どころを1行で言い切る。
+      */}
       {billingMonth && (
-        <span
-          className="shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabular-nums"
-          style={{
-            backgroundColor: "var(--bill-surface)",
-            color: "var(--bill-color)",
-          }}
-        >
-          {formatBillingMonth(billingMonth)}
-        </span>
+        <p className="text-[11.5px] leading-snug text-muted-foreground">
+          検針で確定した請求額
+        </p>
       )}
     </div>
   );
