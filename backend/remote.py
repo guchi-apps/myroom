@@ -142,17 +142,31 @@ def get_token() -> str:
     return os.getenv(ENV_TOKEN, "").strip()
 
 
-def _override_for(overrides: Optional[Dict[str, Any]], button_id: str) -> Dict[str, Any]:
-    """ボタン1つぶんの上書き。設定が無い・壊れている場合は空として扱う。"""
+def _override_for(
+    overrides: Optional[Dict[str, Any]], button: Dict[str, Any]
+) -> Dict[str, Any]:
+    """ボタン1つぶんの上書き。設定が無い・壊れている場合は空として扱う。
+
+    **別のボタンへずれた設定は捨てる。** ボタンIDは remote.json で `id` を省くと
+    並び順から採番される（`light-1` など）。あとからボタンを挿し込むと以降のIDが
+    1つずつずれ、保存済みの名前が黙って別のボタンに付く。保存時に控えた元の名前
+    （`default_label`）が今の remote.json と食い違う設定は、ずれた印として無視する。
+    """
     if not isinstance(overrides, dict):
         return {}
-    entry = overrides.get(button_id)
-    return entry if isinstance(entry, dict) else {}
+    entry = overrides.get(button["id"])
+    if not isinstance(entry, dict):
+        return {}
+
+    saved_default = str(entry.get("default_label") or "").strip()
+    if saved_default and saved_default != button["label"]:
+        return {}
+    return entry
 
 
 def resolve_label(button: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> str:
     """画面に出す名前。付けた名前が空なら remote.json の名前へ戻る。"""
-    label = str(_override_for(overrides, button["id"]).get("label") or "").strip()
+    label = str(_override_for(overrides, button).get("label") or "").strip()
     return label or button["label"]
 
 
@@ -178,7 +192,7 @@ def build_payload(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
                         "label": resolve_label(button, overrides),
                         # 設定画面で「もとの名前」を出すために添える
                         "default_label": button["label"],
-                        "hidden": bool(_override_for(overrides, button["id"]).get("hidden")),
+                        "hidden": bool(_override_for(overrides, button).get("hidden")),
                     }
                     for button in group["buttons"]
                 ],

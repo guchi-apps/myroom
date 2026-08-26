@@ -149,6 +149,11 @@ def _normalize_remote_buttons(raw: Any) -> Dict[str, Dict[str, Any]]:
     **既定と変わらない項目は保存しない。** 名前が空でダッシュボードにも出すなら
     remote.json のままなので、持っておく意味が無いうえ、remote.json のボタンを
     入れ替えたときに古いIDのゴミが残り続ける。
+
+    `default_label` は「保存した時点で remote.json に書かれていた名前」。ボタンIDは
+    remote.json 側で `id` を省くと並び順から採番されるため、あとからボタンを挿すと
+    設定が別のボタンへずれる。ずれを見つける手掛かりとして一緒に持つ（照合は
+    `backend/remote.py` の `_override_for()` が行う）。
     """
     if not isinstance(raw, dict):
         return {}
@@ -171,6 +176,10 @@ def _normalize_remote_buttons(raw: Any) -> Dict[str, Dict[str, Any]]:
             entry["label"] = label
         if hidden:
             entry["hidden"] = True
+
+        default_label = str(value.get("default_label") or "").strip()
+        if default_label:
+            entry["default_label"] = default_label
         normalized[button_id] = entry
     return normalized
 

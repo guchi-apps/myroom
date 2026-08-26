@@ -170,6 +170,46 @@ def test_broken_overrides_do_not_break_payload(remote_config):
     ]
 
 
+def test_override_is_dropped_when_the_button_at_that_id_changed(remote_config):
+    """ボタンを挿すとIDがずれるので、控えた元の名前と食い違う設定は捨てる。
+
+    `id` を省いたボタンは並び順から採番される（tv-1・tv-2 …）。あとから先頭に
+    1つ挿すと、それまで tv-1 だったボタンが tv-2 になり、tv-1 の設定が黙って
+    別のボタンに付いてしまう。
+    """
+    write_config(remote_config)
+    overrides = {"tv-1": {"label": "テレビ", "default_label": "電源"}}
+    assert remote.build_payload(overrides)["groups"][1]["buttons"][0]["label"] == "テレビ"
+
+    # 「電源」の前に「入力切替」を挿す。tv-1 は別のボタンになる
+    shifted = dict(SAMPLE_CONFIG)
+    shifted["groups"] = [
+        SAMPLE_CONFIG["groups"][0],
+        {
+            "id": "tv",
+            "name": "テレビ",
+            "buttons": [
+                {"label": "入力切替", "signal_id": "sig-0"},
+                {"label": "電源", "signal_id": "sig-1"},
+            ],
+        },
+    ]
+    write_config(remote_config, shifted)
+
+    labels = [
+        button["label"] for button in remote.build_payload(overrides)["groups"][1]["buttons"]
+    ]
+    # ずれた設定は当たらない。remote.json の名前がそのまま出る
+    assert labels == ["入力切替", "電源"]
+
+
+def test_override_without_default_label_still_applies(remote_config):
+    """`default_label` を持たない古い設定は、そのまま当てる（判断材料が無いため）。"""
+    write_config(remote_config)
+    payload = remote.build_payload({"light-on": {"label": "あかりをつける"}})
+    assert payload["groups"][0]["buttons"][0]["label"] == "あかりをつける"
+
+
 def test_press_reports_the_name_shown_on_screen(remote_config, monkeypatch):
     write_config(remote_config)
     monkeypatch.setenv(remote.ENV_TOKEN, "test-token")

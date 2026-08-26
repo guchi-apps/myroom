@@ -73,6 +73,29 @@ def test_remote_buttons_label_is_trimmed_to_the_max_length(data_dir):
     assert len(label) == ui_settings.MAX_REMOTE_LABEL_LENGTH
 
 
+def test_remote_buttons_keep_the_default_label_that_was_saved(data_dir):
+    """IDのずれを見つける手掛かりなので、保存時の元の名前も残す。"""
+    saved = ui_settings.save_settings(
+        {
+            ui_settings.SETTING_REMOTE_BUTTONS: {
+                "light-on": {"label": "あかりをつける", "default_label": "点ける"}
+            }
+        }
+    )
+    assert saved[ui_settings.SETTING_REMOTE_BUTTONS]["light-on"] == {
+        "label": "あかりをつける",
+        "default_label": "点ける",
+    }
+
+
+def test_remote_buttons_default_label_alone_is_not_kept(data_dir):
+    """名前も付けず表示もしているなら、控えだけ残しても意味が無い。"""
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_REMOTE_BUTTONS: {"light-on": {"default_label": "点ける"}}}
+    )
+    assert saved[ui_settings.SETTING_REMOTE_BUTTONS] == {}
+
+
 def test_saving_other_settings_keeps_remote_buttons(data_dir):
     ui_settings.save_settings(
         {ui_settings.SETTING_REMOTE_BUTTONS: {"light-on": {"label": "あかり"}}}

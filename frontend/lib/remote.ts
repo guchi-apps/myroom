@@ -19,6 +19,14 @@ export interface RemoteButton {
 export interface RemoteButtonSetting {
   label?: string;
   hidden?: boolean;
+  /**
+   * 保存した時点で remote.json に書かれていた名前。
+   *
+   * ボタンIDは remote.json 側で `id` を省くと並び順から採番されるため、あとから
+   * ボタンを挿すと設定が別のボタンへずれる。バックエンドはこの値が今の名前と
+   * 食い違う設定を無視して、ずれたまま反映されるのを防ぐ。
+   */
+  default_label?: string;
 }
 
 export interface RemoteGroup {

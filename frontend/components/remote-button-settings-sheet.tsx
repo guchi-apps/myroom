@@ -20,13 +20,19 @@ interface RemoteButtonSettingsSheetProps {
 interface Draft {
   label: string;
   hidden: boolean;
+  /** remote.json 側の名前。保存時に添えて、設定が別のボタンへずれるのを防ぐ */
+  defaultLabel: string;
 }
 
 /** 画面に出ている値から、保存する設定を組み立てる。既定と同じ行はバックエンドが落とす */
 function buildSettings(drafts: Record<string, Draft>): Record<string, RemoteButtonSetting> {
   const settings: Record<string, RemoteButtonSetting> = {};
   for (const [id, draft] of Object.entries(drafts)) {
-    settings[id] = { label: draft.label.trim(), hidden: draft.hidden };
+    settings[id] = {
+      label: draft.label.trim(),
+      hidden: draft.hidden,
+      default_label: draft.defaultLabel,
+    };
   }
   return settings;
 }
@@ -41,6 +47,7 @@ function buildDrafts(buttons: RemoteButtons | null): Record<string, Draft> {
         // 元の名前のままなら空にして、プレースホルダで元の名前を見せる
         label: button.label === original ? "" : button.label,
         hidden: button.hidden ?? false,
+        defaultLabel: original,
       };
     }
   }
