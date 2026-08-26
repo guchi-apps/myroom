@@ -3,7 +3,7 @@ import json
 import pytest
 import requests
 
-from backend import remote
+from backend import remote, ui_settings
 
 SAMPLE_CONFIG = {
     "groups": [
@@ -38,7 +38,39 @@ def write_config(data_dir, config=None):
 @pytest.fixture
 def remote_config(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.remote.CONFIG_PATH", tmp_path / "remote.json")
+    # 定義の正は DB（DB_MOCK では data/ui_settings.json）へ移った（#262）。
+    # 実行した機体の設定ファイルを読み書きしないよう、こちらも tmp_path へ寄せる
+    monkeypatch.setattr("backend.ui_settings.CONFIG_PATH", tmp_path / "ui_settings.json")
     return tmp_path
+
+
+def save_defs(config):
+    """画面から保存したのと同じ状態にする（DB_MOCK ではファイルに落ちる）。"""
+    ui_settings.save_settings({ui_settings.SETTING_REMOTE_BUTTON_DEFS: config})
+
+
+def save_catalog(devices, fetched_at="2026-08-26T11:14:00Z"):
+    ui_settings.save_settings(
+        {ui_settings.SETTING_REMOTE_CATALOG: {"fetched_at": fetched_at, "devices": devices}}
+    )
+
+
+SAMPLE_APPLIANCES = [
+    {
+        "id": "app-light",
+        "nickname": "リビングの照明",
+        "type": "LIGHT",
+        "signals": [],
+        "light": {"buttons": [{"name": "on", "label": "点ける"}, {"name": "off", "label": "消す"}]},
+    },
+    {
+        "id": "app-tv",
+        "nickname": "テレビ",
+        "type": "TV",
+        "signals": [{"id": "sig-power", "name": "電源"}],
+    },
+    {"id": "app-ac", "nickname": "エアコン", "type": "AC", "signals": []},
+]
 
 
 class FakeResponse:
@@ -345,5 +377,231 @@ def test_send_endpoint_returns_detail_on_failure(authed_client, data_dir, monkey
 
     response = authed_client.post("/api/remote/buttons/tv-1/send")
 
+    assert response.status_code == 503
+    assert "トークン" in response.json()["detail"]
+
+
+# --------------------------------------- 画面からの登録（#262）
+
+
+def test_db_definitions_win_over_remote_json(remote_config):
+    write_config(remote_config)
+    save_defs({"groups": [{"id": "fan", "name": "扇風機", "buttons": [
+        {"id": "fan-power", "label": "電源", "signal_id": "sig-fan"}
+    ]}]})
+
+    payload = remote.build_payload()
+    assert [group["name"] for group in payload["groups"]] == ["扇風機"]
+
+
+def test_remote_json_is_only_the_initial_value(remote_config):
+    """まだ一度も保存していないあいだだけ remote.json を読む。"""
+    write_config(remote_config)
+    assert [group["name"] for group in remote.build_payload()["groups"]] == ["照明", "テレビ"]
+
+
+def test_saving_an_empty_config_does_not_fall_back_to_the_file(remote_config):
+    """全部消した状態と、まだ保存していない状態は別物。
+
+    ここで remote.json へ戻すと、画面から消したボタンがデプロイのたびに復活する。
+    """
+    write_config(remote_config)
+    save_defs({"groups": []})
+    assert remote.build_payload() == {"configured": False, "groups": []}
+
+
+def test_build_catalog_devices_splits_light_and_signal():
+    devices = remote.build_catalog_devices(SAMPLE_APPLIANCES)
+
+    assert [device["name"] for device in devices] == ["リビングの照明", "テレビ", "エアコン"]
+    assert [button["label"] for button in devices[0]["buttons"]] == ["点ける", "消す"]
+    assert devices[0]["buttons"][0]["appliance_id"] == "app-light"
+    assert devices[0]["buttons"][0]["button"] == "on"
+    assert devices[1]["buttons"][0]["signal_id"] == "sig-power"
+
+
+def test_build_catalog_devices_keeps_unsupported_devices_with_a_reason():
+    """押せない機器も落とさない。消えていると取得漏れと区別が付かない。"""
+    devices = remote.build_catalog_devices(SAMPLE_APPLIANCES)
+    aircon = devices[2]
+    assert aircon["buttons"] == []
+    assert "エアコン" in aircon["note"]
+
+
+def test_catalog_button_ids_are_stable_across_fetches():
+    """外して付け直しても同じIDに戻る（付けた名前が引き継がれる）。"""
+    first = remote.build_catalog_devices(SAMPLE_APPLIANCES)
+    second = remote.build_catalog_devices(SAMPLE_APPLIANCES)
+    assert [b["id"] for b in first[0]["buttons"]] == [b["id"] for b in second[0]["buttons"]]
+
+    # 並び順から採番していないので、前にボタンを挿してもIDは動かない
+    shifted = [
+        {
+            **SAMPLE_APPLIANCES[0],
+            "light": {
+                "buttons": [{"name": "night", "label": "常夜灯"}]
+                + SAMPLE_APPLIANCES[0]["light"]["buttons"]
+            },
+        }
+    ]
+    assert (
+        remote.build_catalog_devices(shifted)[0]["buttons"][1]["id"]
+        == first[0]["buttons"][0]["id"]
+    )
+
+
+def test_catalog_payload_drops_remo_ids():
+    catalog = {
+        "fetched_at": "2026-08-26T11:14:00Z",
+        "devices": remote.build_catalog_devices(SAMPLE_APPLIANCES),
+    }
+    payload = remote.catalog_payload(catalog)
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "app-light" not in serialized
+    assert "sig-power" not in serialized
+    assert payload["devices"][0]["buttons"][0]["label"] == "点ける"
+    assert payload["devices"][0]["buttons"][0]["kind"] == "light"
+
+
+def test_resolve_config_fills_send_targets_from_the_catalog(remote_config):
+    devices = remote.build_catalog_devices(SAMPLE_APPLIANCES)
+    save_catalog(devices)
+    on_id = devices[0]["buttons"][0]["id"]
+    power_id = devices[1]["buttons"][0]["id"]
+
+    config = remote.resolve_config(
+        {"groups": [{"id": "g1", "name": "照明", "buttons": [{"id": on_id}, {"id": power_id}]}]}
+    )
+
+    buttons = config["groups"][0]["buttons"]
+    assert [button["label"] for button in buttons] == ["点ける", "電源"]
+    assert buttons[0]["appliance_id"] == "app-light"
+    assert buttons[1]["signal_id"] == "sig-power"
+
+
+def test_resolve_config_drops_unknown_button_ids(remote_config):
+    save_catalog(remote.build_catalog_devices(SAMPLE_APPLIANCES))
+    config = remote.resolve_config(
+        {"groups": [{"name": "照明", "buttons": [{"id": "知らないID"}]}]}
+    )
+    # 押し方の分からないボタンは作らない。1つも残らないグループごと消える
+    assert config == {"groups": []}
+
+
+def test_resolve_config_keeps_already_registered_buttons_without_the_catalog(remote_config):
+    """控えが空でも、登録済みのボタンは並べ替えて保存し直せる。"""
+    write_config(remote_config)
+    config = remote.resolve_config(
+        {"groups": [{"id": "tv", "name": "テレビ", "buttons": [{"id": "tv-1"}]}]}
+    )
+    assert config["groups"][0]["buttons"][0]["signal_id"] == "sig-1"
+
+
+def test_resolve_config_reorders_and_regroups(remote_config):
+    write_config(remote_config)
+    config = remote.resolve_config(
+        {
+            "groups": [
+                {"id": "tv", "name": "テレビ", "buttons": [{"id": "tv-1"}]},
+                {
+                    "id": "light",
+                    "name": "あかり",
+                    "buttons": [{"id": "light-off"}, {"id": "light-on"}],
+                },
+            ]
+        }
+    )
+    assert [group["name"] for group in config["groups"]] == ["テレビ", "あかり"]
+    assert [b["id"] for b in config["groups"][1]["buttons"]] == ["light-off", "light-on"]
+
+
+def test_prune_overrides_drops_settings_for_removed_buttons(remote_config):
+    write_config(remote_config)
+    config = remote.load_config()
+    pruned = remote.prune_overrides(
+        {"light-on": {"label": "あかり"}, "消したボタン": {"label": "ゴミ"}}, config
+    )
+    assert pruned == {"light-on": {"label": "あかり"}}
+
+
+def test_load_catalog_is_empty_before_the_first_fetch(remote_config):
+    assert remote.load_catalog() == {"fetched_at": "", "devices": []}
+
+
+def test_fetch_catalog_calls_nature_remo_once(remote_config, monkeypatch):
+    monkeypatch.setenv(remote.ENV_TOKEN, "test-token")
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        return FakeResponse(200, payload=SAMPLE_APPLIANCES)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    catalog = remote.fetch_catalog()
+
+    assert calls == [f"{remote.API_BASE}/1/appliances"]
+    assert catalog["fetched_at"].endswith("Z")
+    assert len(catalog["devices"]) == 3
+
+
+# ---------------------------------------------------- 登録のAPI（#262）
+
+
+def test_catalog_endpoints_require_auth(client):
+    assert client.get("/api/remote/catalog").status_code == 401
+    assert client.post("/api/remote/catalog/refresh").status_code == 401
+    assert client.put("/api/remote/config", json={"groups": []}).status_code == 401
+
+
+def test_catalog_endpoint_does_not_call_nature_remo(authed_client, data_dir, monkeypatch):
+    monkeypatch.setattr("backend.remote.CONFIG_PATH", data_dir / "remote.json")
+
+    def boom(*args, **kwargs):
+        raise AssertionError("一覧を出すだけで Nature Remo を叩いてはいけない")
+
+    monkeypatch.setattr(requests, "get", boom)
+
+    response = authed_client.get("/api/remote/catalog")
+    assert response.status_code == 200
+    assert response.json() == {"fetched_at": "", "devices": []}
+
+
+def test_refresh_then_save_registers_buttons(authed_client, data_dir, monkeypatch):
+    monkeypatch.setattr("backend.remote.CONFIG_PATH", data_dir / "remote.json")
+    monkeypatch.setenv(remote.ENV_TOKEN, "test-token")
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **k: FakeResponse(200, payload=SAMPLE_APPLIANCES)
+    )
+
+    catalog = authed_client.post("/api/remote/catalog/refresh").json()
+    on_id = catalog["devices"][0]["buttons"][0]["id"]
+
+    saved = authed_client.put(
+        "/api/remote/config",
+        json={
+            "groups": [{"id": "light", "name": "照明", "buttons": [{"id": on_id}]}],
+            "buttons": {on_id: {"label": "つける", "default_label": "点ける"}},
+        },
+    )
+
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["configured"] is True
+    assert body["groups"][0]["buttons"][0]["label"] == "つける"
+    assert body["groups"][0]["buttons"][0]["default_label"] == "点ける"
+    # 送り先は画面へ返さない
+    assert "appliance_id" not in body["groups"][0]["buttons"][0]
+
+    # 保存した内容は次の取得にも残る
+    assert authed_client.get("/api/remote/buttons").json()["groups"][0]["name"] == "照明"
+
+
+def test_refresh_reports_missing_token(authed_client, data_dir, monkeypatch):
+    monkeypatch.setattr("backend.remote.CONFIG_PATH", data_dir / "remote.json")
+    monkeypatch.delenv(remote.ENV_TOKEN, raising=False)
+
+    response = authed_client.post("/api/remote/catalog/refresh")
     assert response.status_code == 503
     assert "トークン" in response.json()["detail"]

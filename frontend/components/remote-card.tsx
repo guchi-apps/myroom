@@ -104,7 +104,8 @@ export function RemoteCard({ buttons, loading, error }: RemoteCardProps) {
 
       {!loading && !unavailable && !buttons?.configured && (
         <RemoteMessage>
-          操作するボタンが未設定です（data/remote.json に登録すると表示されます）
+          まだボタンがありません。設定の「ダッシュボードの表示」→「電気の操作」の編集から、
+          Nature Remo に登録済みの操作を選べます。
         </RemoteMessage>
       )}
 

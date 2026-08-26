@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Nature Remo に登録済みの機器を一覧し、data/remote.json へ貼り付けられる形で出す。
 
-ダッシュボードは押したときしか Nature Remo を叩かない（#106）。この一覧を取るのは
-data/remote.json を書くときだけなので、常駐するバックエンドではなくこのスクリプトに置く。
+**通常はこのスクリプトを使う必要はありません**（#262）。設定 →「ダッシュボードの表示」
+→「電気の操作」の編集から、登録済みの操作を画面で選べます。そちらの保存先は DB で、
+デプロイで消えません。
+
+このスクリプトが残っているのは、DB を用意する前や、初期値として `data/remote.json` を
+書いておきたいときのためです（画面から一度も保存していないあいだだけ読まれます）。
 
 使い方（リポジトリルートで実行する）:
 
@@ -35,48 +39,27 @@ def _slug(text: str, fallback: str) -> str:
     return kept or fallback
 
 
-def build_groups(appliances: list) -> list:
-    """機器ごとに1グループを作る。要らないボタンは手で削る前提で全部出す。"""
+def build_groups(devices: list) -> list:
+    """候補一覧（`remote.build_catalog_devices()`）を remote.json の groups の形にする。
+
+    ボタンIDは候補一覧のもの（機器と操作から決まるハッシュ）をそのまま使う。画面から
+    登録したときと同じIDになるので、あとで画面へ移しても付けた名前が引き継がれる。
+    グループIDだけは、手で読み書きする前提のファイルなのでニックネームのスラグにする。
+    """
     groups = []
-    for index, appliance in enumerate(appliances):
-        nickname = str(appliance.get("nickname") or "").strip() or f"機器{index + 1}"
-        group_id = _slug(nickname, f"group{index + 1}")
-
-        buttons = []
-
-        # 「照明」として登録した機器。生の signal を持たず、専用のエンドポイントで押す
-        light_buttons = (appliance.get("light") or {}).get("buttons") or []
-        for button in light_buttons:
-            name = str(button.get("name") or "").strip()
-            if not name:
-                continue
-            buttons.append(
-                {
-                    "id": f"{group_id}-{_slug(name, str(len(buttons) + 1))}",
-                    "label": str(button.get("label") or "").strip() or name,
-                    "appliance_id": appliance.get("id"),
-                    "button": name,
-                }
-            )
-
-        # 「その他」として登録した赤外線
-        for signal in appliance.get("signals") or []:
-            name = str(signal.get("name") or "").strip()
-            signal_id = signal.get("id")
-            if not signal_id:
-                continue
-            buttons.append(
-                {
-                    "id": f"{group_id}-{_slug(name, str(len(buttons) + 1))}",
-                    "label": name or "ボタン",
-                    "signal_id": signal_id,
-                }
-            )
-
-        if not buttons:
+    for index, device in enumerate(devices):
+        if not device["buttons"]:
             continue
-
-        groups.append({"id": group_id, "name": nickname, "buttons": buttons})
+        groups.append(
+            {
+                "id": _slug(device["name"], f"group{index + 1}"),
+                "name": device["name"],
+                "buttons": [
+                    {key: value for key, value in button.items() if key != "kind"}
+                    for button in device["buttons"]
+                ],
+            }
+        )
     return groups
 
 
@@ -96,24 +79,19 @@ def main() -> int:
         print("Nature Remo に機器が1つも登録されていません。", file=sys.stderr)
         return 1
 
-    print("── 登録済みの機器 ──", file=sys.stderr)
-    for appliance in appliances:
-        nickname = appliance.get("nickname") or "(名前なし)"
-        kind = appliance.get("type") or "?"
-        light_count = len((appliance.get("light") or {}).get("buttons") or [])
-        signal_count = len(appliance.get("signals") or [])
-        print(f"  {nickname}（type={kind}）: 照明ボタン {light_count} / signal {signal_count}", file=sys.stderr)
-        if kind == "AC" and light_count == 0 and signal_count == 0:
-            print(
-                "    ※ エアコンとして登録された機器は個別の設定APIでしか操作できず、このカードでは押せません。",
-                file=sys.stderr,
-            )
-            print(
-                "       ボタンとして出したい場合は Nature Remo アプリで「その他」として登録し直してください。",
-                file=sys.stderr,
-            )
+    devices = remote.build_catalog_devices(appliances)
 
-    groups = build_groups(appliances)
+    print("── 登録済みの機器 ──", file=sys.stderr)
+    for device in devices:
+        print(
+            f"  {device['name'] or '(名前なし)'}（type={device['type'] or '?'}）: "
+            f"押せる操作 {len(device['buttons'])}",
+            file=sys.stderr,
+        )
+        if device["note"]:
+            print(f"    ※ {device['note']}", file=sys.stderr)
+
+    groups = build_groups(devices)
     if not groups:
         print("押せるボタンが1つも見つかりませんでした。", file=sys.stderr)
         return 1

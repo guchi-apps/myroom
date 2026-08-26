@@ -191,6 +191,35 @@ class UiSettingsUpdate(BaseModel):
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
 
 
+class RemoteConfigButton(BaseModel):
+    """登録するボタン1つ。**IDだけ受け取る。**
+
+    送り先（signal ID・appliance ID）は画面へ返していないので、画面から送り返せない。
+    サーバー側で今の定義と最後に取得した候補一覧から引く（`remote.resolve_config()`）。
+    """
+
+    id: str
+
+
+class RemoteConfigGroup(BaseModel):
+    #: 省くと並び順から採番される。画面は候補一覧の機器IDをそのまま送る
+    id: Optional[str] = None
+    name: str
+    buttons: List[RemoteConfigButton] = []
+
+
+class RemoteConfigUpdate(BaseModel):
+    """「電気の操作」に並べるボタンの登録内容（#262）。
+
+    付けた名前・隠す指定（#260）も同じ本文で受け取り、1回の保存でまとめて書く。
+    別々のAPIにすると、片方だけ通ったときに画面と保存内容が食い違う。
+    """
+
+    groups: List[RemoteConfigGroup] = []
+    #: ボタンID -> {"label": 付けた名前, "hidden": 隠すか}。省くと今の設定を保つ
+    buttons: Optional[Dict[str, Dict[str, Any]]] = None
+
+
 class DailyEnergyItem(BaseModel):
     date: str
     source: Optional[str] = None
@@ -665,7 +694,7 @@ def get_remote_buttons(
     ここでは Nature Remo を叩かない。外部APIへ出るのは実際に押したときだけ（#106）。
     隠したボタンも `hidden: true` を付けて返す（設定画面が一覧に出すため）。
     """
-    return remote.build_payload(_remote_button_overrides(db))
+    return remote.build_payload(_remote_button_overrides(db), db)
 
 
 @app.post("/api/remote/buttons/{button_id}/send")
@@ -680,9 +709,62 @@ def send_remote_button(
     赤外線が片方向のため分からない。
     """
     try:
-        return remote.press(button_id, _remote_button_overrides(db))
+        return remote.press(button_id, _remote_button_overrides(db), db)
     except remote.RemoteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
+
+@app.get("/api/remote/catalog")
+def get_remote_catalog(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """Nature Remo に登録済みの操作のうち、ボタンにできるものの一覧（#262）。
+
+    **ここでも Nature Remo は叩かない。** 返すのは最後に取得した控えで、取り直しは
+    `POST /api/remote/catalog/refresh`（Cloud API の上限は 30回/5分）。
+    signal ID・appliance ID は落として返す。
+    """
+    return remote.catalog_payload(remote.load_catalog(db))
+
+
+@app.post("/api/remote/catalog/refresh")
+def refresh_remote_catalog(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """Nature Remo へ問い合わせて一覧を取り直し、控えを更新する。"""
+    try:
+        catalog = remote.fetch_catalog()
+    except remote.RemoteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
+    ui_settings.save_settings({ui_settings.SETTING_REMOTE_CATALOG: catalog}, db)
+    return remote.catalog_payload(catalog)
+
+
+@app.put("/api/remote/config")
+def save_remote_config(
+    payload: RemoteConfigUpdate,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """並べるボタンの登録内容を保存する（#262）。
+
+    保存先は `data/remote.json` ではなく DB。ファイルはデプロイの rsync で
+    リポジトリの中身に戻るため、画面から書いても次のデプロイで消える。
+    """
+    config = remote.resolve_config(payload.model_dump(), db)
+
+    updates: Dict[str, Any] = {ui_settings.SETTING_REMOTE_BUTTON_DEFS: config}
+    if payload.buttons is not None:
+        # 登録から外したボタンの設定は道連れに消す（残すとゴミが溜まり続ける）
+        updates[ui_settings.SETTING_REMOTE_BUTTONS] = remote.prune_overrides(
+            payload.buttons, config
+        )
+    ui_settings.save_settings(updates, db)
+
+    return remote.build_payload(_remote_button_overrides(db), db)
 
 
 @app.get("/api/auth/me")
