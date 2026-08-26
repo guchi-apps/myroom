@@ -7,6 +7,11 @@
 
 どのボタンを出すかは data/remote.json に手で書く。センサーのように外から届く値ではないので
 DB は使わず、data/garbage.json と同じくファイルのみを正とする。
+
+**ただし画面に出す名前と、ダッシュボードに出すかどうかは上書きできる**（#260）。
+上書きの中身は UI 設定（`backend/ui_settings.py` の `remote_buttons`）が持ち、
+このモジュールは受け取って被せるだけ。remote.json 側は書き換えない——本番のファイルを
+画面から書き換えると、リポジトリで管理している定義と食い違うため。
 """
 
 from __future__ import annotations
@@ -137,10 +142,42 @@ def get_token() -> str:
     return os.getenv(ENV_TOKEN, "").strip()
 
 
-def build_payload() -> Dict[str, Any]:
+def _override_for(
+    overrides: Optional[Dict[str, Any]], button: Dict[str, Any]
+) -> Dict[str, Any]:
+    """ボタン1つぶんの上書き。設定が無い・壊れている場合は空として扱う。
+
+    **別のボタンへずれた設定は捨てる。** ボタンIDは remote.json で `id` を省くと
+    並び順から採番される（`light-1` など）。あとからボタンを挿し込むと以降のIDが
+    1つずつずれ、保存済みの名前が黙って別のボタンに付く。保存時に控えた元の名前
+    （`default_label`）が今の remote.json と食い違う設定は、ずれた印として無視する。
+    """
+    if not isinstance(overrides, dict):
+        return {}
+    entry = overrides.get(button["id"])
+    if not isinstance(entry, dict):
+        return {}
+
+    saved_default = str(entry.get("default_label") or "").strip()
+    if saved_default and saved_default != button["label"]:
+        return {}
+    return entry
+
+
+def resolve_label(button: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> str:
+    """画面に出す名前。付けた名前が空なら remote.json の名前へ戻る。"""
+    label = str(_override_for(overrides, button).get("label") or "").strip()
+    return label or button["label"]
+
+
+def build_payload(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """ダッシュボードの「電気の操作」カード用のペイロード。
 
     signal ID は画面へ出さない。押すのはボタンIDで足り、外へ出す値は少ないほどよい。
+
+    `hidden` のボタンもグループごと落とさずに返す。設定画面が「隠したボタン」も含めた
+    一覧を出す必要があり、そのためだけに別のエンドポイントを増やしたくないため。
+    ダッシュボードに出さない判断は受け取った側で行う。
     """
     config = load_config()
     return {
@@ -150,7 +187,13 @@ def build_payload() -> Dict[str, Any]:
                 "id": group["id"],
                 "name": group["name"],
                 "buttons": [
-                    {"id": button["id"], "label": button["label"]}
+                    {
+                        "id": button["id"],
+                        "label": resolve_label(button, overrides),
+                        # 設定画面で「もとの名前」を出すために添える
+                        "default_label": button["label"],
+                        "hidden": bool(_override_for(overrides, button).get("hidden")),
+                    }
                     for button in group["buttons"]
                 ],
             }
@@ -212,8 +255,12 @@ def send_light_button(appliance_id: str, button: str) -> None:
     _post(f"/1/appliances/{appliance_id}/light", {"button": button})
 
 
-def press(button_id: str) -> Dict[str, Any]:
-    """ボタンIDを押す。押した結果は「送信を依頼できたか」までしか分からない。"""
+def press(button_id: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """ボタンIDを押す。押した結果は「送信を依頼できたか」までしか分からない。
+
+    隠したボタンでも押せる。隠すのは「ダッシュボードに出さない」という表示の話で、
+    ボタンそのものを消したわけではないため。
+    """
     button = find_button(button_id)
     if button is None:
         raise RemoteError(404, "そのボタンは登録されていません")
@@ -226,7 +273,8 @@ def press(button_id: str) -> Dict[str, Any]:
     return {
         "sent": True,
         "button_id": button["id"],
-        "label": button["label"],
+        # 「◯◯を送りました」に出るのはユーザーが付けた名前
+        "label": resolve_label(button, overrides),
         "group_name": button["group_name"],
     }
 

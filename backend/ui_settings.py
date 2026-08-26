@@ -14,6 +14,7 @@ SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
 SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
+SETTING_REMOTE_BUTTONS = "remote_buttons"
 
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
 
@@ -21,6 +22,10 @@ DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
 # 既定値は関西電力の従量電灯Aの第2段階あたりの目安。
 DEFAULT_ENERGY_UNIT_PRICE = 31.0
 MAX_ENERGY_UNIT_PRICE = 1000.0
+
+# 「電気の操作」のボタンに付けられる名前の長さ。カードは3列で、長い名前は truncate されて
+# 読めなくなるだけなので、入り口で切っておく
+MAX_REMOTE_LABEL_LENGTH = 20
 
 DEFAULT_CHART_COLORS: Dict[str, str] = {
     "device:1": "#3498db",
@@ -39,6 +44,7 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_STALE_ALERT_EXCLUDED: [],
         SETTING_PRESSURE_OFFSETS: {},
         SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
+        SETTING_REMOTE_BUTTONS: {},
     }
 
 
@@ -136,6 +142,48 @@ def _normalize_energy_unit_price(raw: Any) -> float:
     return round(price, 2)
 
 
+def _normalize_remote_buttons(raw: Any) -> Dict[str, Dict[str, Any]]:
+    """「電気の操作」のボタンごとに付けた名前と、ダッシュボードから隠す指定。
+
+    ボタン定義そのもの（signal ID・機器ID）は data/remote.json が正で、ここには持たない。
+    **既定と変わらない項目は保存しない。** 名前が空でダッシュボードにも出すなら
+    remote.json のままなので、持っておく意味が無いうえ、remote.json のボタンを
+    入れ替えたときに古いIDのゴミが残り続ける。
+
+    `default_label` は「保存した時点で remote.json に書かれていた名前」。ボタンIDは
+    remote.json 側で `id` を省くと並び順から採番されるため、あとからボタンを挿すと
+    設定が別のボタンへずれる。ずれを見つける手掛かりとして一緒に持つ（照合は
+    `backend/remote.py` の `_override_for()` が行う）。
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            continue
+        button_id = key.strip()
+        if not button_id:
+            continue
+
+        label = str(value.get("label") or "").strip()[:MAX_REMOTE_LABEL_LENGTH]
+        hidden = bool(value.get("hidden"))
+        if not label and not hidden:
+            continue
+
+        entry: Dict[str, Any] = {}
+        if label:
+            entry["label"] = label
+        if hidden:
+            entry["hidden"] = True
+
+        default_label = str(value.get("default_label") or "").strip()
+        if default_label:
+            entry["default_label"] = default_label
+        normalized[button_id] = entry
+    return normalized
+
+
 def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = _default_settings()
     if not raw:
@@ -159,6 +207,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ),
         SETTING_ENERGY_UNIT_PRICE: _normalize_energy_unit_price(
             raw.get(SETTING_ENERGY_UNIT_PRICE, defaults[SETTING_ENERGY_UNIT_PRICE])
+        ),
+        SETTING_REMOTE_BUTTONS: _normalize_remote_buttons(
+            raw.get(SETTING_REMOTE_BUTTONS, defaults[SETTING_REMOTE_BUTTONS])
         ),
     }
 
@@ -239,6 +290,9 @@ def save_settings(
         SETTING_ENERGY_UNIT_PRICE: updates.get(
             SETTING_ENERGY_UNIT_PRICE,
             current.get(SETTING_ENERGY_UNIT_PRICE, DEFAULT_ENERGY_UNIT_PRICE),
+        ),
+        SETTING_REMOTE_BUTTONS: updates.get(
+            SETTING_REMOTE_BUTTONS, current.get(SETTING_REMOTE_BUTTONS, {})
         ),
     }
     normalized = _normalize_settings(merged)

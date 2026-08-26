@@ -187,6 +187,8 @@ class UiSettingsUpdate(BaseModel):
     stale_alert_excluded_devices: Optional[List[str]] = None
     pressure_offsets: Optional[Dict[str, float]] = None
     energy_unit_price: Optional[float] = None
+    #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
+    remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class DailyEnergyItem(BaseModel):
@@ -648,24 +650,37 @@ def get_garbage_schedule(_: dict = Depends(get_current_user)):
     return garbage.build_payload()
 
 
+def _remote_button_overrides(db: Session) -> Dict[str, Any]:
+    """画面から付けたボタン名・隠す指定。UI設定に入っている（#260）。"""
+    return ui_settings.get_settings(db).get(ui_settings.SETTING_REMOTE_BUTTONS, {})
+
+
 @app.get("/api/remote/buttons")
-def get_remote_buttons(_: dict = Depends(get_current_user)):
-    """押せるリモコン操作の一覧。data/remote.json の定義をそのまま返す。
+def get_remote_buttons(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """押せるリモコン操作の一覧。data/remote.json の定義に、画面で付けた名前を被せて返す。
 
     ここでは Nature Remo を叩かない。外部APIへ出るのは実際に押したときだけ（#106）。
+    隠したボタンも `hidden: true` を付けて返す（設定画面が一覧に出すため）。
     """
-    return remote.build_payload()
+    return remote.build_payload(_remote_button_overrides(db))
 
 
 @app.post("/api/remote/buttons/{button_id}/send")
-def send_remote_button(button_id: str, _: dict = Depends(get_current_user)):
+def send_remote_button(
+    button_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
     """赤外線を送る。
 
     返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは
     赤外線が片方向のため分からない。
     """
     try:
-        return remote.press(button_id)
+        return remote.press(button_id, _remote_button_overrides(db))
     except remote.RemoteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
 
