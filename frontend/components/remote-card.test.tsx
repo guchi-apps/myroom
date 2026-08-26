@@ -40,7 +40,7 @@ describe("RemoteCard", () => {
     expect(html).not.toContain("消灯中");
   });
 
-  it("未設定のときは設定ファイルの場所を案内する", () => {
+  it("未設定のときは画面からの登録の仕方を案内する", () => {
     const html = render(
       <RemoteCard
         buttons={{ configured: false, groups: [] }}
@@ -48,7 +48,9 @@ describe("RemoteCard", () => {
         error={false}
       />
     );
-    expect(html).toContain("data/remote.json");
+    // 設定ファイルの手編集は要らなくなった（#262）。案内するのは画面の導線
+    expect(html).toContain("ダッシュボードの表示");
+    expect(html).not.toContain("data/remote.json");
     expect(html).not.toContain("押すと赤外線を送ります");
   });
 

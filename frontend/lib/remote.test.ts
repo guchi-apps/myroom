@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyCatalogSelection,
+  buildRemoteConfigUpdate,
   countRemoteButtons,
   countVisibleRemoteButtons,
   findRemoteButton,
+  formatCatalogFetchedAt,
   formatRemoteErrorMessage,
   formatRemoteSentMessage,
+  hasSelectableRemoteButtons,
+  moveRemoteGroup,
+  removeRemoteButton,
+  toGroupDrafts,
   visibleRemoteGroups,
   type RemoteButtons,
+  type RemoteCatalog,
+  type RemoteGroupDraft,
 } from "@/lib/remote";
 
 const buttons: RemoteButtons = {
@@ -131,5 +140,155 @@ describe("formatRemoteErrorMessage", () => {
   it("理由が無いときだけ既定の文言へ落とす", () => {
     expect(formatRemoteErrorMessage("   ")).toBe("送信できませんでした");
     expect(formatRemoteErrorMessage(undefined)).toBe("送信できませんでした");
+  });
+});
+
+// -------------------------------------------- 画面からの登録（#262）
+
+const catalog: RemoteCatalog = {
+  fetched_at: "2026-08-26T11:14:00Z",
+  devices: [
+    {
+      id: "d-light",
+      name: "リビングの照明",
+      type: "LIGHT",
+      note: "",
+      buttons: [
+        { id: "l-on", label: "点ける", kind: "light" },
+        { id: "l-off", label: "消す", kind: "light" },
+        { id: "l-night", label: "常夜灯", kind: "light" },
+      ],
+    },
+    {
+      id: "d-tv",
+      name: "テレビ",
+      type: "TV",
+      note: "",
+      buttons: [{ id: "s-power", label: "電源", kind: "signal" }],
+    },
+    { id: "d-ac", name: "エアコン", type: "AC", note: "押せません", buttons: [] },
+  ],
+};
+
+const drafts: RemoteGroupDraft[] = [
+  {
+    id: "d-light",
+    name: "あかり",
+    buttons: [
+      { id: "l-on", defaultLabel: "点ける" },
+      { id: "l-off", defaultLabel: "消す" },
+    ],
+  },
+];
+
+describe("toGroupDrafts", () => {
+  it("登録内容として持つのは Nature Remo 側の名前のほう", () => {
+    const withOverride: RemoteButtons = {
+      configured: true,
+      groups: [
+        {
+          id: "light",
+          name: "照明",
+          buttons: [{ id: "l-on", label: "つける", default_label: "点ける" }],
+        },
+      ],
+    };
+    expect(toGroupDrafts(withOverride)[0].buttons[0].defaultLabel).toBe("点ける");
+  });
+});
+
+describe("applyCatalogSelection", () => {
+  it("新しく選んだ操作を、その機器のグループへ足す", () => {
+    const next = applyCatalogSelection(
+      drafts,
+      catalog,
+      new Set(["l-on", "l-off", "s-power"])
+    );
+    expect(next.map((group) => group.name)).toEqual(["あかり", "テレビ"]);
+    expect(next[1].buttons.map((button) => button.id)).toEqual(["s-power"]);
+  });
+
+  it("既にあるボタンの位置は動かさず、追加だけ末尾へ付ける", () => {
+    const next = applyCatalogSelection(
+      drafts,
+      catalog,
+      new Set(["l-on", "l-off", "l-night"])
+    );
+    expect(next).toHaveLength(1);
+    expect(next[0].buttons.map((button) => button.id)).toEqual(["l-on", "l-off", "l-night"]);
+    // 付け替えたグループ名は保つ（機器のニックネームへ戻さない）
+    expect(next[0].name).toBe("あかり");
+  });
+
+  it("選択が外れたボタンを落とし、空になったグループは見出しごと消す", () => {
+    expect(applyCatalogSelection(drafts, catalog, new Set())).toEqual([]);
+    const next = applyCatalogSelection(drafts, catalog, new Set(["l-off"]));
+    expect(next[0].buttons.map((button) => button.id)).toEqual(["l-off"]);
+  });
+});
+
+describe("moveRemoteGroup", () => {
+  const three: RemoteGroupDraft[] = [
+    { id: "a", name: "A", buttons: [{ id: "1", defaultLabel: "1" }] },
+    { id: "b", name: "B", buttons: [{ id: "2", defaultLabel: "2" }] },
+    { id: "c", name: "C", buttons: [{ id: "3", defaultLabel: "3" }] },
+  ];
+
+  it("上下に入れ替える", () => {
+    expect(moveRemoteGroup(three, 1, -1).map((g) => g.id)).toEqual(["b", "a", "c"]);
+    expect(moveRemoteGroup(three, 1, 1).map((g) => g.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("端では動かさない", () => {
+    expect(moveRemoteGroup(three, 0, -1)).toBe(three);
+    expect(moveRemoteGroup(three, 2, 1)).toBe(three);
+  });
+});
+
+describe("removeRemoteButton", () => {
+  it("最後の1つを外すとグループごと消える", () => {
+    const next = removeRemoteButton(removeRemoteButton(drafts, "l-on"), "l-off");
+    expect(next).toEqual([]);
+  });
+});
+
+describe("buildRemoteConfigUpdate", () => {
+  it("ボタンはIDだけ送り、グループ名の前後の空白は落とす", () => {
+    const update = buildRemoteConfigUpdate(
+      [{ id: "d-light", name: "  あかり  ", buttons: [{ id: "l-on", defaultLabel: "点ける" }] }],
+      {}
+    );
+    expect(update.groups).toEqual([
+      { id: "d-light", name: "あかり", buttons: [{ id: "l-on" }] },
+    ]);
+  });
+
+  it("登録から外したボタンの設定は送らない", () => {
+    const update = buildRemoteConfigUpdate(drafts, {
+      "l-on": { label: "つける" },
+      "s-power": { label: "電源" },
+    });
+    expect(Object.keys(update.buttons)).toEqual(["l-on"]);
+  });
+});
+
+describe("formatCatalogFetchedAt", () => {
+  it("まだ取っていなければ空", () => {
+    expect(formatCatalogFetchedAt("")).toBe("");
+    expect(formatCatalogFetchedAt("ISOではない")).toBe("");
+  });
+
+  it("月日と時刻の形にする", () => {
+    expect(formatCatalogFetchedAt("2026-08-26T11:14:00Z")).toMatch(/^\d+\/\d+ \d{2}:\d{2}$/);
+  });
+});
+
+describe("hasSelectableRemoteButtons", () => {
+  it("押せる操作が1つも無い一覧では false", () => {
+    expect(hasSelectableRemoteButtons(null)).toBe(false);
+    expect(
+      hasSelectableRemoteButtons({ fetched_at: "", devices: [catalog.devices[2]] })
+    ).toBe(false);
+    expect(hasSelectableRemoteButtons(catalog)).toBe(true);
   });
 });

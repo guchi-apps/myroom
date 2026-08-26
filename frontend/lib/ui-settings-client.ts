@@ -12,7 +12,6 @@ import {
 import {
   normalizeHiddenDeviceKeys,
 } from "@/lib/visible-devices";
-import type { RemoteButtonSetting } from "@/lib/remote";
 import { fetchUiSettings, updateUiSettings } from "@/lib/api";
 import { DASHBOARD_SENSOR_DEVICE_IDS } from "@/lib/types";
 
@@ -97,18 +96,6 @@ export async function savePressureOffsetsToServer(
   offsets: Record<string, number>
 ): Promise<void> {
   await updateUiSettings({ pressure_offsets: offsets });
-}
-
-/**
- * 「電気の操作」のボタンに付けた名前と、隠す指定（#260）。
- *
- * 送るのは差分ではなく全部。バックエンドが既定と同じ項目を落とすので、
- * 名前を消した・表示へ戻したボタンはここから自然に消える。
- */
-export async function saveRemoteButtonsToServer(
-  settings: Record<string, RemoteButtonSetting>
-): Promise<void> {
-  await updateUiSettings({ remote_buttons: settings });
 }
 
 export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS) {

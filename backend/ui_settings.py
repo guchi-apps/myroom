@@ -15,6 +15,8 @@ SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
 SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
 SETTING_REMOTE_BUTTONS = "remote_buttons"
+SETTING_REMOTE_BUTTON_DEFS = "remote_button_defs"
+SETTING_REMOTE_CATALOG = "remote_catalog"
 
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
 
@@ -45,6 +47,10 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_PRESSURE_OFFSETS: {},
         SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
         SETTING_REMOTE_BUTTONS: {},
+        # None は「まだ画面から一度も保存していない」。空の groups（1つも登録していない）
+        # と区別する必要があるため、既定値を {} にはしない（#262）
+        SETTING_REMOTE_BUTTON_DEFS: None,
+        SETTING_REMOTE_CATALOG: None,
     }
 
 
@@ -184,6 +190,45 @@ def _normalize_remote_buttons(raw: Any) -> Dict[str, Dict[str, Any]]:
     return normalized
 
 
+def _normalize_remote_button_defs(raw: Any) -> Optional[Dict[str, Any]]:
+    """「電気の操作」に並べるボタンの定義そのもの（#262）。
+
+    以前は `data/remote.json` を手で書くのが唯一の入り口だったが、デプロイの rsync が
+    リポジトリの空ファイルで本番を上書きするため、画面から書いても次のデプロイで消えた。
+    そこで正をこちらへ移し、`remote.json` は「まだ一度も保存していないとき」に読む
+    初期値だけにした。**その区別のために None を残す。** 全部消して保存した状態は
+    `{"groups": []}` で、`remote.json` へは戻らない。
+
+    中身（signal ID・押し方）の検証は `backend/remote.py` が読み込み時に行う。
+    ここで呼ぶと相互 import になるため、ここでは形だけ見る。
+    """
+    if not isinstance(raw, dict):
+        return None
+    groups = raw.get("groups")
+    if not isinstance(groups, list):
+        return None
+    return {"groups": [group for group in groups if isinstance(group, dict)]}
+
+
+def _normalize_remote_catalog(raw: Any) -> Optional[Dict[str, Any]]:
+    """Nature Remo から最後に取ってきた「登録できる操作」の一覧（#262）。
+
+    設定でも表示でもなく取得結果の控えだが、DDL 権限の要らない書き込み先が
+    `app_settings` しか無いためここに置く。**画面を開くたびに Nature Remo を
+    叩かないため**の控えで、無くても「読み込み直す」を押せば作り直せる
+    （Cloud API の上限は 30回/5分）。
+    """
+    if not isinstance(raw, dict):
+        return None
+    devices = raw.get("devices")
+    if not isinstance(devices, list):
+        return None
+    return {
+        "fetched_at": str(raw.get("fetched_at") or ""),
+        "devices": [device for device in devices if isinstance(device, dict)],
+    }
+
+
 def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = _default_settings()
     if not raw:
@@ -211,6 +256,10 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         SETTING_REMOTE_BUTTONS: _normalize_remote_buttons(
             raw.get(SETTING_REMOTE_BUTTONS, defaults[SETTING_REMOTE_BUTTONS])
         ),
+        SETTING_REMOTE_BUTTON_DEFS: _normalize_remote_button_defs(
+            raw.get(SETTING_REMOTE_BUTTON_DEFS)
+        ),
+        SETTING_REMOTE_CATALOG: _normalize_remote_catalog(raw.get(SETTING_REMOTE_CATALOG)),
     }
 
 
@@ -293,6 +342,12 @@ def save_settings(
         ),
         SETTING_REMOTE_BUTTONS: updates.get(
             SETTING_REMOTE_BUTTONS, current.get(SETTING_REMOTE_BUTTONS, {})
+        ),
+        SETTING_REMOTE_BUTTON_DEFS: updates.get(
+            SETTING_REMOTE_BUTTON_DEFS, current.get(SETTING_REMOTE_BUTTON_DEFS)
+        ),
+        SETTING_REMOTE_CATALOG: updates.get(
+            SETTING_REMOTE_CATALOG, current.get(SETTING_REMOTE_CATALOG)
         ),
     }
     normalized = _normalize_settings(merged)
