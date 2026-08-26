@@ -28,6 +28,7 @@ import {
   fetchDevices,
   fetchOutdoorLocation,
   fetchRemoteButtons,
+  saveRemoteConfig,
   searchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
@@ -37,7 +38,7 @@ import {
   countRemoteButtons,
   countVisibleRemoteButtons,
   type RemoteButtons,
-  type RemoteButtonSetting,
+  type RemoteConfigUpdate,
 } from "@/lib/remote";
 import {
   AIRCON_TARGET_COLOR_KEY,
@@ -98,7 +99,6 @@ import {
   saveDisplayOrderToServer,
   saveHiddenDevicesToServer,
   savePressureOffsetsToServer,
-  saveRemoteButtonsToServer,
   saveStaleAlertExcludedToServer,
 } from "@/lib/ui-settings-client";
 
@@ -263,21 +263,20 @@ export function DeviceVisibilityPage() {
   }, []);
 
   /**
-   * 「電気の操作」のボタン名・隠す指定を保存する。
+   * 「電気の操作」に並べるボタンの登録内容と、名前・隠す指定を保存する（#262）。
    *
    * 他の設定と違って投げっぱなしにしない。シートは保存の結果を見て閉じるため、
    * 失敗をシート側に返して画面に出せるようにする。
    */
-  const handleRemoteButtonsSave = useCallback(
-    async (settings: Record<string, RemoteButtonSetting>) => {
+  const handleRemoteConfigSave = useCallback(
+    async (update: RemoteConfigUpdate) => {
       try {
-        await saveRemoteButtonsToServer(settings);
+        // 保存後の並び・名前はバックエンドが決める。応答をそのまま画面へ反映する
+        setRemoteButtons(await saveRemoteConfig(update));
       } catch (err) {
         if (err instanceof AuthError) setIsAuthenticated(false);
         throw err;
       }
-      // 保存後の並び・名前はバックエンドが決めるので、取り直して画面へ反映する
-      setRemoteButtons(await fetchRemoteButtons().catch(() => null));
     },
     [setIsAuthenticated]
   );
@@ -1042,7 +1041,7 @@ export function DeviceVisibilityPage() {
         <RemoteButtonSettingsSheet
           onClose={() => setRemoteSheetOpen(false)}
           buttons={remoteButtons}
-          onSave={handleRemoteButtonsSave}
+          onSave={handleRemoteConfigSave}
         />
       ) : null}
     </div>

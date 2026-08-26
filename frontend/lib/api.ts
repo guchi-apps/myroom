@@ -27,7 +27,12 @@ import {
 } from "@/lib/types";
 import type { CleaningSchedule, CleaningTaskInput } from "@/lib/cleaning";
 import type { GarbageSchedule } from "@/lib/garbage";
-import type { RemoteButtons, RemoteSendResult } from "@/lib/remote";
+import type {
+  RemoteButtons,
+  RemoteCatalog,
+  RemoteConfigUpdate,
+  RemoteSendResult,
+} from "@/lib/remote";
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
 import { toApiDateTime, type AirconHistoryPoint } from "@/lib/history-loader";
 import { expandDeviceIdsForHistory } from "@/lib/device-inheritance";
@@ -455,6 +460,43 @@ export async function sendRemoteButton(buttonId: string): Promise<RemoteSendResu
     throw new Error(body?.detail || `Request failed: ${res.status}`);
   }
   return res.json() as Promise<RemoteSendResult>;
+}
+
+/**
+ * 登録できる操作の一覧。**Nature Remo は叩かない**（最後に取った控えを返す）。
+ *
+ * 取り直すのは `refreshRemoteCatalog()` のときだけ。Cloud API の上限が
+ * 30回/5分しかないので、シートを開くたびに問い合わせない（#262）。
+ */
+export async function fetchRemoteCatalog(): Promise<RemoteCatalog> {
+  return fetchJson<RemoteCatalog>("/api/remote/catalog");
+}
+
+/** Nature Remo へ問い合わせて一覧を取り直す。理由をそのままシートに出すため detail を拾う */
+export async function refreshRemoteCatalog(): Promise<RemoteCatalog> {
+  let res: Response;
+  try {
+    res = await fetchWithAuth("/api/remote/catalog/refresh", { method: "POST" });
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
+    throw new Error("通信できませんでした（オフラインかもしれません）");
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<RemoteCatalog>;
+}
+
+/** 並べるボタンの登録内容と、付けた名前・隠す指定を1回で保存する（#262） */
+export async function saveRemoteConfig(
+  update: RemoteConfigUpdate
+): Promise<RemoteButtons> {
+  return fetchJson<RemoteButtons>("/api/remote/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  });
 }
 
 /** 消費電力カード用。エアコンとスマートプラグをまとめた集計を取る */
