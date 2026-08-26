@@ -1,3 +1,5 @@
+import type { RemoteButtonSetting } from "@/lib/remote";
+
 export type TimeRange = "day" | "week" | "month" | "year" | "custom";
 
 /** グラフの表示幅（横スクロールのウィンドウサイズ） */
@@ -107,6 +109,8 @@ export interface UiSettings {
   pressure_offsets: Record<string, number>;
   /** 電気料金の単価（円/kWh）。使用量に掛けて電気代の目安を出す */
   energy_unit_price: number;
+  /** 「電気の操作」のボタンID -> 付けた名前・隠す指定。既定のままのボタンは入らない */
+  remote_buttons: Record<string, RemoteButtonSetting>;
 }
 
 export interface EnergyTotal {
