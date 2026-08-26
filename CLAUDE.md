@@ -47,6 +47,18 @@ issue-deck のランチャーが「依存インストール済み」と伝えて
 空のスタブだった `package-lock.json` に `packages` が書き足されて差分が出る。**
 コミットに含めないこと。
 
+**バックエンドを触るなら、Python環境も自分で作ること。** サブPCには `pytest` も `pip` も
+素では入っていない（`python3 -m pip` すら無い）。**リポジトリルートに `venv/` があっても信用しない。**
+`.gitignore` 済みで中身は各ホストの残骸であり、実際に存在しない pyenv（`/home/guchi/.pyenv/versions/3.9.4`）を
+指したまま壊れていることがある。`venv/bin/python` はシンボリックリンクとして見えるのに
+`No such file or directory` で落ちる。作り直すなら worktree の外（スクラッチ領域）に置く。
+
+```bash
+python3 -m venv /tmp/<任意>/pyenv
+/tmp/<任意>/pyenv/bin/pip install -r requirements-dev.txt
+DB_MOCK=true /tmp/<任意>/pyenv/bin/python -m pytest tests/ -q
+```
+
 CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`（Node 20）の
 2ジョブに分かれている。**触った層のコマンドだけ実行すればよい。**
 

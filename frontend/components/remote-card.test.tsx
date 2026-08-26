@@ -69,4 +69,100 @@ describe("RemoteCard", () => {
     );
     expect(html).toContain("読み込めませんでした");
   });
+
+  // ---------------------------------------- 画面で選んだボタン・付けた名前（#260）
+
+  it("設定で隠したボタンは出さない", () => {
+    const html = render(
+      <RemoteCard
+        buttons={{
+          configured: true,
+          groups: [
+            {
+              id: "light",
+              name: "照明",
+              buttons: [
+                { id: "light-on", label: "点ける" },
+                { id: "light-night", label: "常夜灯", hidden: true },
+              ],
+            },
+          ],
+        }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("点ける");
+    expect(html).not.toContain("常夜灯");
+  });
+
+  it("残ったボタンが無いグループは見出しごと出さない", () => {
+    const html = render(
+      <RemoteCard
+        buttons={{
+          configured: true,
+          groups: [
+            {
+              id: "light",
+              name: "照明",
+              buttons: [{ id: "light-on", label: "点ける" }],
+            },
+            {
+              id: "tv",
+              name: "テレビ",
+              buttons: [{ id: "tv-power", label: "電源", hidden: true }],
+            },
+          ],
+        }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("照明");
+    expect(html).not.toContain("テレビ");
+  });
+
+  it("全部隠したときは、空のカードにせず選び直せることを案内する", () => {
+    const html = render(
+      <RemoteCard
+        buttons={{
+          configured: true,
+          groups: [
+            {
+              id: "light",
+              name: "照明",
+              buttons: [{ id: "light-on", label: "点ける", hidden: true }],
+            },
+          ],
+        }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("ダッシュボードの表示");
+    expect(html).not.toContain("点ける");
+  });
+
+  it("付けた名前をそのままボタンに出す", () => {
+    const html = render(
+      <RemoteCard
+        buttons={{
+          configured: true,
+          groups: [
+            {
+              id: "light",
+              name: "照明",
+              buttons: [
+                { id: "light-on", label: "あかりをつける", default_label: "点ける" },
+              ],
+            },
+          ],
+        }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("あかりをつける");
+    expect(html).not.toContain(">点ける<");
+  });
 });

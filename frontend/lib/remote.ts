@@ -7,7 +7,26 @@
 
 export interface RemoteButton {
   id: string;
+  /** 画面に出す名前。付けた名前があればそれ、無ければ remote.json の名前 */
   label: string;
+  /** remote.json に書かれている元の名前。設定画面で「もとの名前」として出す */
+  default_label?: string;
+  /** ダッシュボードに出さない指定。一覧には残るので設定画面からは戻せる */
+  hidden?: boolean;
+}
+
+/** ボタン1つぶんの上書き。UI設定の `remote_buttons` に入る（#260） */
+export interface RemoteButtonSetting {
+  label?: string;
+  hidden?: boolean;
+  /**
+   * 保存した時点で remote.json に書かれていた名前。
+   *
+   * ボタンIDは remote.json 側で `id` を省くと並び順から採番されるため、あとから
+   * ボタンを挿すと設定が別のボタンへずれる。バックエンドはこの値が今の名前と
+   * 食い違う設定を無視して、ずれたまま反映されるのを防ぐ。
+   */
+  default_label?: string;
 }
 
 export interface RemoteGroup {
@@ -41,9 +60,35 @@ export interface RemoteFeedback {
 /** 成功メッセージが出ている時間。長いと次の操作の邪魔になる */
 export const REMOTE_SENT_MESSAGE_MS = 3000;
 
+/** ボタンに付けられる名前の長さ。バックエンドの MAX_REMOTE_LABEL_LENGTH と揃える */
+export const REMOTE_LABEL_MAX_LENGTH = 20;
+
 export function countRemoteButtons(buttons: RemoteButtons | null): number {
   if (!buttons) return 0;
   return buttons.groups.reduce((total, group) => total + group.buttons.length, 0);
+}
+
+/**
+ * ダッシュボードに出すぶんだけに絞る。
+ *
+ * API は隠したボタンも `hidden: true` を付けて返す（設定画面が一覧に出すため）。
+ * カードに出す段階でここを通す。1つも残らなかったグループは、見出しだけが浮くので落とす。
+ */
+export function visibleRemoteGroups(buttons: RemoteButtons | null): RemoteGroup[] {
+  if (!buttons) return [];
+  return buttons.groups
+    .map((group) => ({
+      ...group,
+      buttons: group.buttons.filter((button) => !button.hidden),
+    }))
+    .filter((group) => group.buttons.length > 0);
+}
+
+export function countVisibleRemoteButtons(buttons: RemoteButtons | null): number {
+  return visibleRemoteGroups(buttons).reduce(
+    (total, group) => total + group.buttons.length,
+    0
+  );
 }
 
 export function findRemoteButton(

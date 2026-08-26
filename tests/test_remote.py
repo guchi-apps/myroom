@@ -71,8 +71,8 @@ def test_build_payload_keeps_order_and_hides_signal_ids(remote_config):
     assert payload["configured"] is True
     assert [group["name"] for group in payload["groups"]] == ["照明", "テレビ"]
     assert payload["groups"][0]["buttons"] == [
-        {"id": "light-on", "label": "点ける"},
-        {"id": "light-off", "label": "消す"},
+        {"id": "light-on", "label": "点ける", "default_label": "点ける", "hidden": False},
+        {"id": "light-off", "label": "消す", "default_label": "消す", "hidden": False},
     ]
     # signal ID・appliance ID は画面へ出さない
     assert "signal_id" not in payload["groups"][1]["buttons"][0]
@@ -122,6 +122,111 @@ def test_duplicate_button_ids_are_dropped(remote_config):
     assert [button["label"] for button in buttons] == ["点ける"]
     # 先に書いた方が残る（後勝ちにすると押す先が入れ替わる）
     assert remote.find_button("same")["signal_id"] == "sig-1"
+
+
+# -------------------------------------------- 画面で付けた名前・隠す指定（#260）
+
+
+def test_overrides_replace_label_and_keep_default(remote_config):
+    write_config(remote_config)
+    payload = remote.build_payload({"light-on": {"label": "あかりをつける"}})
+
+    button = payload["groups"][0]["buttons"][0]
+    assert button["label"] == "あかりをつける"
+    # もとの名前は設定画面で出すので残す
+    assert button["default_label"] == "点ける"
+
+
+def test_hidden_buttons_stay_in_payload_with_flag(remote_config):
+    write_config(remote_config)
+    payload = remote.build_payload({"light-off": {"hidden": True}})
+
+    buttons = payload["groups"][0]["buttons"]
+    # 設定画面が一覧に出すため、隠したボタンも消さない
+    assert [button["id"] for button in buttons] == ["light-on", "light-off"]
+    assert [button["hidden"] for button in buttons] == [False, True]
+
+
+def test_blank_label_falls_back_to_remote_json(remote_config):
+    write_config(remote_config)
+    payload = remote.build_payload({"light-on": {"label": "   "}})
+    assert payload["groups"][0]["buttons"][0]["label"] == "点ける"
+
+
+def test_overrides_for_unknown_buttons_are_ignored(remote_config):
+    write_config(remote_config)
+    payload = remote.build_payload({"no-such-button": {"label": "幽霊"}})
+    labels = [button["label"] for button in payload["groups"][0]["buttons"]]
+    assert labels == ["点ける", "消す"]
+
+
+def test_broken_overrides_do_not_break_payload(remote_config):
+    write_config(remote_config)
+    # 設定が壊れていてもカードは出す（remote.json だけで成り立つため）
+    payload = remote.build_payload({"light-on": "文字列", "light-off": None})
+    assert [button["label"] for button in payload["groups"][0]["buttons"]] == [
+        "点ける",
+        "消す",
+    ]
+
+
+def test_override_is_dropped_when_the_button_at_that_id_changed(remote_config):
+    """ボタンを挿すとIDがずれるので、控えた元の名前と食い違う設定は捨てる。
+
+    `id` を省いたボタンは並び順から採番される（tv-1・tv-2 …）。あとから先頭に
+    1つ挿すと、それまで tv-1 だったボタンが tv-2 になり、tv-1 の設定が黙って
+    別のボタンに付いてしまう。
+    """
+    write_config(remote_config)
+    overrides = {"tv-1": {"label": "テレビ", "default_label": "電源"}}
+    assert remote.build_payload(overrides)["groups"][1]["buttons"][0]["label"] == "テレビ"
+
+    # 「電源」の前に「入力切替」を挿す。tv-1 は別のボタンになる
+    shifted = dict(SAMPLE_CONFIG)
+    shifted["groups"] = [
+        SAMPLE_CONFIG["groups"][0],
+        {
+            "id": "tv",
+            "name": "テレビ",
+            "buttons": [
+                {"label": "入力切替", "signal_id": "sig-0"},
+                {"label": "電源", "signal_id": "sig-1"},
+            ],
+        },
+    ]
+    write_config(remote_config, shifted)
+
+    labels = [
+        button["label"] for button in remote.build_payload(overrides)["groups"][1]["buttons"]
+    ]
+    # ずれた設定は当たらない。remote.json の名前がそのまま出る
+    assert labels == ["入力切替", "電源"]
+
+
+def test_override_without_default_label_still_applies(remote_config):
+    """`default_label` を持たない古い設定は、そのまま当てる（判断材料が無いため）。"""
+    write_config(remote_config)
+    payload = remote.build_payload({"light-on": {"label": "あかりをつける"}})
+    assert payload["groups"][0]["buttons"][0]["label"] == "あかりをつける"
+
+
+def test_press_reports_the_name_shown_on_screen(remote_config, monkeypatch):
+    write_config(remote_config)
+    monkeypatch.setenv(remote.ENV_TOKEN, "test-token")
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(200))
+
+    result = remote.press("light-on", {"light-on": {"label": "あかりをつける"}})
+    assert result["label"] == "あかりをつける"
+
+
+def test_hidden_button_can_still_be_pressed(remote_config, monkeypatch):
+    """隠すのは表示の話。ボタンそのものを消したわけではない。"""
+    write_config(remote_config)
+    monkeypatch.setenv(remote.ENV_TOKEN, "test-token")
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(200))
+
+    result = remote.press("light-on", {"light-on": {"hidden": True}})
+    assert result["sent"] is True
 
 
 # ------------------------------------------------------------------------ 送信
