@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, energy, garbage, garbage_notify, garbage_notion, login_notify, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, login_notify, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -97,12 +97,28 @@ async def _garbage_notion_sync_loop() -> None:
         await asyncio.sleep(GARBAGE_NOTION_SYNC_INTERVAL_SECONDS)
 
 
+#: 次の掃除の Notion への書き出し間隔。掃除は画面からいつでも足せるので、
+#: 「今日はもう同期したか」では間引かずに毎回差分を取る（書き込みは差分があるときだけ）。
+CLEANING_NOTION_SYNC_INTERVAL_SECONDS = 3600
+
+
+async def _cleaning_notion_sync_loop() -> None:
+    """次の掃除を Notion のタスクへ書き出し、完了になったものを読み戻す。"""
+    while True:
+        try:
+            await asyncio.to_thread(cleaning_notion.run_sync)
+        except Exception:  # Notion 側の障害で API を落とさない
+            logger.exception("Cleaning Notion sync failed")
+        await asyncio.sleep(CLEANING_NOTION_SYNC_INTERVAL_SECONDS)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     tasks = []
     if not database.DB_MOCK:
         tasks.append(asyncio.create_task(_garbage_notify_loop()))
         tasks.append(asyncio.create_task(_garbage_notion_sync_loop()))
+        tasks.append(asyncio.create_task(_cleaning_notion_sync_loop()))
     try:
         yield
     finally:
@@ -187,6 +203,24 @@ class UiSettingsUpdate(BaseModel):
     stale_alert_excluded_devices: Optional[List[str]] = None
     pressure_offsets: Optional[Dict[str, float]] = None
     energy_unit_price: Optional[float] = None
+
+
+class CleaningTaskUpdate(BaseModel):
+    """掃除の予定1件。画面から送られる定義（実施履歴はサーバー側で引き継ぐ）。"""
+
+    id: Optional[str] = None
+    name: str
+    interval_days: int
+    steps: List[str] = []
+
+
+class CleaningTasksUpdate(BaseModel):
+    tasks: List[CleaningTaskUpdate]
+
+
+class CleaningDoneRequest(BaseModel):
+    #: 実施日（YYYY-MM-DD）。省略時は今日（JST）
+    date: Optional[str] = None
 
 
 class DailyEnergyItem(BaseModel):
@@ -646,6 +680,49 @@ def get_internal_room_state(
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
     return garbage.build_payload()
+
+
+@app.get("/api/cleaning")
+def get_cleaning(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """掃除の予定と、次にやる日・残り日数。定義は app_settings に入っている。"""
+    return cleaning.build_payload(cleaning.get_tasks(db))
+
+
+@app.put("/api/cleaning/tasks")
+def update_cleaning_tasks(
+    body: CleaningTasksUpdate,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """定義をまとめて置き換える（追加・編集・削除・並べ替えを1回で受ける）。"""
+    tasks = cleaning.save_tasks([item.model_dump() for item in body.tasks], db=db)
+    return cleaning.build_payload(tasks)
+
+
+@app.post("/api/cleaning/tasks/{task_id}/done")
+def mark_cleaning_done(
+    task_id: str,
+    body: Optional[CleaningDoneRequest] = None,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """掃除をやった記録を足す。次にやる日はこの日から数え直す。"""
+    done_on = None
+    if body is not None and body.date:
+        try:
+            done_on = datetime.date.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="date は YYYY-MM-DD で指定してください"
+            ) from None
+
+    tasks, found = cleaning.mark_done(task_id, db, done_on=done_on)
+    if not found:
+        raise HTTPException(status_code=404, detail="指定された掃除が見つかりません")
+    return cleaning.build_payload(tasks)
 
 
 @app.get("/api/remote/buttons")

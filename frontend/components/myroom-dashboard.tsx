@@ -9,6 +9,11 @@ import { LoginScreen } from "@/components/login-screen";
 import { METRIC_ICONS } from "@/components/current-readings";
 import { TrendPanel } from "@/components/trend-panel";
 import { BillCard } from "@/components/bill-card";
+import { CleaningCard } from "@/components/cleaning-card";
+import {
+  CleaningDetailPanel,
+  CleaningSettingsPanel,
+} from "@/components/cleaning-detail-panel";
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { PowerCard } from "@/components/power-card";
@@ -21,6 +26,7 @@ import { AirconControlPanel } from "@/components/aircon-control-panel";
 import { Button } from "@/components/ui/button";
 import {
   fetchBillsSummary,
+  fetchCleaningSchedule,
   fetchDashboardData,
   fetchDevices,
   fetchEnergyBreakdown,
@@ -29,6 +35,8 @@ import {
   fetchAirconUnitsResponse,
   fetchRemoteButtons,
   fetchSensorsStatus,
+  markCleaningDone,
+  updateCleaningTasks,
 } from "@/lib/api";
 import {
   buildDashboardOfflineSnapshot,
@@ -77,12 +85,18 @@ import {
 import {
   COMING_SOON_CARDS,
   BILL_CARD_KEY,
+  CLEANING_CARD_KEY,
   COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
   REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
+import type {
+  CleaningSchedule,
+  CleaningTask,
+  CleaningTaskInput,
+} from "@/lib/cleaning";
 import type { GarbageSchedule } from "@/lib/garbage";
 import type { RemoteButtons } from "@/lib/remote";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
@@ -311,6 +325,13 @@ export function MyRoomDashboard() {
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
+  const [cleaningSchedule, setCleaningSchedule] = useState<CleaningSchedule | null>(null);
+  const [cleaningError, setCleaningError] = useState(false);
+  const [cleaningTaskId, setCleaningTaskId] = useState<string | null>(null);
+  const [cleaningSettingsOpen, setCleaningSettingsOpen] = useState(false);
+  const [cleaningBusyId, setCleaningBusyId] = useState<string | null>(null);
+  const [cleaningSaving, setCleaningSaving] = useState(false);
+  const [cleaningSaveError, setCleaningSaveError] = useState<string | null>(null);
   const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
   const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
@@ -385,6 +406,12 @@ export function MyRoomDashboard() {
   const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
   const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
   const billCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, BILL_CARD_KEY);
+  const cleaningCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, CLEANING_CARD_KEY);
+
+  // 開いている項目は id で覚える。実施を記録すると一覧が作り直されるため、
+  // オブジェクトを持つと古い「次にやる日」がシートに残る
+  const activeCleaningTask =
+    cleaningSchedule?.tasks.find((task) => task.id === cleaningTaskId) ?? null;
   const comingSoonVisible = isHiddenKeyVisible(hiddenDeviceKeys, COMING_SOON_SECTION_KEY);
 
   const {
@@ -538,6 +565,46 @@ export function MyRoomDashboard() {
     }
   }, []);
 
+  /**
+   * 掃除をやった記録を足す。応答が次の予定まで含んだ一覧なので、
+   * 取り直さずにそのまま置き換える。
+   */
+  const handleMarkCleaningDone = useCallback(async (task: CleaningTask) => {
+    setCleaningBusyId(task.id);
+    try {
+      setCleaningSchedule(await markCleaningDone(task.id));
+      setCleaningError(false);
+    } catch (err) {
+      if (err instanceof AuthError) {
+        setIsAuthenticated(false);
+        return;
+      }
+      setCleaningError(true);
+    } finally {
+      setCleaningBusyId(null);
+    }
+  }, [setIsAuthenticated]);
+
+  const handleSaveCleaningTasks = useCallback(async (tasks: CleaningTaskInput[]) => {
+    setCleaningSaving(true);
+    setCleaningSaveError(null);
+    try {
+      setCleaningSchedule(await updateCleaningTasks(tasks));
+      setCleaningError(false);
+      setCleaningSettingsOpen(false);
+    } catch (err) {
+      if (err instanceof AuthError) {
+        setIsAuthenticated(false);
+        return;
+      }
+      setCleaningSaveError(
+        err instanceof Error ? err.message : "保存できませんでした"
+      );
+    } finally {
+      setCleaningSaving(false);
+    }
+  }, [setIsAuthenticated]);
+
   const fetchData = useCallback(
     async (options?: { showChartLoading?: boolean; reloadHistory?: boolean }) => {
       const showChartLoading = options?.showChartLoading ?? false;
@@ -553,14 +620,16 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage, energy, remote, bills] = await Promise.all([
-          fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
-          fetchSensorsStatus().catch(() => null),
-          fetchGarbageSchedule().catch(() => null),
-          fetchEnergyBreakdown().catch(() => null),
-          fetchRemoteButtons().catch(() => null),
-          fetchBillsSummary().catch(() => null),
-        ]);
+        const [data, sensorsStatus, garbage, energy, remote, bills, cleaning] =
+          await Promise.all([
+            fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
+            fetchSensorsStatus().catch(() => null),
+            fetchGarbageSchedule().catch(() => null),
+            fetchEnergyBreakdown().catch(() => null),
+            fetchRemoteButtons().catch(() => null),
+            fetchBillsSummary().catch(() => null),
+            fetchCleaningSchedule().catch(() => null),
+          ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
         setLatestByDevice(data.latestByDevice);
@@ -582,6 +651,8 @@ export function MyRoomDashboard() {
         setRemoteError(remote == null);
         if (bills) setBillSummary(bills);
         setBillError(bills == null);
+        if (cleaning) setCleaningSchedule(cleaning);
+        setCleaningError(cleaning == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -1042,7 +1113,8 @@ export function MyRoomDashboard() {
           {(remoteCardVisible ||
             garbageCardVisible ||
             energyCardVisible ||
-            billCardVisible) && (
+            billCardVisible ||
+            cleaningCardVisible) && (
             <section>
               <div className="mb-3 px-0.5">
                 <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
@@ -1076,6 +1148,22 @@ export function MyRoomDashboard() {
                     loading={!dashboardDataLoaded && billSummary == null}
                     error={billError && billSummary == null}
                     onOpenDetail={() => setBillPanelOpen(true)}
+                  />
+                )}
+                {cleaningCardVisible && (
+                  <CleaningCard
+                    schedule={cleaningSchedule}
+                    loading={!dashboardDataLoaded && cleaningSchedule == null}
+                    error={cleaningError && cleaningSchedule == null}
+                    busyTaskId={cleaningBusyId}
+                    onOpenTask={(task) => setCleaningTaskId(task.id)}
+                    onOpenSettings={() => {
+                      setCleaningSaveError(null);
+                      setCleaningSettingsOpen(true);
+                    }}
+                    onMarkDone={(task) => {
+                      void handleMarkCleaningDone(task);
+                    }}
                   />
                 )}
               </div>
@@ -1201,6 +1289,32 @@ export function MyRoomDashboard() {
           open={billPanelOpen}
           summary={billSummary}
           onClose={() => setBillPanelOpen(false)}
+        />
+      )}
+
+      {activeCleaningTask && (
+        <CleaningDetailPanel
+          open={cleaningTaskId != null}
+          task={activeCleaningTask}
+          today={cleaningSchedule?.today ?? ""}
+          busy={cleaningBusyId === activeCleaningTask.id}
+          onClose={() => setCleaningTaskId(null)}
+          onMarkDone={(task) => {
+            void handleMarkCleaningDone(task);
+          }}
+        />
+      )}
+
+      {cleaningSettingsOpen && (
+        <CleaningSettingsPanel
+          open={cleaningSettingsOpen}
+          schedule={cleaningSchedule}
+          saving={cleaningSaving}
+          error={cleaningSaveError}
+          onClose={() => setCleaningSettingsOpen(false)}
+          onSave={(tasks) => {
+            void handleSaveCleaningTasks(tasks);
+          }}
         />
       )}
 

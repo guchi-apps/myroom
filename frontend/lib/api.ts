@@ -25,6 +25,7 @@ import {
   type UiSettings,
   type UtilityBillSummary,
 } from "@/lib/types";
+import type { CleaningSchedule, CleaningTaskInput } from "@/lib/cleaning";
 import type { GarbageSchedule } from "@/lib/garbage";
 import type { RemoteButtons, RemoteSendResult } from "@/lib/remote";
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
@@ -392,6 +393,43 @@ export async function notifyLogin(): Promise<void> {
 
 export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
   return fetchJson<GarbageSchedule>("/api/garbage");
+}
+
+/** 掃除カード用。場所ごとの次にやる日まで計算済みで返る */
+export async function fetchCleaningSchedule(): Promise<CleaningSchedule> {
+  return fetchJson<CleaningSchedule>("/api/cleaning");
+}
+
+/**
+ * 掃除の定義をまとめて置き換える（追加・編集・削除・並べ替えを1回で送る）。
+ * 実施履歴は送らない。同じ id の項目からサーバー側が引き継ぐ。
+ */
+export async function updateCleaningTasks(
+  tasks: CleaningTaskInput[]
+): Promise<CleaningSchedule> {
+  const res = await fetchWithAuth("/api/cleaning/tasks", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tasks }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<CleaningSchedule>;
+}
+
+/** 掃除をやった記録を足す。次にやる日はこの日から数え直される */
+export async function markCleaningDone(taskId: string): Promise<CleaningSchedule> {
+  const res = await fetchWithAuth(
+    `/api/cleaning/tasks/${encodeURIComponent(taskId)}/done`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<CleaningSchedule>;
 }
 
 /** 電気の操作カード用。押せるボタンの一覧だけを取る（Nature Remo は叩かない） */
