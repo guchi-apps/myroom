@@ -102,3 +102,39 @@ def test_saving_other_settings_keeps_remote_buttons(data_dir):
     )
     saved = ui_settings.save_settings({ui_settings.SETTING_HIDDEN_DEVICES: ["device:2"]})
     assert saved[ui_settings.SETTING_REMOTE_BUTTONS] == {"light-on": {"label": "あかり"}}
+
+
+def test_life_card_order_default_is_empty(data_dir):
+    """まだ並べ替えていない状態。既定の並びはフロント側の LIFE_CARDS が持つ（#283）"""
+    assert ui_settings.get_settings()[ui_settings.SETTING_LIFE_CARD_ORDER] == []
+
+
+def test_life_card_order_save_and_load(data_dir):
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_LIFE_CARD_ORDER: ["cleaning", "garbage", "remote"]}
+    )
+    assert saved[ui_settings.SETTING_LIFE_CARD_ORDER] == ["cleaning", "garbage", "remote"]
+    assert ui_settings.get_settings()[ui_settings.SETTING_LIFE_CARD_ORDER] == [
+        "cleaning",
+        "garbage",
+        "remote",
+    ]
+
+
+def test_life_card_order_drops_duplicates_and_broken_entries(data_dir):
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_LIFE_CARD_ORDER: ["garbage", " garbage ", "", 3, None, "remote"]}
+    )
+    assert saved[ui_settings.SETTING_LIFE_CARD_ORDER] == ["garbage", "remote"]
+
+
+def test_saving_other_settings_keeps_life_card_order(data_dir):
+    """save_settings の merged に並べたキーだけが引き継がれるため、別の設定の保存で確かめる"""
+    ui_settings.save_settings(
+        {ui_settings.SETTING_LIFE_CARD_ORDER: ["cleaning", "remote"]}
+    )
+    saved = ui_settings.save_settings({ui_settings.SETTING_HIDDEN_DEVICES: ["device:2"]})
+    assert saved[ui_settings.SETTING_LIFE_CARD_ORDER] == ["cleaning", "remote"]
+
+    loaded = ui_settings.get_settings()
+    assert loaded[ui_settings.SETTING_LIFE_CARD_ORDER] == ["cleaning", "remote"]
