@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { APP_VERSION } from "@/lib/app-version";
+import { hasUnsavedEdits } from "@/lib/unsaved-edits";
 
 /** 開きっぱなしのセッション向けの定期チェック間隔 */
 const POLL_INTERVAL_MS = 10 * 60 * 1000;
@@ -38,10 +39,21 @@ export function AppUpdateChecker() {
       try {
         const res = await fetch(VERSION_ENDPOINT, { cache: "no-store" });
         if (!res.ok) return null;
+        // 静的書き出しの配信は、見つからないパスにも `index.html` を 200 で返す
+        // （`backend/main.py` の `serve_frontend`）。`version.json` の配信漏れは
+        // 404 ではなく「HTMLが返る」形で現れるため、`res.json()` の失敗を握り潰すと
+        // **自動更新が黙って一生動かない**。JSONでなければ気付けるように残す（#277）
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("json")) {
+          console.warn(
+            `${VERSION_ENDPOINT} did not return JSON (${contentType || "no content-type"}). 自動更新は動きません。`
+          );
+          return null;
+        }
         const data = (await res.json()) as { version?: string };
         return data.version ?? null;
       } catch {
-        // オフラインや配信漏れでは黙って何もしない（次の機会に拾えばよい）
+        // オフラインでは黙って何もしない（次の機会に拾えばよい）
         return null;
       } finally {
         checkingRef.current = false;
@@ -52,6 +64,12 @@ export function AppUpdateChecker() {
       if (document.visibilityState !== "visible") return;
       const latest = await fetchLatestVersion();
       if (cancelled || !latest || latest === APP_VERSION) return;
+      // 設定シートは閉じるまで保存しない。開いている間にリロードすると
+      // 書きかけの入力が黙って消えるので、バナーへ倒して押されるのを待つ
+      if (hasUnsavedEdits()) {
+        setUpdateAvailable(true);
+        return;
+      }
       setReloading(true);
       window.location.reload();
     }

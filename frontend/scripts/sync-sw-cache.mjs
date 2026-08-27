@@ -8,7 +8,7 @@
  * `public/` にも置くとリポジトリにバージョンごとの差分が生まれるうえ、
  * 開発サーバーでは常に自分と同じ値が返るので意味が無い。
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,10 +40,17 @@ for (const relativePath of ["public/sw.js", "out/sw.js"]) {
   }
 }
 
-const versionJsonPath = join(root, "out/version.json");
-try {
+/*
+ * `out/` があるのに `version.json` を書けなかったときは**警告で済ませず落とす**。
+ * 配信は見つからないパスにも `index.html` を 200 で返すため（`backend/main.py` の
+ * `serve_frontend`）、書き漏らしても 404 にならず、アプリ側では
+ * 「自動更新が黙って一生動かない」という形でしか現れない。
+ */
+const outDir = join(root, "out");
+if (existsSync(outDir)) {
+  const versionJsonPath = join(outDir, "version.json");
   writeFileSync(versionJsonPath, `${JSON.stringify({ version }, null, 2)}\n`, "utf8");
   console.log(`Wrote out/version.json -> ${version}`);
-} catch (error) {
-  console.warn(`Skipped out/version.json: ${error.message}`);
+} else {
+  console.warn("Skipped out/version.json: out/ does not exist");
 }
