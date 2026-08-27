@@ -4,7 +4,6 @@ import { LifeSettingsSheet } from "@/components/life-settings-sheet";
 import {
   BILL_CARD_KEY,
   CLEANING_CARD_KEY,
-  ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
   REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";

@@ -41,6 +41,7 @@ import {
   setChartColor,
   type ChartColorSettings,
 } from "@/lib/chart-colors";
+import { moveOrderItem, reorderItems } from "@/lib/ordering";
 import {
   DISPLAY_ORDER_CHANGED_EVENT,
   getDisplayOrderLabel,
@@ -423,10 +424,12 @@ export function DeviceVisibilityPage() {
     setDragOverIndex(null);
     if (!Number.isFinite(fromIndex) || fromIndex === index) return;
 
-    const next = [...displayedTargets];
-    const [moved] = next.splice(fromIndex, 1);
-    next.splice(index, 0, moved);
-    persistDisplayOrder(sortDisplayOrderHiddenLast(next, hiddenKeys));
+    persistDisplayOrder(
+      sortDisplayOrderHiddenLast(
+        reorderItems(displayedTargets, fromIndex, index),
+        hiddenKeys
+      )
+    );
   };
 
   const handleDragEnd = () => {
@@ -435,12 +438,12 @@ export function DeviceVisibilityPage() {
   };
 
   const handleMove = (index: number, direction: -1 | 1) => {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= displayedTargets.length) return;
-
-    const next = [...displayedTargets];
-    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-    persistDisplayOrder(sortDisplayOrderHiddenLast(next, hiddenKeys));
+    persistDisplayOrder(
+      sortDisplayOrderHiddenLast(
+        moveOrderItem(displayedTargets, index, direction),
+        hiddenKeys
+      )
+    );
   };
 
   const setDraft = (key: string, value: string) => {

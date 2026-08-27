@@ -1,4 +1,5 @@
 import { LIFE_CARDS, type LifeCardDefinition } from "@/lib/dashboard-sections";
+import { moveOrderItem, normalizeOrderKeys, reorderItems } from "@/lib/ordering";
 
 /**
  * 「暮らし」のカードを並べる順（#283）。
@@ -8,6 +9,9 @@ import { LIFE_CARDS, type LifeCardDefinition } from "@/lib/dashboard-sections";
  * 消えたキーを捨てて足りないキーを補うのはここの仕事。カードを1枚増やしたときに
  * 「保存済みの順番を持っている人にだけ新しいカードが出ない」という形にならないよう、
  * 知らないキーは落とし、`LIFE_CARDS` にあって並びに無いキーは末尾へ足す。
+ *
+ * **整える規則そのものは `lib/ordering.ts` と共有する。** 「いまの環境」の並び替え
+ * （`lib/display-order.ts`）と同じ仕様なので、ここには暮らし固有の既定値だけを置く。
  */
 
 export function buildDefaultLifeCardOrder(): string[] {
@@ -17,25 +21,7 @@ export function buildDefaultLifeCardOrder(): string[] {
 export function normalizeLifeCardOrder(
   saved: readonly string[] | null | undefined
 ): string[] {
-  const defaults = buildDefaultLifeCardOrder();
-  if (!saved?.length) return defaults;
-
-  const known = new Set(defaults);
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-
-  for (const key of saved) {
-    if (typeof key !== "string") continue;
-    if (!known.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(key);
-  }
-
-  for (const key of defaults) {
-    if (!seen.has(key)) normalized.push(key);
-  }
-
-  return normalized;
+  return normalizeOrderKeys(saved, buildDefaultLifeCardOrder());
 }
 
 /** 並び順のキーを、そのままカードの定義へ引き直す */
@@ -53,13 +39,7 @@ export function moveLifeCardOrderItem(
   index: number,
   direction: -1 | 1
 ): string[] {
-  const nextIndex = index + direction;
-  if (index < 0 || index >= order.length) return [...order];
-  if (nextIndex < 0 || nextIndex >= order.length) return [...order];
-
-  const next = [...order];
-  [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-  return next;
+  return moveOrderItem(order, index, direction);
 }
 
 /** 抜いて差し込む（PCのドラッグ） */
@@ -68,12 +48,5 @@ export function reorderLifeCards(
   fromIndex: number,
   toIndex: number
 ): string[] {
-  if (fromIndex === toIndex) return [...order];
-  if (fromIndex < 0 || fromIndex >= order.length) return [...order];
-  if (toIndex < 0 || toIndex >= order.length) return [...order];
-
-  const next = [...order];
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved);
-  return next;
+  return reorderItems(order, fromIndex, toIndex);
 }

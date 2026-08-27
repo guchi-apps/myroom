@@ -36,8 +36,14 @@ interface LifeSettingsSheetProps {
  * 並び順もここで変えられるようにしている。`/devices` 側からは暮らしの節ごと外した
  * （同じ設定を2か所に置くと片方が古くなる）。
  *
- * 並べ替えの操作は `/devices` と揃える。PCは左のグリップをドラッグ、スマホは上下の矢印。
- * 出し方（スマホは下から、PCは中央）は `app-settings-sheet.tsx` と揃える。
+ * 並べ替えの操作と正規化の規則は `/devices` と揃える（PCは左のグリップをドラッグ、
+ * スマホは上下の矢印。入れ替えは `lib/ordering.ts` を共有する）。出し方
+ * （スマホは下から、PCは中央）は `app-settings-sheet.tsx` と揃える。
+ *
+ * **押した時点で保存する。** `/devices` の表示・非表示と同じ即時保存なので、
+ * `useUnsavedEdits()` は呼ばない。閉じるまで書かない形にすると、並べ替えている途中で
+ * 別アプリへ行って戻っただけで `app-update-checker.tsx` の自動リロードが走り、
+ * 変更が黙って消える。「完了」は閉じるだけのボタンで、保存ボタンではない。
  */
 export function LifeSettingsSheet({
   open,
@@ -142,7 +148,7 @@ export function LifeSettingsSheet({
                       )}
                       aria-label={`${card.label}を上へ`}
                     >
-                      <ArrowUp className="size-4" strokeWidth={2} />
+                      <ArrowUp className="size-4" strokeWidth={1.75} />
                     </button>
                     <button
                       type="button"
@@ -156,11 +162,13 @@ export function LifeSettingsSheet({
                       )}
                       aria-label={`${card.label}を下へ`}
                     >
-                      <ArrowDown className="size-4" strokeWidth={2} />
+                      <ArrowDown className="size-4" strokeWidth={1.75} />
                     </button>
                   </div>
 
-                  <div
+                  {/* `components/device-list-item.tsx` のグリップと同じ形にする */}
+                  <button
+                    type="button"
                     draggable
                     onDragStart={(event) => {
                       setDragIndex(index);
@@ -171,11 +179,11 @@ export function LifeSettingsSheet({
                       setDragIndex(null);
                       setDragOverIndex(null);
                     }}
-                    className="hidden shrink-0 cursor-grab items-center text-muted-foreground active:cursor-grabbing sm:flex"
-                    aria-hidden
+                    className="hidden size-8 shrink-0 cursor-grab items-center justify-center rounded-lg text-muted-foreground active:cursor-grabbing sm:flex"
+                    aria-label={`${card.label}の順番を変更`}
                   >
-                    <GripVertical className="size-[18px]" strokeWidth={1.75} />
-                  </div>
+                    <GripVertical className="size-4" strokeWidth={1.75} />
+                  </button>
 
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 text-sm font-bold">
