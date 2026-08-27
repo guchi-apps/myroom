@@ -992,12 +992,17 @@ export function MyRoomDashboard() {
                   const accentColor = getDeviceChartColor(chartColors, deviceId);
                   const indoorReadings = buildIndoorReadings(latestByDevice[deviceId]);
                   // 照度を送ってこないデバイス・しきい値が未設定のデバイスでは null に
-                  // なり、カードはこれまでどおりバッジ無しで並ぶ（#258）
-                  const lightStatus = resolveDeviceLightStatus(
-                    latestByDevice[deviceId],
-                    lightThresholds,
-                    deviceId
-                  );
+                  // なり、カードはこれまでどおりバッジ無しで並ぶ（#258）。
+                  // **データが届いていないデバイスでは出さない。** カードの計測値は最新の
+                  // レコードを持ち続けるため、そのまま判定すると「約120分間データなし」の
+                  // 注記の横に「照明 点灯」が並び、いまの状態として読めてしまう
+                  const lightStatus = staleByDevice.get(deviceId)?.stale
+                    ? null
+                    : resolveDeviceLightStatus(
+                        latestByDevice[deviceId],
+                        lightThresholds,
+                        deviceId
+                      );
                   return (
                     <DeviceCard
                       key={`device-${deviceId}`}

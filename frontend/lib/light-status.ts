@@ -82,7 +82,23 @@ export function formatLightThreshold(threshold: number): string {
   return Number.isInteger(threshold) ? String(threshold) : threshold.toFixed(1);
 }
 
-/** 判定の根拠。「照度 312 lx ・ しきい値 80 lx」 */
+/**
+ * 詳細パネルに出す根拠。「しきい値 80 lx を上回っています」。
+ *
+ * すぐ上の「いまの値」に照度のセルが出ているので、ここで照度をもう一度書くと同じ数字を
+ * 2回言うことになる。しきい値と、それを上回ったか下回ったかだけを添える。
+ */
+export function formatLightThresholdNote(result: LightStatusResult): string {
+  const unit = METRIC_UNIT_SUFFIX.illuminance;
+  const threshold = formatLightThreshold(result.threshold);
+  const direction = result.status === "on" ? "上回っています" : "下回っています";
+  return `しきい値 ${threshold} ${unit} を${direction}`;
+}
+
+/**
+ * カードのバッジに添える説明。カードは温度・湿度しか出さないため、ここでは照度も併記する。
+ * 「照度 312 lx ・ しきい値 80 lx」
+ */
 export function formatLightStatusDetail(result: LightStatusResult): string {
   const unit = METRIC_UNIT_SUFFIX.illuminance;
   const now = formatMetricNumber("illuminance", result.illuminance);

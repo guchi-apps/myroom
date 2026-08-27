@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatLightStatusDetail,
   formatLightThreshold,
+  formatLightThresholdNote,
   getLightThreshold,
   resolveDeviceLightStatus,
   resolveLightStatus,
@@ -88,5 +89,16 @@ describe("formatLightStatusDetail", () => {
   it("しきい値は入力どおりに出す（整数を 80.0 にしない）", () => {
     expect(formatLightThreshold(80)).toBe("80");
     expect(formatLightThreshold(12.5)).toBe("12.5");
+  });
+});
+
+describe("formatLightThresholdNote", () => {
+  it("照度は繰り返さず、しきい値との大小だけを添える", () => {
+    expect(
+      formatLightThresholdNote({ status: "on", illuminance: 312, threshold: 80 })
+    ).toBe("しきい値 80 lx を上回っています");
+    expect(
+      formatLightThresholdNote({ status: "off", illuminance: 12, threshold: 80 })
+    ).toBe("しきい値 80 lx を下回っています");
   });
 });

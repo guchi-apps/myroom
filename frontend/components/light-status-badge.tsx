@@ -3,6 +3,7 @@
 import { Lightbulb } from "lucide-react";
 import {
   formatLightStatusDetail,
+  formatLightThresholdNote,
   LIGHT_STATUS_HEADLINES,
   LIGHT_STATUS_LABELS,
   type LightStatusResult,
@@ -62,7 +63,7 @@ export function LightStatusStrip({ result }: LightStatusBadgeProps) {
         <div className="min-w-0">
           <p className="text-sm font-bold">{LIGHT_STATUS_HEADLINES[result.status]}</p>
           <p className="text-[11.5px] tabular-nums text-muted-foreground">
-            {formatLightStatusDetail(result)}
+            {formatLightThresholdNote(result)}
           </p>
         </div>
       </div>

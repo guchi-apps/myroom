@@ -51,10 +51,20 @@ describe("LightStatusBadge", () => {
 });
 
 describe("LightStatusStrip", () => {
-  it("結論といまの照度・しきい値を並べる", () => {
+  it("結論としきい値との大小を出す", () => {
     const html = render(<LightStatusStrip result={statusFor(312, 80)} />);
     expect(html).toContain("照明は点灯中");
-    expect(html).toContain("照度 312 lx ・ しきい値 80 lx");
+    expect(html).toContain("しきい値 80 lx を上回っています");
+  });
+
+  it("すぐ上の「いまの値」に出ている照度は繰り返さない", () => {
+    const html = render(<LightStatusStrip result={statusFor(312, 80)} />);
+    expect(html).not.toContain("照度 312 lx");
+  });
+
+  it("消灯のときは下回っていると出す", () => {
+    const html = render(<LightStatusStrip result={statusFor(12, 80)} />);
+    expect(html).toContain("しきい値 80 lx を下回っています");
   });
 
   it("消灯のときは点灯の色を使わない", () => {
