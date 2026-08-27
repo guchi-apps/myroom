@@ -5,6 +5,7 @@ import {
   buildGarbageRows,
   collectGarbageNotes,
   formatGarbageCategories,
+  formatGarbageCollectionTime,
   formatGarbageCountdown,
   formatGarbageDate,
   isGarbageComingSoon,
@@ -59,6 +60,18 @@ describe("formatGarbageCategories", () => {
   });
 });
 
+describe("formatGarbageCollectionTime", () => {
+  it("時の先頭の0を落とす", () => {
+    expect(formatGarbageCollectionTime("08:30")).toBe("8:30");
+    expect(formatGarbageCollectionTime("11:05")).toBe("11:05");
+  });
+
+  it("未設定・想定外の形式では出さない・そのまま返す", () => {
+    expect(formatGarbageCollectionTime(undefined)).toBe("");
+    expect(formatGarbageCollectionTime("あさ")).toBe("あさ");
+  });
+});
+
 describe("buildGarbageRows", () => {
   it("今日・明日は収集が無くても行を作る", () => {
     const rows = buildGarbageRows(schedule());
@@ -75,6 +88,18 @@ describe("buildGarbageRows", () => {
       })
     );
     expect(rows.map((row) => row.day.date)).toEqual(["2026-08-14", "2026-08-15"]);
+  });
+
+  it("収集が済んでいても今日の行は残し、doneを立てる", () => {
+    const rows = buildGarbageRows(
+      schedule({ today: day({ categories: [burnable] }), today_done: true })
+    );
+    expect(rows.map((row) => row.done)).toEqual([true, false]);
+    expect(rows[0].day.categories).toEqual([burnable]);
+  });
+
+  it("today_doneを返さない古いバックエンドではdoneは立たない", () => {
+    expect(buildGarbageRows(schedule()).every((row) => !row.done)).toBe(true);
   });
 });
 
@@ -141,6 +166,37 @@ describe("formatGarbageCountdown", () => {
 });
 
 describe("buildGarbageHighlight", () => {
+  it("今日の収集が済んでいれば明日以降を採る", () => {
+    const highlight = buildGarbageHighlight(
+      schedule({
+        today: day({ categories: [burnable] }),
+        today_done: true,
+        upcoming: [
+          day({ date: "2026-08-18", weekday: "火", days_until: 4, categories: [recyclable] }),
+        ],
+      })
+    );
+    expect(highlight?.title).toBe("8/18(火)・あと4日");
+    expect(highlight?.imminent).toBe(false);
+  });
+
+  it("今日の収集が済んでいても明日に収集があればそちらを採る", () => {
+    const highlight = buildGarbageHighlight(
+      schedule({
+        today: day({ categories: [burnable] }),
+        today_done: true,
+        tomorrow: day({
+          date: "2026-08-15",
+          weekday: "土",
+          days_until: 1,
+          categories: [recyclable],
+        }),
+      })
+    );
+    expect(highlight?.title).toBe("明日 8/15(土)");
+    expect(highlight?.imminent).toBe(true);
+  });
+
   it("今日に収集があれば今日を採り、目立たせる", () => {
     const highlight = buildGarbageHighlight(
       schedule({ today: day({ categories: [burnable] }) })

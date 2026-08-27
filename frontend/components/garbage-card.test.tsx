@@ -60,6 +60,55 @@ describe("GarbageCard", () => {
     expect(html).toContain("#e67e22");
   });
 
+  /** 収集時刻を過ぎた後のペイロード。品目ごとの次の収集も繰り上がって届く（#270） */
+  const afterCollection: GarbageSchedule = {
+    ...schedule,
+    collection_time: "08:30",
+    today_done: true,
+    by_category: [
+      { ...burnable, next: { date: "2026-08-21", weekday: "金", days_until: 3 } },
+      { ...bulky, next: { date: "2026-09-18", weekday: "金", days_until: 31 } },
+    ],
+  };
+
+  it("収集が済んだら「次の収集」は次の収集日を指す", () => {
+    const html = render(<GarbageCard schedule={afterCollection} loading={false} error={false} />);
+    expect(html).toContain("8/21(金)・あと3日");
+    expect(html).not.toContain("今日 8/18(火)");
+  });
+
+  it("収集が済んでも今日の行は残し、収集時刻を添えて済んだと分かるようにする", () => {
+    const html = render(<GarbageCard schedule={afterCollection} loading={false} error={false} />);
+    expect(html).toContain("8/18(火)");
+    expect(html).toContain("普通ごみ");
+    expect(html).toContain("8:30 収集済み");
+    expect(html).toContain("line-through");
+  });
+
+  it("収集時刻を返さない古いバックエンドでは時刻を添えない", () => {
+    const html = render(
+      <GarbageCard
+        schedule={{ ...afterCollection, collection_time: undefined }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("収集済み");
+    expect(html).not.toContain("8:30 収集済み");
+  });
+
+  it("today_doneを返さない古いバックエンドでは今日を指したまま", () => {
+    const html = render(
+      <GarbageCard
+        schedule={{ ...afterCollection, today_done: undefined }}
+        loading={false}
+        error={false}
+      />
+    );
+    expect(html).toContain("今日 8/18(火)");
+    expect(html).not.toContain("収集済み");
+  });
+
   it("地区名は出さない", () => {
     const html = render(<GarbageCard schedule={schedule} loading={false} error={false} />);
     expect(html).not.toContain("高槻市");

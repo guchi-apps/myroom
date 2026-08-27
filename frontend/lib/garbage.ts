@@ -25,6 +25,10 @@ export interface GarbageCategoryNext extends GarbageCategory {
 export interface GarbageSchedule {
   configured: boolean;
   area: string;
+  /** 収集が終わる時刻（"08:30"）。古いバックエンドは返さない */
+  collection_time?: string;
+  /** 今日の収集が collection_time を過ぎて終わっているか */
+  today_done?: boolean;
   today: GarbageDay;
   tomorrow: GarbageDay;
   upcoming: GarbageDay[];
@@ -35,6 +39,8 @@ export interface GarbageRow {
   /** 行の左端に出す見出し（"今日" / "明日"） */
   label: string;
   day: GarbageDay;
+  /** この日の収集がもう終わっているか（今日の行だけ true になり得る） */
+  done: boolean;
 }
 
 export interface GarbageHighlight {
@@ -64,15 +70,33 @@ export function formatGarbageCountdown(day: GarbageDate): string {
   return `あと${day.days_until}日`;
 }
 
+/** 今日の収集が終わっているか。古いバックエンドは today_done を返さないので false 扱い */
+export function isGarbageTodayDone(schedule: GarbageSchedule): boolean {
+  return schedule.today_done === true;
+}
+
+/** "08:30" -> "8:30"。先頭の0だけ落とす（想定外の形式はそのまま返す） */
+export function formatGarbageCollectionTime(time: string | undefined): string {
+  if (!time) return "";
+  const [hour, minute] = time.split(":");
+  if (hour == null || minute == null) return time;
+  const hourNumber = Number(hour);
+  if (!Number.isFinite(hourNumber)) return time;
+  return `${hourNumber}:${minute}`;
+}
+
 /**
  * カード先頭に出す「次の収集」。今日・明日・この先の順に、収集がある最初の日を採る。
  * 今日・明日は日付より「今日」「明日」の方が読みやすいので前に置き、
  * それ以降は日付を先に置いて残り日数を添える。
+ * 今日の収集が済んでいれば今日は候補から外し、明日以降を指す（#270）。
  */
 export function buildGarbageHighlight(
   schedule: GarbageSchedule
 ): GarbageHighlight | null {
-  const candidates = [schedule.today, schedule.tomorrow, ...schedule.upcoming];
+  const candidates = isGarbageTodayDone(schedule)
+    ? [schedule.tomorrow, ...schedule.upcoming]
+    : [schedule.today, schedule.tomorrow, ...schedule.upcoming];
   const day = candidates.find((entry) => entry.categories.length > 0);
   if (!day) return null;
 
@@ -87,13 +111,14 @@ export function buildGarbageHighlight(
 
 /**
  * カードに並べる行。今日・明日は収集が無くても「収集なし」として必ず出す。
+ * 収集が済んだ今日の行も消さずに残し、done で「済んだ」と分かるようにする（#270）。
  * この先の予定は日付順に並べるより品目ごとに見たい（#207）ので、行にはせず
  * buildGarbageCategoryRows() の一覧へ回す。
  */
 export function buildGarbageRows(schedule: GarbageSchedule): GarbageRow[] {
   return [
-    { label: "今日", day: schedule.today },
-    { label: "明日", day: schedule.tomorrow },
+    { label: "今日", day: schedule.today, done: isGarbageTodayDone(schedule) },
+    { label: "明日", day: schedule.tomorrow, done: false },
   ];
 }
 
