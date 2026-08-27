@@ -167,4 +167,71 @@ describe("RemoteCard", () => {
     expect(html).toContain("あかりをつける");
     expect(html).not.toContain(">点ける<");
   });
+
+  // ---------------------------------------- エアコンの入口（#268）
+
+  const aircon = {
+    title: "リビング",
+    status: { label: "冷房 26.0℃", color: "#3498db" },
+    onOpen: () => {},
+  };
+
+  it("エアコンの入口を、今の運転状態と一緒に出す", () => {
+    const html = render(
+      <RemoteCard buttons={buttons} loading={false} error={false} aircon={aircon} />
+    );
+    expect(html).toContain("リビング");
+    expect(html).toContain("冷房 26.0℃");
+    // 赤外線のボタンとは押した結果が違うので、そのことを書く
+    expect(html).toContain("操作パネルが開きます");
+  });
+
+  it("操作できないときは入口ごと出さない", () => {
+    const html = render(
+      <RemoteCard buttons={buttons} loading={false} error={false} aircon={null} />
+    );
+    expect(html).not.toContain("リビング");
+    expect(html).not.toContain("操作パネルが開きます");
+  });
+
+  it("赤外線のボタンが1つも無くてもエアコンの入口は出す", () => {
+    const html = render(
+      <RemoteCard
+        buttons={{ configured: false, groups: [] }}
+        loading={false}
+        error={false}
+        aircon={aircon}
+      />
+    );
+    // 登録の案内は残したまま、エアコンだけは操作できる
+    expect(html).toContain("ダッシュボードの表示");
+    expect(html).toContain("リビング");
+  });
+
+  it("表示名を付けていないときは、見出しと行で同じ言葉を繰り返さない", () => {
+    const html = render(
+      <RemoteCard
+        buttons={buttons}
+        loading={false}
+        error={false}
+        aircon={{ ...aircon, title: "エアコン" }}
+      />
+    );
+    // 行の名前は出るが、その上の見出しは省く
+    expect(html).toContain(">エアコン</span>");
+    expect(html).not.toContain('tracking-wider text-muted-foreground">エアコン<');
+  });
+
+  it("設定温度を隠しているときは運転状態を出さない", () => {
+    const html = render(
+      <RemoteCard
+        buttons={buttons}
+        loading={false}
+        error={false}
+        aircon={{ ...aircon, status: null }}
+      />
+    );
+    expect(html).toContain("リビング");
+    expect(html).not.toContain("冷房 26.0℃");
+  });
 });

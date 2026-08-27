@@ -17,7 +17,7 @@ import {
 import { ComingSoonCard } from "@/components/coming-soon-card";
 import { GarbageCard } from "@/components/garbage-card";
 import { PowerCard } from "@/components/power-card";
-import { RemoteCard } from "@/components/remote-card";
+import { RemoteCard, type RemoteAirconEntry } from "@/components/remote-card";
 import { BillDetailPanel } from "@/components/bill-detail-panel";
 import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
@@ -891,6 +891,24 @@ export function MyRoomDashboard() {
   const outdoorLatest = pickOutdoorLatestSource(latestByDevice);
   const outdoorReadings = buildOutdoorReadings(outdoorLatest);
   const airconTitle = airconChartTitle;
+  /**
+   * 「電気の操作」カードからも同じ操作パネルを開けるようにする（#268）。
+   *
+   * センサーのエアコンカードと同じ条件で出す。操作できないバックエンド
+   * （ログイン情報が未設定）とオフラインでは入口ごと出さない。
+   */
+  const remoteAircon: RemoteAirconEntry | null =
+    airconControlEnabled && !isOfflineMode
+      ? {
+          title: airconTitle,
+          // 「ダッシュボードに表示（設定温度）」を切っているときは状態も出さない。
+          // エアコンカードのバッジと同じ出し分けにする（#226）
+          status: isAirconTargetVisible(hiddenDeviceKeys)
+            ? buildAirconStatusPill(airconLatest)
+            : null,
+          onOpen: () => setAirconControlOpen(true),
+        }
+      : null;
   const lastUpdatedMs = getLatestDataTimestamp(latestByDevice, airconLatest);
   const lastUpdated =
     lastUpdatedMs != null
@@ -1146,6 +1164,7 @@ export function MyRoomDashboard() {
                     buttons={remoteButtons}
                     loading={!dashboardDataLoaded && remoteButtons == null}
                     error={remoteError && remoteButtons == null}
+                    aircon={remoteAircon}
                   />
                 )}
                 {garbageCardVisible && (
