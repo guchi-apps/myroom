@@ -67,7 +67,15 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 （`use-chart-history.ts`・`device-detail-panel.tsx`・`outdoor-detail-panel.tsx` など）で十数件出るが、
 **これは develop 時点からある。** 自分の変更が原因とは限らないので、件数を増やしていないかだけ見ればよい。
 
-`npm run dev` は `frontend/` で `next dev --port 5173`。
+`npm run dev` は `frontend/` で `next dev --port 5173`。**worktree ごとのポートは
+envファイルに入っていない。** 別ポートで立てるなら
+`cd frontend && npx next dev --port <ポート>` のようにその場で渡す
+（ルートには `dev` script が無く、`npm run dev` は `Missing script: "dev"` で落ちる）。
+
+**テストで `disabled` を確かめるときは `disabled=""` で照合する。** フロントのテストは
+`renderToStaticMarkup` の文字列を見ているが、Tailwind の `disabled:opacity-30` のような
+バリアントが `class` に入るため、`toContain("disabled")` は押せるボタンにも通ってしまう
+（#269）。
 
 **`npm run build` は `frontend/public/sw.js` を書き換える。** postbuild の
 `scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
