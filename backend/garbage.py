@@ -20,6 +20,8 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "data" / "garbage.json"
 
 DEFAULT_NOTIFY_HOUR = 20
+#: 収集が終わる時刻（JST）。これを過ぎたら当日の収集は済んだものとして扱う
+DEFAULT_COLLECTION_TIME = "08:30"
 DEFAULT_COLOR = "#95a5a6"
 
 #: Notion へ書き出す期間（今日からの日数）
@@ -90,6 +92,32 @@ def _parse_date(value: Any) -> Optional[datetime.date]:
         return datetime.date.fromisoformat(value.strip())
     except ValueError:
         return None
+
+
+def _parse_collection_time(value: Any) -> Optional[str]:
+    """"HH:MM" を検証して "%02d:%02d" へ正規化する。壊れた値・範囲外は None を返す。
+
+    手で書くファイルなので "9:15" のような0詰めしない書き方も受ける。秒まで書かれていても
+    分単位へ丸める（画面には "8:30" として出すため）。
+    """
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def collection_time_of(config: Dict[str, Any]) -> datetime.time:
+    """設定の collection_time を time として返す。"""
+    hour, minute = config["collection_time"].split(":")
+    return datetime.time(int(hour), int(minute))
 
 
 def _normalize_rule(raw: Any) -> Optional[Dict[str, Any]]:
@@ -207,6 +235,7 @@ def _empty_config() -> Dict[str, Any]:
         "configured": False,
         "area": "",
         "notify_hour": DEFAULT_NOTIFY_HOUR,
+        "collection_time": DEFAULT_COLLECTION_TIME,
         "categories": [],
         "exceptions": [],
         "notion": _normalize_notion(None),
@@ -240,10 +269,13 @@ def _normalize_config(raw: Any) -> Dict[str, Any]:
     if isinstance(notify_hour, bool) or not isinstance(notify_hour, int) or not 0 <= notify_hour <= 23:
         notify_hour = DEFAULT_NOTIFY_HOUR
 
+    collection_time = _parse_collection_time(raw.get("collection_time")) or DEFAULT_COLLECTION_TIME
+
     return {
         "configured": bool(categories),
         "area": str(raw.get("area") or "").strip(),
         "notify_hour": notify_hour,
+        "collection_time": collection_time,
         "categories": categories,
         "exceptions": exceptions,
         "notion": _normalize_notion(raw.get("notion")),
@@ -392,17 +424,20 @@ def find_upcoming(
 def find_next_by_category(
     config: Dict[str, Any],
     today: datetime.date,
+    *,
+    start_offset: int = 0,
 ) -> List[Dict[str, Any]]:
     """品目ごとに「次にいつ出せるか」を求める。
 
-    設定に書いた品目の順でそのまま返す（カードもこの順に並べる）。今日の収集も対象に含める。
-    UPCOMING_SEARCH_DAYS 先まで見つからない品目は next を None にして、行そのものは残す
-    （ルールの書き忘れに気付けるようにするため）。
+    設定に書いた品目の順でそのまま返す（カードもこの順に並べる）。既定では今日の収集も対象に
+    含めるが、当日の収集が済んでいる（collection_time を過ぎている）場合は start_offset=1 を
+    渡して明日以降から探す。UPCOMING_SEARCH_DAYS 先まで見つからない品目は next を None にして、
+    行そのものは残す（ルールの書き忘れに気付けるようにするため）。
     """
     pending = {category["id"]: category for category in config["categories"]}
     found: Dict[str, Dict[str, Any]] = {}
 
-    for offset in range(0, UPCOMING_SEARCH_DAYS):
+    for offset in range(start_offset, UPCOMING_SEARCH_DAYS):
         if not pending:
             break
         day = today + datetime.timedelta(days=offset)
@@ -431,17 +466,53 @@ def find_next_by_category(
     ]
 
 
-def build_payload(today: Optional[datetime.date] = None) -> Dict[str, Any]:
-    """ダッシュボードのゴミの日カード用のペイロード。"""
+def is_today_collection_done(
+    config: Dict[str, Any],
+    today: datetime.date,
+    now: Optional[datetime.datetime],
+) -> bool:
+    """当日の収集がもう終わっているか。
+
+    now を渡さない（基準時刻が分からない）場合は「まだ」として扱う。日付だけを指定する
+    呼び出し（テスト・Notion への書き出しなど）で、時刻を持ち出さずに済ませるため。
+    """
+    if now is None or now.date() != today:
+        return False
+    if not categories_on(config, today):
+        return False
+    return now.time() >= collection_time_of(config)
+
+
+def build_payload(
+    today: Optional[datetime.date] = None,
+    now: Optional[datetime.datetime] = None,
+) -> Dict[str, Any]:
+    """ダッシュボードのゴミの日カード用のペイロード。
+
+    now（JST）を渡すと collection_time との比較で「当日の収集は済んだか」を判定し、
+    済んでいれば品目ごとの次の収集を明日以降から探す。カード先頭の「次の収集」を
+    繰り上げるのは今日の行を残したままにしたいフロント側の仕事なので、today は
+    そのまま返し、判定の結果だけを today_done として添える（#270）。
+    """
     config = load_config()
-    today = today or get_today_jst()
+    if today is None and now is None:
+        now = datetime.datetime.now(JST)
+    if today is None:
+        today = now.date()
     tomorrow = today + datetime.timedelta(days=1)
+    today_done = is_today_collection_done(config, today, now)
 
     return {
         "configured": config["configured"],
         "area": config["area"],
+        "collection_time": config["collection_time"],
+        "today_done": today_done,
         "today": build_day(config, today, today),
         "tomorrow": build_day(config, tomorrow, today),
         "upcoming": find_upcoming(config, today) if config["configured"] else [],
-        "by_category": find_next_by_category(config, today) if config["configured"] else [],
+        "by_category": (
+            find_next_by_category(config, today, start_offset=1 if today_done else 0)
+            if config["configured"]
+            else []
+        ),
     }

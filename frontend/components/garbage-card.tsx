@@ -1,12 +1,13 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import {
   buildGarbageCategoryRows,
   buildGarbageHighlight,
   buildGarbageRows,
   collectGarbageNotes,
   formatGarbageCategories,
+  formatGarbageCollectionTime,
   formatGarbageCountdown,
   formatGarbageDate,
   isGarbageComingSoon,
@@ -47,6 +48,7 @@ export function GarbageCard({ schedule, loading, error }: GarbageCardProps) {
   const categoryRows = schedule ? buildGarbageCategoryRows(schedule) : [];
   const highlight = schedule ? buildGarbageHighlight(schedule) : null;
   const notes = schedule ? collectGarbageNotes(schedule) : [];
+  const collectionTime = formatGarbageCollectionTime(schedule?.collection_time);
 
   return (
     <div className="device-card">
@@ -94,6 +96,8 @@ export function GarbageCard({ schedule, loading, error }: GarbageCardProps) {
           <div className="flex flex-col gap-2">
             {rows.map((row) => {
               const collected = row.day.categories.length > 0;
+              // 収集が済んだ日は行を消さず、品目名を落として「済んだ」と分かるようにする（#270）
+              const done = collected && row.done;
               return (
                 <div
                   key={row.day.date}
@@ -108,16 +112,33 @@ export function GarbageCard({ schedule, loading, error }: GarbageCardProps) {
                   <span
                     className={cn(
                       "flex min-w-0 flex-1 items-baseline gap-1.5",
-                      collected ? "font-medium text-foreground" : "text-muted-foreground"
+                      collected && !done
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground"
                     )}
                   >
                     {collected && (
                       <span
-                        className="size-2 shrink-0 translate-y-[-1px] rounded-[2px]"
-                        style={{ backgroundColor: row.day.categories[0].color }}
+                        className={cn(
+                          "size-2 shrink-0 translate-y-[-1px] rounded-[2px]",
+                          done && "bg-muted-foreground/40"
+                        )}
+                        style={
+                          done
+                            ? undefined
+                            : { backgroundColor: row.day.categories[0].color }
+                        }
                       />
                     )}
-                    {formatGarbageCategories(row.day)}
+                    <span className={cn("min-w-0 truncate", done && "line-through")}>
+                      {formatGarbageCategories(row.day)}
+                    </span>
+                    {done && (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-border px-1.5 text-[10px] leading-[17px] text-muted-foreground tabular-nums">
+                        <Check className="size-2.5" strokeWidth={3.5} />
+                        {collectionTime ? `${collectionTime} 収集済み` : "収集済み"}
+                      </span>
+                    )}
                   </span>
                 </div>
               );
