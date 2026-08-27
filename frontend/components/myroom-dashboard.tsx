@@ -100,6 +100,8 @@ import type {
 import type { GarbageSchedule } from "@/lib/garbage";
 import type { RemoteButtons } from "@/lib/remote";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
+import { LightStatusBadge } from "@/components/light-status-badge";
+import { getLightThreshold, resolveDeviceLightStatus } from "@/lib/light-status";
 import {
   loadUiSettingsFromServer,
   getDefaultUiSettings,
@@ -351,6 +353,8 @@ export function MyRoomDashboard() {
   );
   const [defaultLineVisibility, setDefaultLineVisibility] =
     useState<ChartLineVisibilitySettings>(() => buildDefaultChartLineVisibility());
+  // デバイスID -> 照明の点灯とみなす照度（lx）。設定したデバイスだけがバッジを持つ（#258）
+  const [lightThresholds, setLightThresholds] = useState<Record<string, number>>({});
 
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [airconLatest, setAirconLatest] = useState<AirconData | null>(null);
@@ -472,6 +476,7 @@ export function MyRoomDashboard() {
       setChartColors(settings.chartColors);
       setHiddenDeviceKeys(settings.hiddenDeviceKeys);
       setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
+      setLightThresholds(settings.lightThresholds);
     } catch (err) {
       if (err instanceof AuthError) {
         setIsAuthenticated(false);
@@ -521,6 +526,7 @@ export function MyRoomDashboard() {
         setChartColors(settings.chartColors);
         setHiddenDeviceKeys(settings.hiddenDeviceKeys);
         setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
+        setLightThresholds(settings.lightThresholds);
         setDefaultLineVisibility(loadChartLineVisibility(sensorIds));
         setLayoutReady(true);
       } catch {
@@ -985,6 +991,18 @@ export function MyRoomDashboard() {
                   const device = getDeviceInfo(deviceId);
                   const accentColor = getDeviceChartColor(chartColors, deviceId);
                   const indoorReadings = buildIndoorReadings(latestByDevice[deviceId]);
+                  // 照度を送ってこないデバイス・しきい値が未設定のデバイスでは null に
+                  // なり、カードはこれまでどおりバッジ無しで並ぶ（#258）。
+                  // **データが届いていないデバイスでは出さない。** カードの計測値は最新の
+                  // レコードを持ち続けるため、そのまま判定すると「約120分間データなし」の
+                  // 注記の横に「照明 点灯」が並び、いまの状態として読めてしまう
+                  const lightStatus = staleByDevice.get(deviceId)?.stale
+                    ? null
+                    : resolveDeviceLightStatus(
+                        latestByDevice[deviceId],
+                        lightThresholds,
+                        deviceId
+                      );
                   return (
                     <DeviceCard
                       key={`device-${deviceId}`}
@@ -1007,6 +1025,9 @@ export function MyRoomDashboard() {
                         dashboardDataLoaded
                       )}
                       statusNote={formatStaleNote(deviceId)}
+                      badge={
+                        lightStatus ? <LightStatusBadge result={lightStatus} /> : undefined
+                      }
                     />
                   );
                 }
@@ -1247,6 +1268,7 @@ export function MyRoomDashboard() {
         deviceId={devicePanelId}
         locationName={getLocationName(devicePanelId, devices, deviceNames)}
         latest={latestByDevice[devicePanelId] ?? null}
+        lightThreshold={getLightThreshold(lightThresholds, devicePanelId)}
         chartColors={chartColors}
         lineVisibility={effectiveLineVisibility}
         devices={devices}

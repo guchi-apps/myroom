@@ -99,6 +99,7 @@ import {
   saveDisplayOrderToServer,
   saveHiddenDevicesToServer,
   savePressureOffsetsToServer,
+  saveLightThresholdsToServer,
   saveStaleAlertExcludedToServer,
 } from "@/lib/ui-settings-client";
 
@@ -173,9 +174,12 @@ export function DeviceVisibilityPage() {
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [staleAlertExcludedKeys, setStaleAlertExcludedKeys] = useState<Set<string>>(() => new Set());
   const [pressureOffsets, setPressureOffsets] = useState<Record<string, number>>({});
+  // デバイスID -> 照明の点灯とみなす照度（lx）。キーが無いデバイスは判定しない（#258）
+  const [lightThresholds, setLightThresholds] = useState<Record<string, number>>({});
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [inheritsDrafts, setInheritsDrafts] = useState<Record<number, number | null>>({});
   const [pressureOffsetDrafts, setPressureOffsetDrafts] = useState<Record<number, string>>({});
+  const [lightThresholdDrafts, setLightThresholdDrafts] = useState<Record<number, string>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -231,6 +235,7 @@ export function DeviceVisibilityPage() {
       setChartColors(settings.chartColors);
       setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
       setPressureOffsets(settings.pressureOffsets);
+      setLightThresholds(settings.lightThresholds);
     } catch (err) {
       if (err instanceof AuthError) {
         setIsAuthenticated(false);
@@ -295,10 +300,14 @@ export function DeviceVisibilityPage() {
     const drafts: Record<string, string> = {};
     const inheritDrafts: Record<number, number | null> = {};
     const offsetDrafts: Record<number, string> = {};
+    const lightDrafts: Record<number, string> = {};
     for (const device of devices) {
       drafts[`device:${device.id}`] = device.name;
       inheritDrafts[device.id] = device.inherits_from ?? null;
       offsetDrafts[device.id] = String(pressureOffsets[String(device.id)] ?? 0);
+      // 未設定は空欄。0 を初期値にすると「判定しない」が数値として保存されてしまう
+      const threshold = lightThresholds[String(device.id)];
+      lightDrafts[device.id] = threshold != null ? String(threshold) : "";
     }
     for (const unit of airconUnits) {
       drafts[`aircon:${unit.ac_id}`] = unit.name;
@@ -309,7 +318,8 @@ export function DeviceVisibilityPage() {
     setNameDrafts(drafts);
     setInheritsDrafts(inheritDrafts);
     setPressureOffsetDrafts(offsetDrafts);
-  }, [devices, airconUnits, outdoorLocation, pressureOffsets]);
+    setLightThresholdDrafts(lightDrafts);
+  }, [devices, airconUnits, outdoorLocation, pressureOffsets, lightThresholds]);
 
   // 屋外編集シートを開いたとき、緯度・経度を初期化
   useEffect(() => {
@@ -499,6 +509,17 @@ export function DeviceVisibilityPage() {
       return;
     }
 
+    // 空欄は「判定しない」。キーごと落として保存する
+    const thresholdInput = lightThresholdDrafts[deviceId]?.trim();
+    const thresholdValue = thresholdInput ? Number(thresholdInput) : null;
+    if (thresholdInput && (Number.isNaN(thresholdValue) || (thresholdValue ?? 0) <= 0)) {
+      setErrors((prev) => ({
+        ...prev,
+        [key]: "照明の点灯とみなす照度には0より大きい数値を入力してください",
+      }));
+      return;
+    }
+
     setSavingKey(key);
     setErrors((prev) => ({ ...prev, [key]: "" }));
     try {
@@ -508,6 +529,15 @@ export function DeviceVisibilityPage() {
       const nextOffsets = { ...pressureOffsets, [String(deviceId)]: offsetValue };
       setPressureOffsets(nextOffsets);
       await savePressureOffsetsToServer(nextOffsets);
+
+      const nextThresholds = { ...lightThresholds };
+      if (thresholdValue == null) {
+        delete nextThresholds[String(deviceId)];
+      } else {
+        nextThresholds[String(deviceId)] = thresholdValue;
+      }
+      setLightThresholds(nextThresholds);
+      await saveLightThresholdsToServer(nextThresholds);
 
       const saved = await updateDeviceName(
         deviceId,
@@ -655,6 +685,29 @@ export function DeviceVisibilityPage() {
     </div>
   );
 
+  // 照度で照明の点灯を判定する（#258）。既定値を置かず、設定するまで表示を増やさない
+  const renderLightThresholdExtra = (deviceId: number) => (
+    <div className="space-y-2">
+      <Label htmlFor={`device:${deviceId}-light-threshold`}>
+        照明の点灯とみなす照度 (lx)
+      </Label>
+      <Input
+        id={`device:${deviceId}-light-threshold`}
+        inputMode="decimal"
+        value={lightThresholdDrafts[deviceId] ?? ""}
+        onChange={(e) =>
+          setLightThresholdDrafts((prev) => ({ ...prev, [deviceId]: e.target.value }))
+        }
+        placeholder="未設定"
+        className="rounded-xl"
+      />
+      <p className="text-xs text-muted-foreground">
+        この値以上の照度が届いていれば「点灯」、下回っていれば「消灯」としてカードと詳細に表示します。
+        空欄にすると判定を行いません。昼間の日射でも明るくなるため、実際の照度を見ながら合わせてください。
+      </p>
+    </div>
+  );
+
   const renderOutdoorLocationExtra = () => (
     <>
       <div className="space-y-2">
@@ -745,7 +798,12 @@ export function DeviceVisibilityPage() {
           name={nameDrafts[key] ?? label}
           onNameChange={(value) => setDraft(key, value)}
           namePlaceholder="例: リビング"
-          extraContent={renderPressureOffsetExtra(deviceId)}
+          extraContent={
+            <>
+              {renderPressureOffsetExtra(deviceId)}
+              {renderLightThresholdExtra(deviceId)}
+            </>
+          }
           chartColors={[
             {
               id: `${key}-color`,

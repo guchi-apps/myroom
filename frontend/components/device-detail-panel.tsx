@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Trash2, X } from "lucide-react";
 import { CurrentReadings } from "@/components/current-readings";
+import { LightStatusStrip } from "@/components/light-status-badge";
+import { resolveLightStatus } from "@/lib/light-status";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +38,8 @@ interface DeviceDetailPanelProps {
   locationName: string;
   /** カードから外した気圧・CO2・照度を「いまの値」として出すための最新データ（#226） */
   latest?: LatestData | null;
+  /** 照明の点灯とみなす照度（lx）。未設定なら判定そのものを行わない（#258） */
+  lightThreshold?: number | null;
   chartColors: ChartColorSettings;
   lineVisibility?: ChartLineVisibilitySettings;
   devices: DeviceInfo[];
@@ -79,6 +83,7 @@ export function DeviceDetailPanel({
   deviceId,
   locationName,
   latest = null,
+  lightThreshold = null,
   chartColors,
   lineVisibility: lineVisibilityProp,
   devices,
@@ -121,6 +126,12 @@ export function DeviceDetailPanel({
   const lineVisibility = useMemo(
     () => lineVisibilityProp ?? buildDefaultChartLineVisibility([deviceId]),
     [lineVisibilityProp, deviceId]
+  );
+
+  // しきい値が未設定か、照度が届いていなければ null。「いまの値」の下には何も出ない（#258）
+  const lightStatus = useMemo(
+    () => resolveLightStatus(latest?.illuminance, lightThreshold),
+    [latest?.illuminance, lightThreshold]
   );
 
   const {
@@ -331,6 +342,7 @@ export function DeviceDetailPanel({
               readings={buildIndoorReadings(latest)}
               measuredAt={latest?.datetime}
             />
+            {lightStatus ? <LightStatusStrip result={lightStatus} /> : null}
             <div className="px-3 py-3">
               <EnvironmentChart
                 historyData={historyData}

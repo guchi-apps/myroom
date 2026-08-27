@@ -124,7 +124,15 @@ Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・�
 必ず検討すること。** 画面から編集する設定や、件数がせいぜい数十件で1行の JSON に収まるデータは、
 新しいテーブルを作らずにここへキーを1つ足すだけで持てる。**DDL が無ければ上記の権限問題を
 そもそも踏まない。** 既存の設定なら `backend/ui_settings.py` にキーと正規化関数を1つ足せば済む
-（#262 の `remote_button_defs` / `remote_catalog` がこの形）。まとまった機能なら `backend/cleaning.py`
+（#262 の `remote_button_defs` / `remote_catalog` がこの形）。
+
+**`ui_settings.py` にキーを足すときは、同じファイルの3か所すべてに書くこと。**
+`_default_settings()`・`_normalize_settings()`・**`save_settings()` の `merged` 辞書**の3つで、
+最後の1つを忘れると GET では正しく返るのに、**別の設定を保存した瞬間に既定値へ戻る**
+（`save_settings` は `merged` に並べたキーだけを引き継ぐため）。テストは「そのキーを保存 → 別の
+キーだけを保存 → 取り直して残っているか」の形にしないとこの抜けを拾えない（#258 の
+`light_thresholds`）。`PUT /api/ui-settings` を通すには `backend/main.py` の
+`UiSettingsUpdate` にもフィールドが要る。まとまった機能なら `backend/cleaning.py`
 のように専用モジュールで読み書きしてもよい（掃除の予定と実施履歴・`cleaning_tasks`、#259）。
 どちらもマイグレーションを1行も足さずに追加できた。`setting_value` は `Text`（64KB）なので、
 数百KBになるものだけは別の置き場を考える。時系列で伸び続けるもの・期間で絞って引くものは

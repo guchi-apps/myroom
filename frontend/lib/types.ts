@@ -107,6 +107,11 @@ export interface UiSettings {
   hidden_devices: string[];
   stale_alert_excluded_devices: string[];
   pressure_offsets: Record<string, number>;
+  /**
+   * デバイスID -> 照明の点灯とみなす照度（lx）。
+   * キーが無いデバイスは判定そのものを行わず、点灯・消灯を表示しない（#258）
+   */
+  light_thresholds: Record<string, number>;
   /** 電気料金の単価（円/kWh）。使用量に掛けて電気代の目安を出す */
   energy_unit_price: number;
   /** 「電気の操作」のボタンID -> 付けた名前・隠す指定。既定のままのボタンは入らない */
