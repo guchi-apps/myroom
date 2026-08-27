@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.2.0",
+    date: "2026-08-27",
+    changes: [
+      "部屋の掃除の予定・実施履歴を管理できる新機能を追加しました。掃除の項目ごとに周期を設定でき、次にやる日や残り日数がひと目で分かります。また、電気の操作カードで登録できるボタンを、Nature Remoに登録済みの操作の中から画面上で選んで追加できるようになりました。ボタンの名前を変更したり、使わないボタンを非表示にすることも可能です。",
+    ],
+  },
+  {
     version: "4.1.0",
     date: "2026-08-25",
     changes: [
