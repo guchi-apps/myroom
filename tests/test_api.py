@@ -380,6 +380,51 @@ def test_ui_settings_get_and_update(authed_client):
     assert "device:2" in fetched["hidden_devices"]
 
 
+# --- 照明の点灯とみなす照度（#258） ---
+
+
+def test_light_thresholds_default_is_empty(authed_client):
+    """既定では判定しない。設定するまで画面の表示は増えない。"""
+    data = authed_client.get("/api/ui-settings").json()
+    assert data["light_thresholds"] == {}
+
+
+def test_light_thresholds_saved_per_device(authed_client):
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={"light_thresholds": {"1": 80}},
+    ).json()
+    assert saved["light_thresholds"] == {"1": 80.0}
+
+    fetched = authed_client.get("/api/ui-settings").json()
+    assert fetched["light_thresholds"] == {"1": 80.0}
+
+
+def test_light_thresholds_drop_disabled_and_invalid_values(authed_client):
+    """0以下・上限超え・数値でない値は「判定しない」として保存しない。"""
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={
+            "light_thresholds": {
+                "1": 80,
+                "2": 0,
+                "3": -5,
+                "4": 999999,
+            }
+        },
+    ).json()
+    assert saved["light_thresholds"] == {"1": 80.0}
+
+
+def test_light_thresholds_kept_when_other_settings_change(authed_client):
+    """別の設定だけを保存したときに、しきい値が消えない。"""
+    authed_client.put("/api/ui-settings", json={"light_thresholds": {"1": 120.5}})
+    authed_client.put("/api/ui-settings", json={"hidden_devices": ["device:2"]})
+
+    fetched = authed_client.get("/api/ui-settings").json()
+    assert fetched["light_thresholds"] == {"1": 120.5}
+
+
 # --- 「電気の操作」のボタン名・表示の選択（#260） ---
 
 

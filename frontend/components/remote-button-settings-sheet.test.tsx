@@ -61,6 +61,25 @@ describe("RemoteButtonSettingsSheet", () => {
     expect(html).toContain("リビングの照明を下へ");
   });
 
+  it("ボタンごとの並べ替えを出す（#269）", () => {
+    const html = render(
+      <RemoteButtonSettingsSheet onClose={noop} buttons={buttons} onSave={noopSave} />
+    );
+
+    expect(html).toContain("点けるを下へ");
+    expect(html).toContain("消すを上へ");
+    expect(html).toContain("上下の矢印で並び順を変えられます");
+
+    // グループ内の端は押せない。1つしか入っていないグループは上下とも押せない
+    const button = (label: string) =>
+      html.match(new RegExp(`<button[^>]*aria-label="${label}"`))?.[0] ?? "";
+    expect(button("点けるを上へ")).toContain('disabled=""');
+    expect(button("点けるを下へ")).not.toContain('disabled=""');
+    expect(button("消すを下へ")).toContain('disabled=""');
+    expect(button("電源を上へ")).toContain('disabled=""');
+    expect(button("電源を下へ")).toContain('disabled=""');
+  });
+
   it("1つも登録が無いときは、登録の仕方だけを案内する", () => {
     const html = render(
       <RemoteButtonSettingsSheet

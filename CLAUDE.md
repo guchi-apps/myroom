@@ -67,7 +67,15 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 （`use-chart-history.ts`・`device-detail-panel.tsx`・`outdoor-detail-panel.tsx` など）で十数件出るが、
 **これは develop 時点からある。** 自分の変更が原因とは限らないので、件数を増やしていないかだけ見ればよい。
 
-`npm run dev` は `frontend/` で `next dev --port 5173`。
+`npm run dev` は `frontend/` で `next dev --port 5173`。**worktree ごとのポートは
+envファイルに入っていない。** 別ポートで立てるなら
+`cd frontend && npx next dev --port <ポート>` のようにその場で渡す
+（ルートには `dev` script が無く、`npm run dev` は `Missing script: "dev"` で落ちる）。
+
+**テストで `disabled` を確かめるときは `disabled=""` で照合する。** フロントのテストは
+`renderToStaticMarkup` の文字列を見ているが、Tailwind の `disabled:opacity-30` のような
+バリアントが `class` に入るため、`toContain("disabled")` は押せるボタンにも通ってしまう
+（#269）。
 
 **`npm run build` は `frontend/public/sw.js` を書き換える。** postbuild の
 `scripts/sync-sw-cache.mjs` が `CACHE_NAME` を `package.json` の version に合わせるため、
@@ -124,7 +132,15 @@ Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・�
 必ず検討すること。** 画面から編集する設定や、件数がせいぜい数十件で1行の JSON に収まるデータは、
 新しいテーブルを作らずにここへキーを1つ足すだけで持てる。**DDL が無ければ上記の権限問題を
 そもそも踏まない。** 既存の設定なら `backend/ui_settings.py` にキーと正規化関数を1つ足せば済む
-（#262 の `remote_button_defs` / `remote_catalog` がこの形）。まとまった機能なら `backend/cleaning.py`
+（#262 の `remote_button_defs` / `remote_catalog` がこの形）。
+
+**`ui_settings.py` にキーを足すときは、同じファイルの3か所すべてに書くこと。**
+`_default_settings()`・`_normalize_settings()`・**`save_settings()` の `merged` 辞書**の3つで、
+最後の1つを忘れると GET では正しく返るのに、**別の設定を保存した瞬間に既定値へ戻る**
+（`save_settings` は `merged` に並べたキーだけを引き継ぐため）。テストは「そのキーを保存 → 別の
+キーだけを保存 → 取り直して残っているか」の形にしないとこの抜けを拾えない（#258 の
+`light_thresholds`）。`PUT /api/ui-settings` を通すには `backend/main.py` の
+`UiSettingsUpdate` にもフィールドが要る。まとまった機能なら `backend/cleaning.py`
 のように専用モジュールで読み書きしてもよい（掃除の予定と実施履歴・`cleaning_tasks`、#259）。
 どちらもマイグレーションを1行も足さずに追加できた。`setting_value` は `Text`（64KB）なので、
 数百KBになるものだけは別の置き場を考える。時系列で伸び続けるもの・期間で絞って引くものは
@@ -146,6 +162,10 @@ Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・�
 - `data/` に残してよいのは、**リポジトリが正の初期値・定義**だけ。読む側は「DBに保存済みなら
   そちらを使い、まだ無ければファイルを読む」の形にして、保存済みかどうかを区別できるようにする
   （空の保存とファイル未保存を同じ扱いにすると、画面から消したものがデプロイで復活する）
+- **手で書くファイルの時刻値を `datetime.time.fromisoformat()` で受けないこと。** 時は0詰め必須で、
+  `"9:15"` は `ValueError` になる（`"08:30"` は通るので、既定値だけを試すと気付かない）。
+  `":"` で割って `int()` する形にして、`f"{hour:02d}:{minute:02d}"` へ揃えて持つ
+  （#270 の `collection_time`）
 
 ## デプロイの値の取得先
 

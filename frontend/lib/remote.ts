@@ -241,6 +241,32 @@ export function moveRemoteGroup(
   return moved;
 }
 
+/**
+ * グループの中でボタンを1つ上／下へ。端では動かさない（#269）。
+ *
+ * **動かせるのは同じグループの中だけ。** グループは Nature Remo の機器そのもので、
+ * `applyCatalogSelection()` も機器ごとにボタンを足す。またいで動かせるようにすると、
+ * 選び直したときに戻る先が決まらない。
+ */
+export function moveRemoteButton(
+  groups: RemoteGroupDraft[],
+  groupIndex: number,
+  buttonIndex: number,
+  direction: -1 | 1
+): RemoteGroupDraft[] {
+  const group = groups[groupIndex];
+  if (!group) return groups;
+
+  const next = buttonIndex + direction;
+  if (next < 0 || next >= group.buttons.length) return groups;
+
+  const buttons = [...group.buttons];
+  [buttons[buttonIndex], buttons[next]] = [buttons[next], buttons[buttonIndex]];
+  return groups.map((entry, index) =>
+    index === groupIndex ? { ...entry, buttons } : entry
+  );
+}
+
 /** ボタンを1つ登録から外す。空になったグループは見出しごと消す */
 export function removeRemoteButton(
   groups: RemoteGroupDraft[],

@@ -128,6 +128,61 @@ def test_next_collection_skips_days_cancelled_by_an_exception(data_dir):
     assert payload["by_category"][0]["next"]["date"] == "2026-08-16"
 
 
+def test_collection_time_falls_back_to_the_default_when_unusable(data_dir):
+    # SAMPLE_CONFIG は collection_time を書いていない
+    write_config(data_dir)
+    assert garbage.load_config()["collection_time"] == "08:30"
+
+    write_config(data_dir, {**SAMPLE_CONFIG, "collection_time": "9:15"})
+    assert garbage.load_config()["collection_time"] == "09:15"
+
+    for broken in ["25:00", "あさ", 830, None, True]:
+        write_config(data_dir, {**SAMPLE_CONFIG, "collection_time": broken})
+        assert garbage.load_config()["collection_time"] == "08:30", broken
+
+
+def test_today_is_still_the_next_collection_before_the_collection_time(data_dir):
+    write_config(data_dir)
+    # 8/11（火）は普通ごみの収集日。8:30 の1分前
+    payload = garbage.build_payload(now=datetime.datetime(2026, 8, 11, 8, 29))
+
+    assert payload["collection_time"] == "08:30"
+    assert payload["today_done"] is False
+    assert payload["by_category"][0]["next"]["date"] == "2026-08-11"
+
+
+def test_collection_time_moves_the_next_collection_to_the_following_days(data_dir):
+    write_config(data_dir)
+    # 8:30 ちょうどから「済んだ」扱いにする
+    payload = garbage.build_payload(now=datetime.datetime(2026, 8, 11, 8, 30))
+
+    assert payload["today_done"] is True
+    # 今日の行は消さずに残す（済んだことが見た目で分かるようにするのはフロント側）
+    assert [category["name"] for category in payload["today"]["categories"]] == ["普通ごみ"]
+
+    burnable, recyclable = payload["by_category"]
+    # 次の普通ごみは 8/14（金）だが例外で中止、臨時収集の 8/16（日）になる
+    assert burnable["next"]["date"] == "2026-08-16"
+    # 今日の収集が無かった品目は影響を受けない
+    assert recyclable["next"]["date"] == "2026-08-12"
+
+
+def test_today_is_not_done_when_there_is_no_collection_today(data_dir):
+    write_config(data_dir)
+    # 8/13（木）は収集なし。時刻を過ぎていても「済んだ」ことにはしない
+    payload = garbage.build_payload(now=datetime.datetime(2026, 8, 13, 20, 0))
+    assert payload["today_done"] is False
+    assert payload["by_category"][0]["next"]["date"] == "2026-08-16"
+
+
+def test_today_is_not_done_when_only_a_date_is_given(data_dir):
+    """日付だけを渡す呼び出し（基準時刻を持たない）では、当日の収集はまだ扱いにする。"""
+    write_config(data_dir)
+    payload = garbage.build_payload(datetime.date(2026, 8, 11))
+    assert payload["today_done"] is False
+    assert payload["by_category"][0]["next"]["date"] == "2026-08-11"
+
+
 def test_next_collection_is_none_when_the_category_has_no_rule(data_dir):
     write_config(
         data_dir,
