@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CloudSun,
   LayoutGrid,
+  Pencil,
   Search,
   Snowflake,
   Thermometer,
@@ -18,17 +19,27 @@ import {
   DeviceListItem,
   type DeviceListItemTrack,
 } from "@/components/device-list-item";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RemoteButtonSettingsSheet } from "@/components/remote-button-settings-sheet";
 import {
   fetchAirconUnits,
   fetchDevices,
   fetchOutdoorLocation,
+  fetchRemoteButtons,
+  saveRemoteConfig,
   searchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
   updateOutdoorLocation,
 } from "@/lib/api";
+import {
+  countRemoteButtons,
+  countVisibleRemoteButtons,
+  type RemoteButtons,
+  type RemoteConfigUpdate,
+} from "@/lib/remote";
 import {
   AIRCON_TARGET_COLOR_KEY,
   buildDefaultChartColors,
@@ -78,6 +89,7 @@ import {
   COMING_SOON_SECTION_KEY,
   DASHBOARD_SECTION_LABELS,
   LIFE_CARDS,
+  REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import { ChartLineVisibilityToggle } from "@/components/chart-line-visibility-toggle";
 import { deviceDht11VisibilityKey } from "@/lib/chart-line-visibility";
@@ -168,6 +180,8 @@ export function DeviceVisibilityPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [editingTarget, setEditingTarget] = useState<EditableTarget | null>(null);
+  const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
+  const [remoteSheetOpen, setRemoteSheetOpen] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
@@ -202,6 +216,13 @@ export function DeviceVisibilityPage() {
     [orderedTargets, hiddenKeys]
   );
 
+  // 「電気の操作」の行に出す説明。何件出ているかが分かると、編集を開く前に判断できる
+  const remoteButtonSummary = useMemo(() => {
+    const total = countRemoteButtons(remoteButtons);
+    if (total === 0) return "操作するボタンが未設定です";
+    return `ボタン${countVisibleRemoteButtons(remoteButtons)}件を表示中（全${total}件）`;
+  }, [remoteButtons]);
+
   const reloadSettings = useCallback(async () => {
     try {
       const settings = await loadUiSettingsFromServer(sensorDeviceIds);
@@ -220,22 +241,45 @@ export function DeviceVisibilityPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [deviceList, units, outdoor] = await Promise.all([
+      const [deviceList, units, outdoor, remote] = await Promise.all([
         fetchDevices(),
         fetchAirconUnits(),
         fetchOutdoorLocation().catch(() => null),
+        // 読めなくても他の設定は触れるようにしておく（Nature Remo は叩かれない）
+        fetchRemoteButtons().catch(() => null),
       ]);
       setDevices(deviceList);
       setAirconUnits(units);
       setOutdoorLocation(outdoor);
+      setRemoteButtons(remote);
     } catch {
       setDevices([]);
       setAirconUnits([]);
       setOutdoorLocation(null);
+      setRemoteButtons(null);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  /**
+   * 「電気の操作」に並べるボタンの登録内容と、名前・隠す指定を保存する（#262）。
+   *
+   * 他の設定と違って投げっぱなしにしない。シートは保存の結果を見て閉じるため、
+   * 失敗をシート側に返して画面に出せるようにする。
+   */
+  const handleRemoteConfigSave = useCallback(
+    async (update: RemoteConfigUpdate) => {
+      try {
+        // 保存後の並び・名前はバックエンドが決める。応答をそのまま画面へ反映する
+        setRemoteButtons(await saveRemoteConfig(update));
+      } catch (err) {
+        if (err instanceof AuthError) setIsAuthenticated(false);
+        throw err;
+      }
+    },
+    [setIsAuthenticated]
+  );
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -939,10 +983,29 @@ export function DeviceVisibilityPage() {
                 key={card.key}
                 id={`life-${card.key}-visible`}
                 label={card.label}
-                description="オフにするとダッシュボードの「暮らし」から非表示になります"
+                description={
+                  card.key === REMOTE_CARD_KEY
+                    ? remoteButtonSummary
+                    : "オフにするとダッシュボードの「暮らし」から非表示になります"
+                }
                 visible={isHiddenKeyVisible(hiddenKeys, card.key)}
                 onChange={(visible) =>
                   handleHiddenKeyVisibilityChange(card.key, visible)
+                }
+                action={
+                  card.key === REMOTE_CARD_KEY ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 shrink-0 rounded-xl px-3"
+                      onClick={() => setRemoteSheetOpen(true)}
+                      aria-label="電気の操作のボタンを編集"
+                    >
+                      <Pencil className="size-4" strokeWidth={1.75} />
+                      編集
+                    </Button>
+                  ) : undefined
                 }
               />
             ))}
@@ -973,6 +1036,14 @@ export function DeviceVisibilityPage() {
       </div>
 
       {renderEditSheet()}
+
+      {remoteSheetOpen ? (
+        <RemoteButtonSettingsSheet
+          onClose={() => setRemoteSheetOpen(false)}
+          buttons={remoteButtons}
+          onSave={handleRemoteConfigSave}
+        />
+      ) : null}
     </div>
   );
 }

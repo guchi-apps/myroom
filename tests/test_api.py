@@ -1,3 +1,8 @@
+import json
+
+import pytest
+
+
 def test_health_get(client):
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -373,6 +378,89 @@ def test_ui_settings_get_and_update(authed_client):
     fetched = authed_client.get("/api/ui-settings").json()
     assert fetched["display_order"][0] == "device:2"
     assert "device:2" in fetched["hidden_devices"]
+
+
+# --- 「電気の操作」のボタン名・表示の選択（#260） ---
+
+
+@pytest.fixture
+def remote_buttons_config(data_dir, monkeypatch):
+    """ボタン定義を tmp_path 側へ向ける。リポジトリの data/remote.json は空なので見ない。"""
+    path = data_dir / "remote.json"
+    path.write_text(
+        json.dumps(
+            {
+                "groups": [
+                    {
+                        "id": "light",
+                        "name": "照明",
+                        "buttons": [
+                            {"id": "light-on", "label": "点ける", "signal_id": "sig-on"},
+                            {"id": "light-off", "label": "消す", "signal_id": "sig-off"},
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("backend.remote.CONFIG_PATH", path)
+    return path
+
+
+def test_remote_buttons_start_from_remote_json(authed_client, remote_buttons_config):
+    payload = authed_client.get("/api/remote/buttons").json()
+
+    assert payload["configured"] is True
+    assert [button["label"] for button in payload["groups"][0]["buttons"]] == [
+        "点ける",
+        "消す",
+    ]
+    assert all(button["hidden"] is False for button in payload["groups"][0]["buttons"])
+
+
+def test_saved_names_and_hidden_flags_come_back_from_the_api(
+    authed_client, remote_buttons_config
+):
+    """設定画面で保存した内容が、そのまま一覧APIに反映されるところまで通す。"""
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={
+            "remote_buttons": {
+                "light-on": {"label": "あかりをつける"},
+                "light-off": {"hidden": True},
+            }
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["remote_buttons"]["light-on"] == {"label": "あかりをつける"}
+
+    buttons = authed_client.get("/api/remote/buttons").json()["groups"][0]["buttons"]
+    assert buttons[0]["label"] == "あかりをつける"
+    # もとの名前は残る（設定画面が「もとの名前」を出すため）
+    assert buttons[0]["default_label"] == "点ける"
+    # 隠したボタンも一覧からは消えない。出さない判断は画面側で行う
+    assert buttons[1]["hidden"] is True
+
+
+def test_clearing_a_name_restores_the_one_from_remote_json(
+    authed_client, remote_buttons_config
+):
+    authed_client.put(
+        "/api/ui-settings",
+        json={"remote_buttons": {"light-on": {"label": "あかりをつける"}}},
+    )
+    authed_client.put(
+        "/api/ui-settings",
+        json={"remote_buttons": {"light-on": {"label": "", "hidden": False}}},
+    )
+
+    settings = authed_client.get("/api/ui-settings").json()
+    assert settings["remote_buttons"] == {}
+
+    buttons = authed_client.get("/api/remote/buttons").json()["groups"][0]["buttons"]
+    assert buttons[0]["label"] == "点ける"
 
 
 # --- サーバー間参照用の内部API（AIDE 連携 / #161） ---

@@ -8,6 +8,8 @@ os.environ.setdefault("ALLOWED_GOOGLE_EMAILS", "test@example.com")
 # python-dotenv は既にあるキーを上書きしないため、空文字を先に置いておけばよい。
 os.environ["GARBAGE_NOTION_TOKEN"] = ""
 os.environ["GARBAGE_NOTION_DATA_SOURCE_ID"] = ""
+os.environ["CLEANING_NOTION_TOKEN"] = ""
+os.environ["CLEANING_NOTION_DATA_SOURCE_ID"] = ""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,6 +42,11 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.garbage_notion.STATE_PATH",
         tmp_path / "garbage_notion_state.json",
+    )
+    # 掃除の予定は DB_MOCK ではファイルに落ちる（本番は app_settings テーブル）
+    monkeypatch.setattr(
+        "backend.cleaning.CONFIG_PATH",
+        tmp_path / "cleaning.json",
     )
     return tmp_path
 

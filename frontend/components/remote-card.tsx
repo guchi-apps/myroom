@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Lightbulb, Loader2, TriangleAlert, X } from "lucide-react";
 import { sendRemoteButton } from "@/lib/api";
 import { AuthError } from "@/lib/auth";
@@ -8,6 +8,7 @@ import {
   formatRemoteErrorMessage,
   formatRemoteSentMessage,
   REMOTE_SENT_MESSAGE_MS,
+  visibleRemoteGroups,
   type RemoteButtons,
   type RemoteFeedback,
 } from "@/lib/remote";
@@ -78,6 +79,10 @@ export function RemoteCard({ buttons, loading, error }: RemoteCardProps) {
   // オフライン表示に切り替わったときも一覧は届かない。読み込めなかった扱いでまとめる
   const unavailable = !loading && (error || buttons == null);
 
+  // 設定画面で隠したボタンは出さない。1つも残らないグループは見出しごと落とす（#260）
+  const groups = useMemo(() => visibleRemoteGroups(buttons), [buttons]);
+  const allHidden = (buttons?.configured ?? false) && groups.length === 0;
+
   return (
     <div className="device-card">
       <div className="mb-3 flex items-start justify-between gap-2">
@@ -99,14 +104,21 @@ export function RemoteCard({ buttons, loading, error }: RemoteCardProps) {
 
       {!loading && !unavailable && !buttons?.configured && (
         <RemoteMessage>
-          操作するボタンが未設定です（data/remote.json に登録すると表示されます）
+          まだボタンがありません。設定の「ダッシュボードの表示」→「電気の操作」の編集から、
+          Nature Remo に登録済みの操作を選べます。
         </RemoteMessage>
       )}
 
-      {!loading && !unavailable && buttons?.configured && (
+      {allHidden && (
+        <RemoteMessage>
+          出すボタンが1つも選ばれていません（「ダッシュボードの表示」から選べます）
+        </RemoteMessage>
+      )}
+
+      {!loading && !unavailable && buttons?.configured && !allHidden && (
         <>
           <div className="flex flex-col gap-3.5">
-            {buttons.groups.map((group) => (
+            {groups.map((group) => (
               <div key={group.id} className="flex flex-col gap-2">
                 <p className="ml-0.5 text-[11px] tracking-wider text-muted-foreground">
                   {group.name}

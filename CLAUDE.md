@@ -31,6 +31,14 @@
 | フロントエンドのLint | `npm run lint` | **`frontend/`** |
 | フロントエンドの依存 | `npm ci` | **`frontend/`** |
 
+**リポジトリ直下の `venv/` は触らないこと。** `.gitignore` に `venv/` と書かれているが、
+**このディレクトリは既に Git 管理下にある**（6,400ファイル超）。`.gitignore` は追跡済みの
+ファイルには効かないため、作り直すと数千ファイルの差分がコミット候補に並ぶ。しかも中身の
+`python3` は存在しない `~/.pyenv/versions/3.9.4` を指す壊れた symlink で、**素の worktree では
+そのまま実行できない。** バックエンドのテストを回すときは、リポジトリの外
+（セッションのスクラッチパッドなど）に別の venv を作って
+`pip install -r requirements-dev.txt` してから `pytest` を実行する。
+
 **新しく作った worktree では、まず `cd frontend && npm ci` から始めること。**
 issue-deck のランチャーが「依存インストール済み」と伝えてくる場合でも、それが見ているのは
 リポジトリルートで、ルートには実質の依存が無い（`package-lock.json` は空のスタブ）。
@@ -38,6 +46,18 @@ issue-deck のランチャーが「依存インストール済み」と伝えて
 `Cannot find module 'vitest/config'` で落ちる。**なお、ルートで `npm install` 系を実行すると
 空のスタブだった `package-lock.json` に `packages` が書き足されて差分が出る。**
 コミットに含めないこと。
+
+**バックエンドを触るなら、Python環境も自分で作ること。** サブPCには `pytest` も `pip` も
+素では入っていない（`python3 -m pip` すら無い）。**リポジトリルートに `venv/` があっても信用しない。**
+`.gitignore` 済みで中身は各ホストの残骸であり、実際に存在しない pyenv（`/home/guchi/.pyenv/versions/3.9.4`）を
+指したまま壊れていることがある。`venv/bin/python` はシンボリックリンクとして見えるのに
+`No such file or directory` で落ちる。作り直すなら worktree の外（スクラッチ領域）に置く。
+
+```bash
+python3 -m venv /tmp/<任意>/pyenv
+/tmp/<任意>/pyenv/bin/pip install -r requirements-dev.txt
+DB_MOCK=true /tmp/<任意>/pyenv/bin/python -m pytest tests/ -q
+```
 
 CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`（Node 20）の
 2ジョブに分かれている。**触った層のコマンドだけ実行すればよい。**
@@ -100,9 +120,32 @@ Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・�
 （常時稼働するバックエンドにDDL権限を持たせないため）。`migrate_db.py` はこの2つが空なら
 アプリ用ユーザーへフォールバックする。
 
+**その前に、`app_settings` テーブル（`setting_key` varchar(64) / `setting_value` TEXT）で足りないかを
+必ず検討すること。** 画面から編集する設定や、件数がせいぜい数十件で1行の JSON に収まるデータは、
+新しいテーブルを作らずにここへキーを1つ足すだけで持てる。**DDL が無ければ上記の権限問題を
+そもそも踏まない。** 既存の設定なら `backend/ui_settings.py` にキーと正規化関数を1つ足せば済む
+（#262 の `remote_button_defs` / `remote_catalog` がこの形）。まとまった機能なら `backend/cleaning.py`
+のように専用モジュールで読み書きしてもよい（掃除の予定と実施履歴・`cleaning_tasks`、#259）。
+どちらもマイグレーションを1行も足さずに追加できた。`setting_value` は `Text`（64KB）なので、
+数百KBになるものだけは別の置き場を考える。時系列で伸び続けるもの・期間で絞って引くものは
+この器に向かないので、そのときは下記に従ってテーブルを足す。
+
 - 新しいテーブル・列を足すときは `migrate_db.py` に「存在チェック → 無ければ作る」の形で追記する
 - **マイグレーション専用ユーザーにそのDBのGRANTが無ければ、上記を渡しても落ちる。**
   その場合はVPS上で管理者ユーザーからGRANTを1度だけ実行する必要がある（手作業。Git管理外）
+
+## data/ 配下のファイルはデプロイで上書きされる
+
+**`deploy.yml` の rsync は `data` を除外していない。** リポジトリに含まれる
+`data/*.json`（`remote.json`・`garbage.json` など）は、デプロイのたびに**リポジトリの中身で
+本番が上書きされる**。
+
+- **利用者が画面から書き換えるものを `data/` に置かない。** 書けたように見えても次のデプロイで消える
+  （#262。`data/remote.json` は `"groups": []` のままリポジトリにあり、本番の「電気の操作」カードが
+  ずっと未設定だった）。画面から書き換える値は `app_settings`（DB）へ置く
+- `data/` に残してよいのは、**リポジトリが正の初期値・定義**だけ。読む側は「DBに保存済みなら
+  そちらを使い、まだ無ければファイルを読む」の形にして、保存済みかどうかを区別できるようにする
+  （空の保存とファイル未保存を同じ扱いにすると、画面から消したものがデプロイで復活する）
 
 ## デプロイの値の取得先
 
