@@ -93,6 +93,15 @@ describe("CleaningCard", () => {
   it("1件も登録されていなければ設定への案内を出す", () => {
     const html = render({ today: "2026-08-26", configured: false, tasks: [] });
     expect(html).toContain("掃除の予定がまだありません");
+    // 入口は文字ではなくアイコンになったので、案内文もそれに合わせる（#277）
+    expect(html).toContain("設定アイコン");
+  });
+
+  it("設定への入口は共通の設定アイコンで出す", () => {
+    // 文字の「設定」ではなく、他のセクションと同じ歯車ボタン（#277）
+    const html = render(schedule);
+    expect(html).toContain('aria-label="掃除の設定"');
+    expect(html).toContain('title="掃除の設定"');
   });
 
   it("読み込み中と失敗はメッセージだけを出す", () => {
