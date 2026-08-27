@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useUnsavedEdits } from "@/lib/unsaved-edits";
 import { Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -208,6 +209,9 @@ export function CleaningSettingsPanel({
   const [drafts, setDrafts] = useState<CleaningDraft[]>(() =>
     (schedule?.tasks ?? []).map(toDraft)
   );
+  // 開いている間は自動更新のリロードを止める。閉じるまで保存しないため、
+  // 復帰時にそのままリロードすると入力が黙って消える（#277）
+  useUnsavedEdits(open);
 
   if (!open) return null;
 

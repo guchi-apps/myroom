@@ -1,6 +1,7 @@
 "use client";
 
 import { Sparkles } from "lucide-react";
+import { SettingsIconButton } from "@/components/ui/settings-icon-button";
 import {
   buildCleaningRows,
   buildCleaningTodo,
@@ -51,13 +52,11 @@ export function CleaningCard({
       <div className="mb-3 flex items-center gap-2">
         <Sparkles className="size-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <p className="device-card-title whitespace-nowrap">掃除</p>
-        <button
-          type="button"
+        <SettingsIconButton
+          label="掃除の設定"
           onClick={onOpenSettings}
-          className="ml-auto rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
-        >
-          設定
-        </button>
+          className="ml-auto"
+        />
       </div>
 
       {loading && <CleaningMessage>読み込み中...</CleaningMessage>}
@@ -68,7 +67,7 @@ export function CleaningCard({
 
       {!loading && !error && schedule && !schedule.configured && (
         <CleaningMessage>
-          掃除の予定がまだありません（右上の「設定」から場所を追加できます）
+          掃除の予定がまだありません（右上の設定アイコンから場所を追加できます）
         </CleaningMessage>
       )}
 

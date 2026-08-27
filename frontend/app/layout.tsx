@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP } from "next/font/google";
 import "./globals.css";
+import { AppUpdateChecker } from "@/components/app-update-checker";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { ThemeProvider } from "@/components/theme-provider";
 
@@ -50,6 +51,8 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <ServiceWorkerRegister />
+          {/* 新しいビルドを自分で見つけて取り込む。全画面に効かせたいのでここに置く（#277） */}
+          <AppUpdateChecker />
           {/* 画面ごとに幅が違う（ホームはPCで広げる）ため、最大幅は各画面が決める */}
           <div className="min-h-screen w-full bg-background">{children}</div>
         </ThemeProvider>

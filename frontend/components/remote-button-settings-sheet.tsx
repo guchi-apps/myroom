@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useUnsavedEdits } from "@/lib/unsaved-edits";
 import {
   ArrowDown,
   ArrowUp,
@@ -94,6 +95,9 @@ export function RemoteButtonSettingsSheet({
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // 「保存する」を押すまでサーバーには書かない。開いている間は自動更新の
+  // リロードを止め、書きかけの入力を捨てないようにする（#277）
+  useUnsavedEdits();
 
   const registered = useMemo(() => collectDraftButtonIds(groups), [groups]);
   const total = registered.size;

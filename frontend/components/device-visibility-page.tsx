@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useUnsavedEdits } from "@/lib/unsaved-edits";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -163,6 +164,9 @@ function getAirconListTracks(
 }
 
 export function DeviceVisibilityPage() {
+  // 名前・オフセット・しきい値をテキスト入力の下書きとして持ち、保存ボタンで書く画面。
+  // 開いている間は自動更新のリロードを止める（#277）
+  useUnsavedEdits();
   const { isAuthenticated, setIsAuthenticated } = useAuthState();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [airconUnits, setAirconUnits] = useState<AirconUnitInfo[]>([]);
