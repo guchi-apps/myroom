@@ -1,7 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Eye, EyeOff, Lightbulb, Plus, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  Lightbulb,
+  Plus,
+  X,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { RemoteCatalogSheet } from "@/components/remote-catalog-sheet";
 import {
@@ -9,6 +19,7 @@ import {
   applyCatalogSelection,
   buildRemoteConfigUpdate,
   collectDraftButtonIds,
+  moveRemoteButton,
   moveRemoteGroup,
   removeRemoteButton,
   toGroupDrafts,
@@ -63,9 +74,9 @@ function buildDrafts(buttons: RemoteButtons | null): Record<string, Draft> {
 /**
  * 「電気の操作」に並べるボタンを登録し、名前を付け替えるシート。
  *
- * 触れるのは「どの操作をボタンにするか」（#262）と、「画面に出す名前」
- * 「ダッシュボードに出すかどうか」（#260）の3つ。名前を空にすると
- * Nature Remo 側の名前へ戻る。
+ * 触れるのは「どの操作をボタンにするか」（#262）、「画面に出す名前」
+ * 「ダッシュボードに出すかどうか」（#260）、そして「並び順」（#269）。
+ * 名前を空にすると Nature Remo 側の名前へ戻る。
  *
  * **保存ボタンは1つだけ。** 候補一覧で選んだ内容もここへ取り込まれるだけで、
  * 「保存する」を押すまでサーバーには書かない。
@@ -148,7 +159,7 @@ export function RemoteButtonSettingsSheet({
               <div className="min-w-0">
                 <h2 className="truncate text-lg font-bold">電気の操作のボタン</h2>
                 <p className="truncate text-sm text-muted-foreground">
-                  出すボタンと、その名前を決めます
+                  出すボタンと、名前・並び順を決めます
                 </p>
               </div>
             </div>
@@ -225,13 +236,45 @@ export function RemoteButtonSettingsSheet({
                       </button>
                     </div>
 
-                    {group.buttons.map((button) => {
+                    {group.buttons.map((button, buttonIndex) => {
                       const draft = drafts[button.id];
                       if (!draft) return null;
                       const original = button.defaultLabel;
                       const inputId = `remote-label-${button.id}`;
                       return (
                         <div key={button.id} className="flex items-center gap-2">
+                          {/*
+                            並び順の上下（#269）。グループの並べ替えと同じ操作だが、
+                            行の幅を食わないよう縦に積んで28pxに収める
+                          */}
+                          <div className="flex w-7 shrink-0 flex-col gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setGroups((prev) =>
+                                  moveRemoteButton(prev, groupIndex, buttonIndex, -1)
+                                )
+                              }
+                              disabled={buttonIndex === 0}
+                              className="flex h-[17px] items-center justify-center rounded-md bg-secondary text-foreground transition-opacity hover:bg-accent disabled:opacity-30"
+                              aria-label={`${original}を上へ`}
+                            >
+                              <ChevronUp className="size-3" strokeWidth={2.5} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setGroups((prev) =>
+                                  moveRemoteButton(prev, groupIndex, buttonIndex, 1)
+                                )
+                              }
+                              disabled={buttonIndex === group.buttons.length - 1}
+                              className="flex h-[17px] items-center justify-center rounded-md bg-secondary text-foreground transition-opacity hover:bg-accent disabled:opacity-30"
+                              aria-label={`${original}を下へ`}
+                            >
+                              <ChevronDown className="size-3" strokeWidth={2.5} />
+                            </button>
+                          </div>
                           <div className={cn("min-w-0 flex-1", draft.hidden && "opacity-50")}>
                             <label htmlFor={inputId} className="sr-only">
                               {original}の名前
@@ -293,7 +336,7 @@ export function RemoteButtonSettingsSheet({
 
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   ダッシュボードには{visibleCount}件出ます（全{total}件中）。
-                  名前を空にすると、もとの名前へ戻ります。
+                  名前を空にすると、もとの名前へ戻ります。上下の矢印で並び順を変えられます。
                 </p>
               </div>
             )}

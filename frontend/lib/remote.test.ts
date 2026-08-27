@@ -9,6 +9,7 @@ import {
   formatRemoteErrorMessage,
   formatRemoteSentMessage,
   hasSelectableRemoteButtons,
+  moveRemoteButton,
   moveRemoteGroup,
   removeRemoteButton,
   toGroupDrafts,
@@ -242,6 +243,52 @@ describe("moveRemoteGroup", () => {
   it("端では動かさない", () => {
     expect(moveRemoteGroup(three, 0, -1)).toBe(three);
     expect(moveRemoteGroup(three, 2, 1)).toBe(three);
+  });
+});
+
+describe("moveRemoteButton", () => {
+  const groups: RemoteGroupDraft[] = [
+    {
+      id: "light",
+      name: "あかり",
+      buttons: [
+        { id: "l-on", defaultLabel: "on" },
+        { id: "l-night", defaultLabel: "night" },
+        { id: "l-off", defaultLabel: "off" },
+      ],
+    },
+    { id: "tv", name: "テレビ", buttons: [{ id: "s-power", defaultLabel: "power" }] },
+  ];
+
+  it("グループの中で上下に入れ替える", () => {
+    expect(moveRemoteButton(groups, 0, 1, -1)[0].buttons.map((b) => b.id)).toEqual([
+      "l-night",
+      "l-on",
+      "l-off",
+    ]);
+    expect(moveRemoteButton(groups, 0, 1, 1)[0].buttons.map((b) => b.id)).toEqual([
+      "l-on",
+      "l-off",
+      "l-night",
+    ]);
+  });
+
+  it("端では動かさない", () => {
+    expect(moveRemoteButton(groups, 0, 0, -1)).toBe(groups);
+    expect(moveRemoteButton(groups, 0, 2, 1)).toBe(groups);
+    // 1つしか入っていないグループはどちらへも動かない
+    expect(moveRemoteButton(groups, 1, 0, -1)).toBe(groups);
+    expect(moveRemoteButton(groups, 1, 0, 1)).toBe(groups);
+  });
+
+  it("他のグループと元の配列は書き換えない", () => {
+    const next = moveRemoteButton(groups, 0, 0, 1);
+    expect(next[1]).toBe(groups[1]);
+    expect(groups[0].buttons.map((b) => b.id)).toEqual(["l-on", "l-night", "l-off"]);
+  });
+
+  it("無いグループを指されても落ちない", () => {
+    expect(moveRemoteButton(groups, 5, 0, 1)).toBe(groups);
   });
 });
 
