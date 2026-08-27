@@ -13,6 +13,7 @@ SETTING_CHART_COLORS = "chart_colors"
 SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
+SETTING_LIGHT_THRESHOLDS = "light_thresholds"
 SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
 SETTING_REMOTE_BUTTONS = "remote_buttons"
 SETTING_REMOTE_BUTTON_DEFS = "remote_button_defs"
@@ -28,6 +29,10 @@ MAX_ENERGY_UNIT_PRICE = 1000.0
 # 「電気の操作」のボタンに付けられる名前の長さ。カードは3列で、長い名前は truncate されて
 # 読めなくなるだけなので、入り口で切っておく
 MAX_REMOTE_LABEL_LENGTH = 20
+
+# 照明の点灯とみなす照度（lx）の上限。直射日光でも10万lx程度なので、これを超える値は
+# 打ち間違いとみなして捨てる。0以下は「判定しない」の意味なので同じく保存しない
+MAX_LIGHT_THRESHOLD_LUX = 100000.0
 
 DEFAULT_CHART_COLORS: Dict[str, str] = {
     "device:1": "#3498db",
@@ -45,6 +50,9 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_HIDDEN_DEVICES: [],
         SETTING_STALE_ALERT_EXCLUDED: [],
         SETTING_PRESSURE_OFFSETS: {},
+        # 空 = どのデバイスでも照明の判定を行わない。部屋の作りで妥当な照度が変わるため、
+        # 既定のしきい値は置かず、画面から設定するまで表示を増やさない
+        SETTING_LIGHT_THRESHOLDS: {},
         SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
         SETTING_REMOTE_BUTTONS: {},
         # None は「まだ画面から一度も保存していない」。空の groups（1つも登録していない）
@@ -135,6 +143,28 @@ def _normalize_pressure_offsets(raw: Any) -> Dict[str, float]:
         if offset != 0:
             offsets[device_id] = offset
     return offsets
+
+
+def _normalize_light_thresholds(raw: Any) -> Dict[str, float]:
+    """デバイスID -> 照明の点灯とみなす照度（lx）。
+
+    キーが無いデバイスは「判定しない」。0以下・上限超え・数値でない値は、判定を止める
+    指定（＝キーを消す）として扱う。画面の入力欄を空にしたときもここへ落ちてくる。
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    thresholds: Dict[str, float] = {}
+    for key, value in raw.items():
+        try:
+            device_id = str(int(key))
+            threshold = float(value)
+        except (TypeError, ValueError):
+            continue
+        if threshold <= 0 or threshold > MAX_LIGHT_THRESHOLD_LUX:
+            continue
+        thresholds[device_id] = round(threshold, 1)
+    return thresholds
 
 
 def _normalize_energy_unit_price(raw: Any) -> float:
@@ -250,6 +280,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         SETTING_PRESSURE_OFFSETS: _normalize_pressure_offsets(
             raw.get(SETTING_PRESSURE_OFFSETS, defaults[SETTING_PRESSURE_OFFSETS])
         ),
+        SETTING_LIGHT_THRESHOLDS: _normalize_light_thresholds(
+            raw.get(SETTING_LIGHT_THRESHOLDS, defaults[SETTING_LIGHT_THRESHOLDS])
+        ),
         SETTING_ENERGY_UNIT_PRICE: _normalize_energy_unit_price(
             raw.get(SETTING_ENERGY_UNIT_PRICE, defaults[SETTING_ENERGY_UNIT_PRICE])
         ),
@@ -335,6 +368,9 @@ def save_settings(
         ),
         SETTING_PRESSURE_OFFSETS: updates.get(
             SETTING_PRESSURE_OFFSETS, current.get(SETTING_PRESSURE_OFFSETS, {})
+        ),
+        SETTING_LIGHT_THRESHOLDS: updates.get(
+            SETTING_LIGHT_THRESHOLDS, current.get(SETTING_LIGHT_THRESHOLDS, {})
         ),
         SETTING_ENERGY_UNIT_PRICE: updates.get(
             SETTING_ENERGY_UNIT_PRICE,

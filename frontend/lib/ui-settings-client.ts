@@ -52,6 +52,7 @@ export async function loadUiSettingsFromServer(
   hiddenDeviceKeys: Set<string>;
   staleAlertExcludedKeys: Set<string>;
   pressureOffsets: Record<string, number>;
+  lightThresholds: Record<string, number>;
 }> {
   discardLegacyLocalStorage();
   const settings = await fetchUiSettings();
@@ -73,6 +74,7 @@ export async function loadUiSettingsFromServer(
     hiddenDeviceKeys: normalizeHiddenDeviceKeys(settings.hidden_devices, sensorDeviceIds),
     staleAlertExcludedKeys: new Set(staleAlertExcluded),
     pressureOffsets: settings.pressure_offsets ?? {},
+    lightThresholds: settings.light_thresholds ?? {},
   };
 }
 
@@ -98,6 +100,12 @@ export async function savePressureOffsetsToServer(
   await updateUiSettings({ pressure_offsets: offsets });
 }
 
+export async function saveLightThresholdsToServer(
+  thresholds: Record<string, number>
+): Promise<void> {
+  await updateUiSettings({ light_thresholds: thresholds });
+}
+
 export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS) {
   return {
     displayOrder: buildDefaultDisplayOrder(sensorDeviceIds),
@@ -105,5 +113,6 @@ export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBO
     hiddenDeviceKeys: new Set<string>(),
     staleAlertExcludedKeys: new Set<string>(),
     pressureOffsets: {} as Record<string, number>,
+    lightThresholds: {} as Record<string, number>,
   };
 }

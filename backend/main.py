@@ -202,6 +202,8 @@ class UiSettingsUpdate(BaseModel):
     hidden_devices: Optional[List[str]] = None
     stale_alert_excluded_devices: Optional[List[str]] = None
     pressure_offsets: Optional[Dict[str, float]] = None
+    #: デバイスID -> 照明の点灯とみなす照度（lx）。入っていないデバイスは判定しない
+    light_thresholds: Optional[Dict[str, float]] = None
     energy_unit_price: Optional[float] = None
     #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
