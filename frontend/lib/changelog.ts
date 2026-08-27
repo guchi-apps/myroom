@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.5.0",
+    date: "2026-08-28",
+    changes: [
+      "ダッシュボードの「暮らし」セクションで、カードの並び順を自分の好きな順番に変更できるようになりました。表示・非表示の切り替えや、電気の操作ボタンの編集も同じ場所から行えます。",
+    ],
+  },
+  {
     version: "4.4.0",
     date: "2026-08-27",
     changes: [

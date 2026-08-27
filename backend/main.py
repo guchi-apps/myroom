@@ -198,6 +198,8 @@ class BulkDeleteRecordsRequest(BaseModel):
 
 class UiSettingsUpdate(BaseModel):
     display_order: Optional[List[str]] = None
+    #: 「暮らし」のカードを並べる順。中身は lib/dashboard-sections.ts の LIFE_CARDS のキー
+    life_card_order: Optional[List[str]] = None
     chart_colors: Optional[Dict[str, str]] = None
     hidden_devices: Optional[List[str]] = None
     stale_alert_excluded_devices: Optional[List[str]] = None

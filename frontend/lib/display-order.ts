@@ -1,3 +1,4 @@
+import { moveOrderItem, normalizeOrderKeys } from "@/lib/ordering";
 import {
   AIRCON_CHART_DEVICE_ID,
   DASHBOARD_SENSOR_DEVICE_IDS,
@@ -50,23 +51,19 @@ export function normalizeDisplayOrder(
   const defaults = buildDefaultDisplayOrder(sensorDeviceIds);
   if (!saved?.length) return defaults;
 
-  const defaultKeys = new Set(defaults.map(orderItemKey));
-  const seen = new Set<string>();
-  const normalized: DisplayOrderItem[] = [];
-
-  for (const item of saved) {
+  // キーの列に落として整え、元の項目へ引き直す（整える規則は `lib/ordering.ts` が持つ）
+  const byKey = new Map<string, DisplayOrderItem>();
+  for (const item of [...defaults, ...saved]) {
     const key = orderItemKey(item);
-    if (!defaultKeys.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(item);
+    if (!byKey.has(key)) byKey.set(key, item);
   }
 
-  for (const item of defaults) {
-    const key = orderItemKey(item);
-    if (!seen.has(key)) normalized.push(item);
-  }
-
-  return normalized;
+  return normalizeOrderKeys(
+    saved.map(orderItemKey),
+    defaults.map(orderItemKey)
+  )
+    .map((key) => byKey.get(key))
+    .filter((item): item is DisplayOrderItem => item != null);
 }
 
 export function loadDisplayOrder(
@@ -134,10 +131,5 @@ export function moveDisplayOrderItem(
   index: number,
   direction: -1 | 1
 ): DisplayOrderItem[] {
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= order.length) return order;
-
-  const next = [...order];
-  [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-  return next;
+  return moveOrderItem(order, index, direction);
 }
