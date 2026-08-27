@@ -9,6 +9,7 @@ from . import database
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "data" / "ui_settings.json"
 
 SETTING_DISPLAY_ORDER = "display_order"
+SETTING_LIFE_CARD_ORDER = "life_card_order"
 SETTING_CHART_COLORS = "chart_colors"
 SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
@@ -46,6 +47,9 @@ DEFAULT_CHART_COLORS: Dict[str, str] = {
 def _default_settings() -> Dict[str, Any]:
     return {
         SETTING_DISPLAY_ORDER: list(DEFAULT_DISPLAY_ORDER),
+        # 空 = まだ並べ替えていない。どのカードがあるかはフロント側の LIFE_CARDS が正なので、
+        # ここに既定の並びは持たない（#283）
+        SETTING_LIFE_CARD_ORDER: [],
         SETTING_CHART_COLORS: dict(DEFAULT_CHART_COLORS),
         SETTING_HIDDEN_DEVICES: [],
         SETTING_STALE_ALERT_EXCLUDED: [],
@@ -82,6 +86,31 @@ def _normalize_display_order(raw: Any) -> List[str]:
             normalized.append(key)
 
     return normalized
+
+
+def _normalize_life_card_order(raw: Any) -> List[str]:
+    """「暮らし」のカードを並べる順（#283）。
+
+    `display_order` と違い、**ここに既定の並びを足さない。** どのカードが存在するかを
+    知っているのはフロント側の `lib/dashboard-sections.ts` の `LIFE_CARDS` で、
+    バックエンドへ同じ一覧を写すとカードを増やしたときに片方だけ古くなる。
+    保存されていないキー・消えたキーの補完は `lib/life-card-order.ts` が行うため、
+    ここでは形（文字列・重複なし）だけを整える。
+    """
+    if not isinstance(raw, list):
+        return []
+
+    order: List[str] = []
+    seen: Set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        key = entry.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        order.append(key)
+    return order
 
 
 def _normalize_chart_colors(raw: Any) -> Dict[str, str]:
@@ -268,6 +297,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         SETTING_DISPLAY_ORDER: _normalize_display_order(
             raw.get(SETTING_DISPLAY_ORDER, defaults[SETTING_DISPLAY_ORDER])
         ),
+        SETTING_LIFE_CARD_ORDER: _normalize_life_card_order(
+            raw.get(SETTING_LIFE_CARD_ORDER, defaults[SETTING_LIFE_CARD_ORDER])
+        ),
         SETTING_CHART_COLORS: _normalize_chart_colors(
             raw.get(SETTING_CHART_COLORS, defaults[SETTING_CHART_COLORS])
         ),
@@ -359,6 +391,9 @@ def save_settings(
     current = get_settings(db)
     merged = {
         SETTING_DISPLAY_ORDER: updates.get(SETTING_DISPLAY_ORDER, current[SETTING_DISPLAY_ORDER]),
+        SETTING_LIFE_CARD_ORDER: updates.get(
+            SETTING_LIFE_CARD_ORDER, current.get(SETTING_LIFE_CARD_ORDER, [])
+        ),
         SETTING_CHART_COLORS: updates.get(SETTING_CHART_COLORS, current[SETTING_CHART_COLORS]),
         SETTING_HIDDEN_DEVICES: updates.get(
             SETTING_HIDDEN_DEVICES, current[SETTING_HIDDEN_DEVICES]

@@ -15,8 +15,11 @@
  *    - `comingSoon`（近日公開）: まだ作っていない機能の案内。押しても何も起きない。
  *
  * 2. 並び順の設定（`display_order`）はグラフ凡例の並びと同じ設定なので、
- *    凡例を持たない `life` のカードは混ぜない。`life` のカードは LIFE_CARDS の定義順に並べる。
- *    表示・非表示だけは共通の `hidden_devices`（デバイス設定画面）で扱う。
+ *    凡例を持たない `life` のカードは混ぜない。`life` の並び順は別の設定
+ *    （`life_card_order`・`lib/life-card-order.ts`）で持ち、LIFE_CARDS の定義順は
+ *    「まだ並べ替えていないときの既定」になる。表示・非表示は共通の `hidden_devices`。
+ *    **どちらの入口もダッシュボードの「暮らし」の見出しにある設定アイコン**で、
+ *    `/devices`（いまの環境の設定）には暮らしの設定を置かない（#283）。
  *
  * 3. 画面上の並びは「いまの環境 → 暮らし → 近日公開」。スマホもPCも同じ順で、
  *    PCは各セクションの中で列数だけが増える。**推移グラフと最近の記録はここには置かない。**
@@ -35,11 +38,16 @@ export const DASHBOARD_SECTION_LABELS: Record<DashboardSection, string> = {
   comingSoon: "近日公開",
 };
 
-/** 暮らしセクションのカード。ダッシュボードにはこの順で並ぶ */
+/** 暮らしセクションのカード。並べ替えるまではこの順で並ぶ */
 export interface LifeCardDefinition {
-  /** hidden_devices で使う表示・非表示キー */
+  /** hidden_devices・life_card_order で使うキー */
   key: string;
   label: string;
+  /**
+   * 設定シートの行に出す色（`globals.css` のCSS変数名）。
+   * カード自身が色を持っていないもの（ゴミの日・掃除）には付けない
+   */
+  accentVar?: string;
 }
 
 export const GARBAGE_CARD_KEY = "garbage";
@@ -57,12 +65,14 @@ export const CLEANING_CARD_KEY = "cleaning";
  *
  * 掃除は末尾。押すためのカードだが、ゴミの日のように日付が決まっているわけではなく
  * 「そろそろやる」を思い出すためのものなので、毎日見る値より後ろでよい。
+ *
+ * これは**並べ替えるまでの既定**で、画面から変えた順は `life_card_order` に入る（#283）。
  */
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
-  { key: REMOTE_CARD_KEY, label: "電気の操作" },
+  { key: REMOTE_CARD_KEY, label: "電気の操作", accentVar: "--remote-color" },
   { key: GARBAGE_CARD_KEY, label: "ゴミの日" },
-  { key: ENERGY_CARD_KEY, label: "消費電力" },
-  { key: BILL_CARD_KEY, label: "電気・ガス料金" },
+  { key: ENERGY_CARD_KEY, label: "消費電力", accentVar: "--energy-color" },
+  { key: BILL_CARD_KEY, label: "電気・ガス料金", accentVar: "--bill-color" },
   { key: CLEANING_CARD_KEY, label: "掃除" },
 ];
 

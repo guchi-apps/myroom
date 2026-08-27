@@ -10,6 +10,10 @@ import {
   type DisplayOrderItem,
 } from "@/lib/display-order";
 import {
+  buildDefaultLifeCardOrder,
+  normalizeLifeCardOrder,
+} from "@/lib/life-card-order";
+import {
   normalizeHiddenDeviceKeys,
 } from "@/lib/visible-devices";
 import { fetchUiSettings, updateUiSettings } from "@/lib/api";
@@ -48,6 +52,7 @@ export async function loadUiSettingsFromServer(
   sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
 ): Promise<{
   displayOrder: DisplayOrderItem[];
+  lifeCardOrder: string[];
   chartColors: ChartColorSettings;
   hiddenDeviceKeys: Set<string>;
   staleAlertExcludedKeys: Set<string>;
@@ -70,6 +75,7 @@ export async function loadUiSettingsFromServer(
 
   return {
     displayOrder,
+    lifeCardOrder: normalizeLifeCardOrder(settings.life_card_order),
     chartColors: normalizeChartColors(settings.chart_colors),
     hiddenDeviceKeys: normalizeHiddenDeviceKeys(settings.hidden_devices, sensorDeviceIds),
     staleAlertExcludedKeys: new Set(staleAlertExcluded),
@@ -80,6 +86,10 @@ export async function loadUiSettingsFromServer(
 
 export async function saveDisplayOrderToServer(order: DisplayOrderItem[]): Promise<void> {
   await updateUiSettings({ display_order: order.map(orderItemKey) });
+}
+
+export async function saveLifeCardOrderToServer(order: readonly string[]): Promise<void> {
+  await updateUiSettings({ life_card_order: [...order] });
 }
 
 export async function saveChartColorsToServer(colors: ChartColorSettings): Promise<void> {
@@ -109,6 +119,7 @@ export async function saveLightThresholdsToServer(
 export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS) {
   return {
     displayOrder: buildDefaultDisplayOrder(sensorDeviceIds),
+    lifeCardOrder: buildDefaultLifeCardOrder(),
     chartColors: buildDefaultChartColors(sensorDeviceIds),
     hiddenDeviceKeys: new Set<string>(),
     staleAlertExcludedKeys: new Set<string>(),

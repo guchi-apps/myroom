@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronRight, CloudSun, LineChart, RefreshCw } from "lucide-react";
 import { AppSettingsSheet } from "@/components/app-settings-sheet";
+import { LifeSettingsSheet } from "@/components/life-settings-sheet";
+import { RemoteButtonSettingsSheet } from "@/components/remote-button-settings-sheet";
 import { SettingsIconButton } from "@/components/ui/settings-icon-button";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
@@ -36,6 +38,7 @@ import {
   fetchRemoteButtons,
   fetchSensorsStatus,
   markCleaningDone,
+  saveRemoteConfig,
   updateCleaningTasks,
 } from "@/lib/api";
 import {
@@ -79,6 +82,7 @@ import {
   isAirconRoomVisible,
   isAirconTargetVisible,
   isHiddenKeyVisible,
+  setHiddenKeyVisible,
   applyHiddenDevicesToLineVisibility,
   VISIBLE_DEVICES_CHANGED_EVENT,
 } from "@/lib/visible-devices";
@@ -98,13 +102,24 @@ import type {
   CleaningTaskInput,
 } from "@/lib/cleaning";
 import type { GarbageSchedule } from "@/lib/garbage";
-import type { RemoteButtons } from "@/lib/remote";
+import {
+  countRemoteButtons,
+  countVisibleRemoteButtons,
+  type RemoteButtons,
+  type RemoteConfigUpdate,
+} from "@/lib/remote";
+import {
+  buildDefaultLifeCardOrder,
+  getOrderedLifeCards,
+} from "@/lib/life-card-order";
 import { STALE_ALERT_EXCLUDED_CHANGED_EVENT } from "@/components/device-visibility-page";
 import { LightStatusBadge } from "@/components/light-status-badge";
 import { getLightThreshold, resolveDeviceLightStatus } from "@/lib/light-status";
 import {
   loadUiSettingsFromServer,
   getDefaultUiSettings,
+  saveHiddenDevicesToServer,
+  saveLifeCardOrderToServer,
 } from "@/lib/ui-settings-client";
 import {
   applyDailyStatsInheritance,
@@ -350,6 +365,12 @@ export function MyRoomDashboard() {
     buildDefaultDisplayOrder()
   );
   const [hiddenDeviceKeys, setHiddenDeviceKeys] = useState<Set<string>>(() => new Set());
+  // 「暮らし」のカードを並べる順（#283）。見出しの設定アイコンから変える
+  const [lifeCardOrder, setLifeCardOrder] = useState<string[]>(() =>
+    buildDefaultLifeCardOrder()
+  );
+  const [lifeSettingsOpen, setLifeSettingsOpen] = useState(false);
+  const [remoteSheetOpen, setRemoteSheetOpen] = useState(false);
   const [chartColors, setChartColors] = useState<ChartColorSettings>(() =>
     buildDefaultChartColors()
   );
@@ -408,11 +429,21 @@ export function MyRoomDashboard() {
     [displayOrder, hiddenDeviceKeys]
   );
 
-  const remoteCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, REMOTE_CARD_KEY);
-  const garbageCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, GARBAGE_CARD_KEY);
-  const energyCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, ENERGY_CARD_KEY);
-  const billCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, BILL_CARD_KEY);
-  const cleaningCardVisible = isHiddenKeyVisible(hiddenDeviceKeys, CLEANING_CARD_KEY);
+  // 暮らしのカードは設定した順に並べ、隠したものだけを落とす（#283）
+  const visibleLifeCards = useMemo(
+    () =>
+      getOrderedLifeCards(lifeCardOrder).filter((card) =>
+        isHiddenKeyVisible(hiddenDeviceKeys, card.key)
+      ),
+    [lifeCardOrder, hiddenDeviceKeys]
+  );
+
+  // 「電気の操作」の行に出す説明。何件出ているかが分かると、編集を開く前に判断できる
+  const remoteButtonSummary = useMemo(() => {
+    const total = countRemoteButtons(remoteButtons);
+    if (total === 0) return "操作するボタンが未設定です";
+    return `ボタン${countVisibleRemoteButtons(remoteButtons)}件を表示中（全${total}件）`;
+  }, [remoteButtons]);
 
   // 開いている項目は id で覚える。実施を記録すると一覧が作り直されるため、
   // オブジェクトを持つと古い「次にやる日」がシートに残る
@@ -475,6 +506,7 @@ export function MyRoomDashboard() {
     try {
       const settings = await loadUiSettingsFromServer(sensorDeviceIds);
       setDisplayOrder(settings.displayOrder);
+      setLifeCardOrder(settings.lifeCardOrder);
       setChartColors(settings.chartColors);
       setHiddenDeviceKeys(settings.hiddenDeviceKeys);
       setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
@@ -485,6 +517,43 @@ export function MyRoomDashboard() {
       }
     }
   }, [sensorDeviceIds, setIsAuthenticated]);
+
+  const handleLifeCardOrderChange = useCallback(
+    (order: string[]) => {
+      setLifeCardOrder(order);
+      void saveLifeCardOrderToServer(order).catch((err) => {
+        if (err instanceof AuthError) setIsAuthenticated(false);
+      });
+    },
+    [setIsAuthenticated]
+  );
+
+  const handleLifeCardVisibilityChange = useCallback(
+    (key: string, visible: boolean) => {
+      const next = setHiddenKeyVisible(hiddenDeviceKeys, key, visible);
+      setHiddenDeviceKeys(next);
+      void saveHiddenDevicesToServer(next).catch((err) => {
+        if (err instanceof AuthError) setIsAuthenticated(false);
+      });
+    },
+    [hiddenDeviceKeys, setIsAuthenticated]
+  );
+
+  /**
+   * 「電気の操作」に並べるボタンの登録内容を保存する（#262）。
+   * シートは保存の結果を見て閉じるため、失敗はシート側へ返す。
+   */
+  const handleRemoteConfigSave = useCallback(
+    async (update: RemoteConfigUpdate) => {
+      try {
+        setRemoteButtons(await saveRemoteConfig(update));
+      } catch (err) {
+        if (err instanceof AuthError) setIsAuthenticated(false);
+        throw err;
+      }
+    },
+    [setIsAuthenticated]
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -525,6 +594,7 @@ export function MyRoomDashboard() {
         setAirconControlEnabled(airconUnitsResponse.control_enabled);
         setOutdoorLocation(outdoorLoc);
         setDisplayOrder(settings.displayOrder);
+        setLifeCardOrder(settings.lifeCardOrder);
         setChartColors(settings.chartColors);
         setHiddenDeviceKeys(settings.hiddenDeviceKeys);
         setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
@@ -1156,66 +1226,92 @@ export function MyRoomDashboard() {
             </div>
           </section>
 
-          {(remoteCardVisible ||
-            garbageCardVisible ||
-            energyCardVisible ||
-            billCardVisible ||
-            cleaningCardVisible) && (
-            <section>
-              <div className="mb-3 px-0.5">
-                <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
-              </div>
+          {/*
+            カードを全部隠していても節ごと消さない（#283）。見出しと設定アイコンが
+            残っていないと、隠したあとで戻す入口が画面から無くなる。
+          */}
+          <section>
+            <div className="mb-3 flex items-center justify-between gap-2 px-0.5">
+              <h2 className="section-title">{DASHBOARD_SECTION_LABELS.life}</h2>
+              <SettingsIconButton
+                label="暮らしの設定"
+                onClick={() => setLifeSettingsOpen(true)}
+              />
+            </div>
+            {visibleLifeCards.length > 0 ? (
               <div className="flex flex-col gap-3 lg:grid lg:grid-cols-2 lg:items-start">
-                {remoteCardVisible && (
-                  <RemoteCard
-                    buttons={remoteButtons}
-                    loading={!dashboardDataLoaded && remoteButtons == null}
-                    error={remoteError && remoteButtons == null}
-                    aircon={remoteAircon}
-                  />
-                )}
-                {garbageCardVisible && (
-                  <GarbageCard
-                    schedule={garbageSchedule}
-                    loading={!dashboardDataLoaded && garbageSchedule == null}
-                    error={garbageError && garbageSchedule == null}
-                  />
-                )}
-                {energyCardVisible && (
-                  <PowerCard
-                    breakdown={energyBreakdown}
-                    loading={!dashboardDataLoaded && energyBreakdown == null}
-                    error={energyError && energyBreakdown == null}
-                    onOpenDetail={() => setEnergyPanelOpen(true)}
-                  />
-                )}
-                {billCardVisible && (
-                  <BillCard
-                    summary={billSummary}
-                    loading={!dashboardDataLoaded && billSummary == null}
-                    error={billError && billSummary == null}
-                    onOpenDetail={() => setBillPanelOpen(true)}
-                  />
-                )}
-                {cleaningCardVisible && (
-                  <CleaningCard
-                    schedule={cleaningSchedule}
-                    loading={!dashboardDataLoaded && cleaningSchedule == null}
-                    error={cleaningError && cleaningSchedule == null}
-                    busyTaskId={cleaningBusyId}
-                    onOpenTask={(task) => setCleaningTaskId(task.id)}
-                    onOpenSettings={() => {
-                      setCleaningSaveError(null);
-                      setCleaningSettingsOpen(true);
-                    }}
-                    onMarkDone={(task) => {
-                      void handleMarkCleaningDone(task);
-                    }}
-                  />
-                )}
+                {visibleLifeCards.map((card) => {
+                  if (card.key === REMOTE_CARD_KEY) {
+                    return (
+                      <RemoteCard
+                        key={card.key}
+                        buttons={remoteButtons}
+                        loading={!dashboardDataLoaded && remoteButtons == null}
+                        error={remoteError && remoteButtons == null}
+                        aircon={remoteAircon}
+                      />
+                    );
+                  }
+                  if (card.key === GARBAGE_CARD_KEY) {
+                    return (
+                      <GarbageCard
+                        key={card.key}
+                        schedule={garbageSchedule}
+                        loading={!dashboardDataLoaded && garbageSchedule == null}
+                        error={garbageError && garbageSchedule == null}
+                      />
+                    );
+                  }
+                  if (card.key === ENERGY_CARD_KEY) {
+                    return (
+                      <PowerCard
+                        key={card.key}
+                        breakdown={energyBreakdown}
+                        loading={!dashboardDataLoaded && energyBreakdown == null}
+                        error={energyError && energyBreakdown == null}
+                        onOpenDetail={() => setEnergyPanelOpen(true)}
+                      />
+                    );
+                  }
+                  if (card.key === BILL_CARD_KEY) {
+                    return (
+                      <BillCard
+                        key={card.key}
+                        summary={billSummary}
+                        loading={!dashboardDataLoaded && billSummary == null}
+                        error={billError && billSummary == null}
+                        onOpenDetail={() => setBillPanelOpen(true)}
+                      />
+                    );
+                  }
+                  if (card.key === CLEANING_CARD_KEY) {
+                    return (
+                      <CleaningCard
+                        key={card.key}
+                        schedule={cleaningSchedule}
+                        loading={!dashboardDataLoaded && cleaningSchedule == null}
+                        error={cleaningError && cleaningSchedule == null}
+                        busyTaskId={cleaningBusyId}
+                        onOpenTask={(task) => setCleaningTaskId(task.id)}
+                        onOpenSettings={() => {
+                          setCleaningSaveError(null);
+                          setCleaningSettingsOpen(true);
+                        }}
+                        onMarkDone={(task) => {
+                          void handleMarkCleaningDone(task);
+                        }}
+                      />
+                    );
+                  }
+                  return null;
+                })}
               </div>
-            </section>
-          )}
+            ) : (
+              <p className="rounded-[18px] border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                表示するカードがありません。右の設定から戻せます。
+              </p>
+            )}
+          </section>
 
           {comingSoonVisible && COMING_SOON_CARDS.length > 0 && (
             <section>
@@ -1241,6 +1337,26 @@ export function MyRoomDashboard() {
           MyRoom v{APP_VERSION}
         </p>
       </div>
+
+      <LifeSettingsSheet
+        open={lifeSettingsOpen}
+        order={lifeCardOrder}
+        hiddenKeys={hiddenDeviceKeys}
+        remoteSummary={remoteButtonSummary}
+        onClose={() => setLifeSettingsOpen(false)}
+        onOrderChange={handleLifeCardOrderChange}
+        onVisibilityChange={handleLifeCardVisibilityChange}
+        onEditRemoteButtons={() => setRemoteSheetOpen(true)}
+      />
+
+      {/* 設定シートの上に重ねる。閉じると暮らしの設定へ戻る */}
+      {remoteSheetOpen ? (
+        <RemoteButtonSettingsSheet
+          onClose={() => setRemoteSheetOpen(false)}
+          buttons={remoteButtons}
+          onSave={handleRemoteConfigSave}
+        />
+      ) : null}
 
       <AppSettingsSheet
         open={appSettingsOpen}

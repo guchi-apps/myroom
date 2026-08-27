@@ -103,6 +103,11 @@ export function formatOutdoorApiLabel(locationName?: string | null): string {
 
 export interface UiSettings {
   display_order: string[];
+  /**
+   * 「暮らし」のカードを並べる順。中身は `lib/dashboard-sections.ts` の `LIFE_CARDS` のキーで、
+   * 空配列は「まだ並べ替えていない」（#283）
+   */
+  life_card_order: string[];
   chart_colors: Record<string, string>;
   hidden_devices: string[];
   stale_alert_excluded_devices: string[];
