@@ -73,6 +73,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return;
+  // 新しいビルドの有無を確かめるための値。**キャッシュに載せてはいけない**（#277）。
+  // 一度でも載せると古いバージョンを返し続け、アプリは永久に更新へ気付けなくなる
+  if (url.pathname === "/version.json") return;
   // Next.js の JS/CSS チャンクは常にネットワーク優先（古いバンドル参照を防ぐ）
   if (url.pathname.startsWith("/_next/")) {
     event.respondWith(fetch(request));

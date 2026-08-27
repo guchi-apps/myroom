@@ -1,9 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { ChevronRight, CloudSun, LineChart, RefreshCw, Settings } from "lucide-react";
+import { ChevronRight, CloudSun, LineChart, RefreshCw } from "lucide-react";
+import { AppSettingsSheet } from "@/components/app-settings-sheet";
+import { SettingsIconButton } from "@/components/ui/settings-icon-button";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { METRIC_ICONS } from "@/components/current-readings";
@@ -23,7 +24,6 @@ import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { AirconControlPanel } from "@/components/aircon-control-panel";
-import { Button } from "@/components/ui/button";
 import {
   fetchBillsSummary,
   fetchCleaningSchedule,
@@ -115,6 +115,7 @@ import { AuthError } from "@/lib/auth";
 import { supabase } from "@/lib/supabase-client";
 import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
+import { formatUpdatedAt } from "@/lib/format-updated-at";
 import {
   AIRCON_CHART_DEVICE_ID,
   buildAirconStatusPill,
@@ -324,6 +325,7 @@ export function MyRoomDashboard() {
   const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
@@ -910,16 +912,9 @@ export function MyRoomDashboard() {
         }
       : null;
   const lastUpdatedMs = getLatestDataTimestamp(latestByDevice, airconLatest);
-  const lastUpdated =
-    lastUpdatedMs != null
-      ? new Date(lastUpdatedMs).toLocaleString("ja-JP", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "--";
+  // ヘッダーでは当日ならば時刻だけにする。年から出すとアプリ名と同じ幅を取り、
+  // どちらが主役か分からなくなっていた（#277）
+  const lastUpdated = formatUpdatedAt(lastUpdatedMs);
   const offlineCachedAt = offlineSnapshot?.dataLatestAt
     ? new Date(offlineSnapshot.dataLatestAt).toLocaleString("ja-JP", {
         year: "numeric",
@@ -932,7 +927,7 @@ export function MyRoomDashboard() {
 
   return (
     <div className="mx-auto w-full max-w-[480px] pb-10 lg:max-w-[1040px]">
-      <div className="space-y-6 px-5 pt-12 lg:px-8">
+      <div className="space-y-6 px-5 pt-8 lg:px-8">
         {isOfflineMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
             オフライン表示中
@@ -953,12 +948,21 @@ export function MyRoomDashboard() {
             </button>
           </div>
         )}
-        <header className="flex items-center justify-between gap-3 px-0.5">
+        {/*
+          ヘッダーは「いつのデータか」と「アプリの操作」がまとまる場所（#277）。
+          下に区切り線を1本引き、そこから中身が始まる形にする。右の2つは
+          左＝データを取り直す、右＝アプリ全体の設定。フッターはこの設定シートへ畳んだ。
+        */}
+        <header className="flex items-center justify-between gap-3 border-b px-0.5 pb-3.5">
           <div>
-            <h1 className="section-title">MyRoom</h1>
-            <p className="section-subtitle">最終更新: {lastUpdated}</p>
+            <h1 className="text-[26px] font-bold leading-tight tracking-tight text-foreground">
+              MyRoom
+            </h1>
+            <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+              最終更新 {lastUpdated}
+            </p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => {
@@ -967,11 +971,20 @@ export function MyRoomDashboard() {
                 void refreshLatest();
               }}
               disabled={isOfflineMode}
-              className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="更新"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="データを更新"
+              title="データを更新"
             >
-              <RefreshCw className={`size-5 ${refreshing ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`size-[18px] ${refreshing ? "animate-spin" : ""}`}
+                strokeWidth={1.75}
+              />
             </button>
+            <SettingsIconButton
+              label="設定"
+              tone="header"
+              onClick={() => setAppSettingsOpen(true)}
+            />
           </div>
         </header>
 
@@ -993,13 +1006,7 @@ export function MyRoomDashboard() {
                   <LineChart className="size-4" strokeWidth={1.75} />
                   推移
                 </button>
-                <Link
-                  href="/devices"
-                  className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <Settings className="size-4" strokeWidth={1.75} />
-                  表示設定
-                </Link>
+                <SettingsIconButton label="表示設定" href="/devices" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -1226,30 +1233,28 @@ export function MyRoomDashboard() {
           )}
         </div>
 
-        <div className="flex gap-2 pt-2 lg:max-w-[420px]">
-          <Button
-            variant="ghost"
-            className="flex-1 text-muted-foreground"
-            onClick={() => window.location.reload()}
-          >
-            画面再読み込み
-          </Button>
-          <Button
-            variant="ghost"
-            className="flex-1 text-[#e74c3c]"
-            onClick={handleLogout}
-          >
-            ログアウト
-          </Button>
-        </div>
-        <button
-          type="button"
-          onClick={() => setVersionHistoryOpen(true)}
-          className="mx-auto block pt-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline lg:mx-0 lg:w-[420px]"
-        >
-          バージョン {APP_VERSION}
-        </button>
+        {/*
+          再読み込み・ログアウト・更新履歴はヘッダーの設定シートへ移した（#277）。
+          末尾に残すのは、いま動いているのがどのビルドかを見分けるための一行だけ。
+        */}
+        <p className="pt-2 text-center text-[11.5px] text-muted-foreground/70">
+          MyRoom v{APP_VERSION}
+        </p>
       </div>
+
+      <AppSettingsSheet
+        open={appSettingsOpen}
+        onClose={() => setAppSettingsOpen(false)}
+        onReload={() => window.location.reload()}
+        onLogout={() => {
+          setAppSettingsOpen(false);
+          handleLogout();
+        }}
+        onOpenVersionHistory={() => {
+          setAppSettingsOpen(false);
+          setVersionHistoryOpen(true);
+        }}
+      />
 
       <TrendPanel
         open={trendPanelOpen}
