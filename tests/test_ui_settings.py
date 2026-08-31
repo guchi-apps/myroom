@@ -138,3 +138,81 @@ def test_saving_other_settings_keeps_life_card_order(data_dir):
 
     loaded = ui_settings.get_settings()
     assert loaded[ui_settings.SETTING_LIFE_CARD_ORDER] == ["cleaning", "remote"]
+
+
+# --- 通知設定（#293） -----------------------------------------------------------
+
+
+def test_notification_settings_defaults(data_dir):
+    settings = ui_settings.get_settings()
+    assert settings[ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED] is True
+    assert settings[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] is None
+    assert settings[ui_settings.SETTING_ROOM_ANOMALY_NOTIFY_ENABLED] is False
+    assert settings[ui_settings.SETTING_ROOM_ANOMALY_THRESHOLDS] == {
+        "temperature": {"min": 16.0, "max": 30.0},
+        "humidity": {"min": 30.0, "max": 70.0},
+    }
+    assert settings[ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES] == 60
+
+
+def test_garbage_notify_time_is_normalized(data_dir):
+    saved = ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "9:5"})
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] == "09:05"
+
+    saved = ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "not-a-time"})
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] is None
+
+
+def test_room_anomaly_thresholds_reject_min_greater_than_max(data_dir):
+    saved = ui_settings.save_settings(
+        {
+            ui_settings.SETTING_ROOM_ANOMALY_THRESHOLDS: {
+                "temperature": {"min": 30.0, "max": 16.0},
+                "humidity": {"min": 40.0, "max": 60.0},
+            }
+        }
+    )
+    # 不正な指標だけ既定へ戻し、他方は保存された値を保つ
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_THRESHOLDS]["temperature"] == {
+        "min": 16.0,
+        "max": 30.0,
+    }
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_THRESHOLDS]["humidity"] == {
+        "min": 40.0,
+        "max": 60.0,
+    }
+
+
+def test_room_anomaly_reminder_minutes_is_clamped(data_dir):
+    saved = ui_settings.save_settings({ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES: 0})
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES] == (
+        ui_settings.MIN_ROOM_ANOMALY_REMINDER_MINUTES
+    )
+
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES: 999999}
+    )
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES] == (
+        ui_settings.MAX_ROOM_ANOMALY_REMINDER_MINUTES
+    )
+
+
+def test_saving_other_settings_keeps_notification_settings(data_dir):
+    """save_settings の merged に並べたキーだけが引き継がれるため、別の設定の保存で確かめる（#258と同種の抜け対策）"""
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED: False,
+            ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "07:30",
+            ui_settings.SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: True,
+            ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES: 30,
+        }
+    )
+    saved = ui_settings.save_settings({ui_settings.SETTING_HIDDEN_DEVICES: ["device:2"]})
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED] is False
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] == "07:30"
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_NOTIFY_ENABLED] is True
+    assert saved[ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES] == 30
+
+    loaded = ui_settings.get_settings()
+    assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED] is False
+    assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] == "07:30"

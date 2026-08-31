@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ChevronRight, CloudSun, LineChart, RefreshCw } from "lucide-react";
 import { AppSettingsSheet } from "@/components/app-settings-sheet";
+import { NotificationSettingsSheet } from "@/components/notification-settings-sheet";
 import { LifeSettingsSheet } from "@/components/life-settings-sheet";
 import { RemoteButtonSettingsSheet } from "@/components/remote-button-settings-sheet";
 import { SettingsIconButton } from "@/components/ui/settings-icon-button";
@@ -342,6 +343,7 @@ export function MyRoomDashboard() {
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
@@ -1391,7 +1393,19 @@ export function MyRoomDashboard() {
           setAppSettingsOpen(false);
           setVersionHistoryOpen(true);
         }}
+        onOpenNotificationSettings={() => {
+          setAppSettingsOpen(false);
+          setNotificationSettingsOpen(true);
+        }}
       />
+
+      {/* 設定シートの上に重ねる。閉じると設定へ戻る */}
+      {notificationSettingsOpen ? (
+        <NotificationSettingsSheet
+          open={notificationSettingsOpen}
+          onClose={() => setNotificationSettingsOpen(false)}
+        />
+      ) : null}
 
       <TrendPanel
         open={trendPanelOpen}

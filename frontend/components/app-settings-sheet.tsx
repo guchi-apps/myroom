@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, LogOut, RotateCcw, X } from "lucide-react";
+import { Bell, ChevronRight, LogOut, RotateCcw, X } from "lucide-react";
 import { APP_VERSION } from "@/lib/app-version";
 
 interface AppSettingsSheetProps {
@@ -9,6 +9,7 @@ interface AppSettingsSheetProps {
   onReload: () => void;
   onLogout: () => void;
   onOpenVersionHistory: () => void;
+  onOpenNotificationSettings: () => void;
 }
 
 /**
@@ -26,6 +27,7 @@ export function AppSettingsSheet({
   onReload,
   onLogout,
   onOpenVersionHistory,
+  onOpenNotificationSettings,
 }: AppSettingsSheetProps) {
   if (!open) return null;
 
@@ -72,6 +74,20 @@ export function AppSettingsSheet({
             */}
             <span className="mt-0.5 block text-[11.5px] leading-relaxed text-muted-foreground">
               新しいバージョンは自動で入ります。表示が崩れたときだけ、ここからページ全体を開き直してください。
+            </span>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenNotificationSettings}
+          className="flex w-full items-start gap-3 border-b px-5 py-3.5 text-left transition-colors hover:bg-accent"
+        >
+          <Bell className="mt-0.5 size-[19px] shrink-0 text-muted-foreground" strokeWidth={1.75} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px] font-bold leading-snug">通知設定</span>
+            <span className="mt-0.5 block text-[11.5px] leading-relaxed text-muted-foreground">
+              ゴミの日・室温湿度の異常をプッシュ通知で受け取れます
             </span>
           </span>
         </button>
