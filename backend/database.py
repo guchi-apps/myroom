@@ -92,6 +92,26 @@ class DailyEnergyRecord(Base):
     )
 
 
+class EnergyReadingRecord(Base):
+    """時間ごと表示のための、当日累計の時系列スナップショット。
+
+    `daily_energy` と違い上書きせず追記する。収集スクリプトの実行頻度
+    （エアコン=1時間ごと、Tapoプラグ=5分ごと）でそのまま増える。1行は
+    「その時刻までの当日累計」で、時間帯ごとの使用量は隣接するスナップショットの
+    差分から `backend/energy.py` の `build_hourly` が組み立てる。過去分は
+    このテーブルへ記録し始めた日からしか残らない。
+    """
+
+    __tablename__ = "energy_readings"
+
+    recorded_at = Column(DateTime, primary_key=True)
+    source = Column(String(64), primary_key=True)
+
+    kwh = Column(Float, nullable=True)
+    cost_yen = Column(Float, nullable=True)
+    power_w = Column(Float, nullable=True)
+
+
 class UtilityBillRecord(Base):
     """月ごとの確定請求（電気・ガス）。はぴeみる電のお知らせメール由来。
 
@@ -351,6 +371,47 @@ def generate_mock_energy_rows(days: int = 75) -> list:
                 }
             )
     rows.sort(key=lambda item: (item["date"], item["source"]))
+    return rows
+
+
+#: 時間帯ごとに配る比率（0〜23時、合計約1.0）。朝(7-9時)・夕方以降(18-22時)にやや山を作る。
+HOURLY_ENERGY_WEIGHTS = (
+    0.015, 0.012, 0.010, 0.010, 0.012, 0.018,
+    0.030, 0.055, 0.070, 0.045, 0.030, 0.028,
+    0.032, 0.030, 0.028, 0.030, 0.035, 0.045,
+    0.065, 0.075, 0.070, 0.055, 0.035, 0.020,
+)
+
+
+def generate_mock_energy_readings(date: datetime.date) -> list:
+    """モック用の時間ごとスナップショット。
+
+    実データも「機能をリリースした日から先」しか残らないため、モックでも
+    直近2日ぶんだけ用意する。それより前の日を選ぶと「記録がありません」の
+    空表示を確かめられる。
+    """
+    today = _today_jst()
+    if date > today or date < today - datetime.timedelta(days=1):
+        return []
+
+    current_hour = datetime.datetime.now(JST).hour if date == today else 23
+
+    rows = []
+    for source, factor, _power_w in MOCK_ENERGY_SOURCES:
+        seasonal = 1.0 + 0.8 * abs(math.sin((date.timetuple().tm_yday / 365) * 2 * math.pi))
+        daily_total = max(0.0, seasonal * (1.6 + random.uniform(-0.9, 1.4))) * factor
+        weight_sum = sum(HOURLY_ENERGY_WEIGHTS[: current_hour + 1]) or 1.0
+        cumulative = 0.0
+        for hour in range(current_hour + 1):
+            cumulative += daily_total * (HOURLY_ENERGY_WEIGHTS[hour] / weight_sum)
+            rows.append(
+                {
+                    "recorded_at": datetime.datetime.combine(date, datetime.time(hour, 55, 0)),
+                    "source": source,
+                    "kwh": round(cumulative, 3),
+                    "cost_yen": None,
+                }
+            )
     return rows
 
 

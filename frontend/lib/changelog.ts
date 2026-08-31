@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.7.0",
+    date: "2026-09-01",
+    changes: [
+      "電気代の「消費電力」画面に新しい見方が2つ増えました。デバイスの使用量をタップすると、その機器だけの使用量の推移を確認できます。また「日別」に加えて「時間ごと」の使用量も日をめくって確認できるようになりました。",
+    ],
+  },
+  {
     version: "4.6.0",
     date: "2026-08-31",
     changes: [

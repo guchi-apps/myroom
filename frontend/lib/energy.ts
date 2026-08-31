@@ -2,6 +2,7 @@ import { CHART_COLOR_PALETTE } from "@/lib/chart-colors";
 import type {
   EnergyBreakdown,
   EnergyBreakdownDay,
+  EnergyHourly,
   EnergySourceRow,
   EnergyTotal,
 } from "@/lib/types";
@@ -207,6 +208,32 @@ export function buildEnergyStackColumns(
     }));
 }
 
+export interface EnergySingleColumn {
+  date: string;
+  kwh: number;
+  /** 期間内の最大値を 1 とした高さの比 */
+  ratio: number;
+}
+
+/**
+ * デバイス単体の日別棒グラフ。`buildEnergyStackColumns` の単色版。
+ *
+ * 記録の無い日は棒そのものを作らない（理由は `buildEnergyStackColumns` と同じ）。
+ */
+export function buildEnergySingleColumns(
+  daily: readonly { date: string; kwh: number | null }[]
+): EnergySingleColumn[] {
+  const withData = daily.filter(
+    (day): day is { date: string; kwh: number } => (day.kwh ?? 0) > 0
+  );
+  const max = Math.max(...withData.map((day) => day.kwh), 0);
+  return withData.map((day) => ({
+    date: day.date,
+    kwh: day.kwh,
+    ratio: max > 0 ? day.kwh / max : 0,
+  }));
+}
+
 /** いまの消費電力。返さない取得元（エアコン）は「—」 */
 export function formatWatts(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -221,4 +248,79 @@ export function energySourceRatio(
   const max = Math.max(...sources.map((item) => item.today_kwh ?? 0), 0);
   if (max <= 0) return 0;
   return (row.today_kwh ?? 0) / max;
+}
+
+// ------------------------------------------------------------ 時間ごと（#300）
+
+/**
+ * `date` を `days` 日ずらす。UTC正午を基準に計算し、タイムゾーンによる日またぎのずれを避ける
+ * （`frontend/lib/cleaning.ts` の `shiftDate` と同じ考え方。日付文字列を扱う場所ごとに持つ）。
+ */
+export function shiftEnergyDate(date: string, days: number): string {
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+export interface EnergyHourlySegment {
+  source: string;
+  label: string;
+  kwh: number;
+  /** その時間帯の合計に対する割合（0〜1） */
+  share: number;
+  color: string;
+}
+
+export interface EnergyHourlyColumn {
+  hour: number;
+  /** `null` はまだ記録が無い時間帯（未来、または記録を始める前の日） */
+  kwh: number | null;
+  /** その日の最大値を 1 とした高さの比 */
+  ratio: number;
+  segments: EnergyHourlySegment[];
+}
+
+/**
+ * 詳細パネル「時間ごと」の積み上げ棒グラフ。
+ *
+ * ラベルは`EnergyHourly`自体は持たないため、同じ画面で先に取っている`breakdown.sources`
+ * （日別の集計）の`label`をそのまま使い回す。取得元が増えても正が2か所に分かれないようにするため。
+ */
+export function buildEnergyHourlyColumns(
+  hourly: EnergyHourly | null,
+  sources: readonly EnergySourceRow[],
+  colors: Record<string, string>
+): EnergyHourlyColumn[] {
+  if (!hourly) return [];
+  const labels = new Map(sources.map((row) => [row.source, row.label]));
+  const max = Math.max(...hourly.hours.map((row) => row.kwh ?? 0), 0);
+
+  return hourly.hours.map((row) => {
+    const total = row.kwh ?? 0;
+    const segments: EnergyHourlySegment[] =
+      row.kwh == null
+        ? []
+        : Object.entries(row.by_source)
+            .filter(([, kwh]) => kwh > 0)
+            .map(([source, kwh]) => ({
+              source,
+              label: labels.get(source) ?? source,
+              kwh,
+              share: total > 0 ? kwh / total : 0,
+              color: colors[source] ?? "#95a5a6",
+            }));
+
+    return {
+      hour: row.hour,
+      kwh: row.kwh,
+      ratio: row.kwh != null && max > 0 ? row.kwh / max : 0,
+      segments,
+    };
+  });
+}
+
+/** `7` → `7時` */
+export function formatEnergyHour(hour: number): string {
+  return `${hour}時`;
 }

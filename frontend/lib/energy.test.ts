@@ -3,6 +3,8 @@ import {
   AIRCON_ENERGY_COLOR,
   buildEnergyComparison,
   buildEnergyDailyRows,
+  buildEnergyHourlyColumns,
+  buildEnergySingleColumns,
   buildEnergySourceColors,
   buildEnergyStackColumns,
   buildEnergyStackSegments,
@@ -10,13 +12,15 @@ import {
   energySourceRatio,
   formatEnergyDate,
   formatEnergyDateWithWeekday,
+  formatEnergyHour,
   formatKwh,
   formatWatts,
   formatYen,
   hasEnergyData,
   isEnergyStale,
+  shiftEnergyDate,
 } from "@/lib/energy";
-import type { EnergyBreakdown, EnergySourceRow } from "@/lib/types";
+import type { EnergyBreakdown, EnergyHourly, EnergySourceRow } from "@/lib/types";
 
 function buildSourceRow(overrides: Partial<EnergySourceRow> = {}): EnergySourceRow {
   return {
@@ -239,6 +243,35 @@ describe("積み上げ", () => {
   });
 });
 
+describe("単一デバイスの棒", () => {
+  it("記録が無ければ空配列になる", () => {
+    expect(buildEnergySingleColumns([])).toEqual([]);
+    expect(
+      buildEnergySingleColumns([
+        { date: "2026-08-21", kwh: null },
+        { date: "2026-08-22", kwh: 0 },
+      ])
+    ).toEqual([]);
+  });
+
+  it("0kWhの日は除外される", () => {
+    const columns = buildEnergySingleColumns([
+      { date: "2026-08-20", kwh: 0 },
+      { date: "2026-08-21", kwh: 1.5 },
+    ]);
+    expect(columns.map((column) => column.date)).toEqual(["2026-08-21"]);
+  });
+
+  it("棒の高さは期間内の最大値で正規化する", () => {
+    const columns = buildEnergySingleColumns([
+      { date: "2026-08-20", kwh: 1.0 },
+      { date: "2026-08-21", kwh: 2.0 },
+      { date: "2026-08-22", kwh: 0.5 },
+    ]);
+    expect(columns.map((column) => column.ratio)).toEqual([0.5, 1, 0.25]);
+  });
+});
+
 describe("日別一覧とカードの棒", () => {
   it("日別一覧は新しい日が先頭に来る", () => {
     const rows = buildEnergyDailyRows(buildBreakdown().daily);
@@ -254,6 +287,79 @@ describe("日別一覧とカードの棒", () => {
     const { sources } = buildBreakdown();
     expect(energySourceRatio(sources, sources[0])).toBe(1);
     expect(Number(energySourceRatio(sources, sources[1]).toFixed(2))).toBe(0.46);
+  });
+});
+
+describe("時間ごと（#300）", () => {
+  function buildHourly(overrides: Partial<EnergyHourly> = {}): EnergyHourly {
+    const emptyHours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      kwh: null,
+      cost_yen: null,
+      by_source: {},
+    }));
+    return {
+      date: "2026-08-31",
+      unit_price: 31,
+      sources: ["aircon", "tapo:冷蔵庫"],
+      has_data: true,
+      hours: emptyHours,
+      ...overrides,
+    };
+  }
+
+  it("日付を日単位でずらす（UTC正午基準）", () => {
+    expect(shiftEnergyDate("2026-08-31", 1)).toBe("2026-09-01");
+    expect(shiftEnergyDate("2026-08-31", -1)).toBe("2026-08-30");
+  });
+
+  it("時間帯は「7時」のように出す", () => {
+    expect(formatEnergyHour(7)).toBe("7時");
+  });
+
+  it("記録の無い時間帯はセグメントを作らない", () => {
+    const columns = buildEnergyHourlyColumns(
+      buildHourly(),
+      buildBreakdown().sources,
+      buildEnergySourceColors(buildBreakdown().sources)
+    );
+    expect(columns).toHaveLength(24);
+    expect(columns.every((column) => column.segments.length === 0)).toBe(true);
+  });
+
+  it("取得元ごとの内訳にラベルと色、割合を付ける", () => {
+    const hours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      kwh: null as number | null,
+      cost_yen: null as number | null,
+      by_source: {} as Record<string, number>,
+    }));
+    hours[8] = {
+      hour: 8,
+      kwh: 0.6,
+      cost_yen: 19,
+      by_source: { aircon: 0.5, "tapo:冷蔵庫": 0.1 },
+    };
+    const breakdown = buildBreakdown();
+    const columns = buildEnergyHourlyColumns(
+      buildHourly({ hours }),
+      breakdown.sources,
+      buildEnergySourceColors(breakdown.sources)
+    );
+
+    const hour8 = columns[8];
+    expect(hour8.kwh).toBe(0.6);
+    expect(hour8.segments.map((segment) => segment.source)).toEqual([
+      "aircon",
+      "tapo:冷蔵庫",
+    ]);
+    expect(hour8.segments[0].label).toBe("エアコン");
+    expect(hour8.segments[0].share).toBeCloseTo(0.5 / 0.6);
+    expect(hour8.ratio).toBe(1);
+  });
+
+  it("hourly が無ければ空配列", () => {
+    expect(buildEnergyHourlyColumns(null, [], {})).toEqual([]);
   });
 });
 

@@ -75,9 +75,19 @@ def resolve_cost(kwh: Optional[float], cost_yen: Optional[float], unit_price: fl
     return round(float(kwh) * unit_price, 1)
 
 
-def upsert_records(db: Session, records: Sequence[Dict[str, Any]]) -> int:
-    """同じ (date, source) は上書きする。書き込んだ件数を返す。"""
+def upsert_records(
+    db: Session,
+    records: Sequence[Dict[str, Any]],
+    now: Optional[datetime.datetime] = None,
+) -> int:
+    """同じ (date, source) は上書きする。書き込んだ件数を返す。
+
+    `now`（JSTのnaive datetime）を渡すと、当日ぶんの行だけ`energy_readings`へも
+    追記する。収集スクリプトは当日ぶんを何度も送り直す作りなので、その受信のたびが
+    そのまま「時間ごと」表示のためのポーリングになる（収集スクリプト自体は変更不要）。
+    """
     written = 0
+    today = now.date() if now is not None else None
     for item in records:
         date = parse_date(item["date"])
         source = (item.get("source") or DEFAULT_SOURCE).strip() or DEFAULT_SOURCE
@@ -97,6 +107,17 @@ def upsert_records(db: Session, records: Sequence[Dict[str, Any]]) -> int:
         row.power_w = item.get("power_w")
         row.updated_at = datetime.datetime.utcnow()
         written += 1
+
+        if now is not None and date == today:
+            db.add(
+                database.EnergyReadingRecord(
+                    recorded_at=now,
+                    source=source,
+                    kwh=item.get("kwh"),
+                    cost_yen=item.get("cost_yen"),
+                    power_w=item.get("power_w"),
+                )
+            )
 
     db.commit()
     return written
@@ -468,3 +489,124 @@ def get_breakdown(
         rows = fetch_all_rows(db, start, today)
 
     return build_breakdown(rows, today, unit_price, history_days=history_days)
+
+
+# --------------------------------------------------------------- 時間ごと（#300）
+#
+# `energy_readings` は上書きの `daily_energy` と違い、収集を受け付けるたびに
+# 「その時点までの当日累計」を追記した時系列。時間帯の使用量は隣接する2件の
+# 差分から出す（境界はポーリング時刻に依存する近似値）。
+
+
+def _fetch_readings(
+    db: Session, date: datetime.date
+) -> List[Dict[str, Any]]:
+    start = datetime.datetime.combine(date, datetime.time.min)
+    end = datetime.datetime.combine(date, datetime.time.max)
+    rows = (
+        db.query(database.EnergyReadingRecord)
+        .filter(
+            database.EnergyReadingRecord.recorded_at >= start,
+            database.EnergyReadingRecord.recorded_at <= end,
+        )
+        .order_by(database.EnergyReadingRecord.recorded_at.asc())
+        .all()
+    )
+    return [
+        {
+            "recorded_at": row.recorded_at,
+            "source": row.source,
+            "kwh": row.kwh,
+            "cost_yen": row.cost_yen,
+        }
+        for row in rows
+    ]
+
+
+def _value_at_or_before(
+    sorted_rows: Sequence[Dict[str, Any]],
+    boundary: datetime.datetime,
+    field: str,
+) -> Optional[float]:
+    """`boundary`時点までに届いていた最新の値（累計）。無ければ None。"""
+    value: Optional[float] = None
+    for row in sorted_rows:
+        if row["recorded_at"] > boundary:
+            break
+        if row.get(field) is not None:
+            value = float(row[field])
+    return value
+
+
+def build_hourly(
+    readings: Sequence[Dict[str, Any]],
+    date: datetime.date,
+    unit_price: float,
+) -> Dict[str, Any]:
+    """1日ぶんの時系列スナップショットから時間帯ごとの内訳を組み立てる。DBアクセスを含まない。"""
+    by_source: Dict[str, List[Dict[str, Any]]] = {}
+    for row in readings:
+        by_source.setdefault(row["source"], []).append(row)
+    for source, rows in by_source.items():
+        by_source[source] = sorted(rows, key=lambda r: r["recorded_at"])
+
+    has_data = any(by_source.values())
+    sources = sorted(by_source.keys())
+
+    hours: List[Dict[str, Any]] = []
+    for hour in range(24):
+        boundary_end = datetime.datetime.combine(date, datetime.time(hour, 59, 59))
+        boundary_start = boundary_end - datetime.timedelta(hours=1)
+
+        by_source_kwh: Dict[str, float] = {}
+        hour_kwh = 0.0
+        hour_cost = 0.0
+        any_value = False
+
+        for source, rows in by_source.items():
+            end_kwh = _value_at_or_before(rows, boundary_end, "kwh")
+            if end_kwh is None:
+                continue
+            start_kwh = _value_at_or_before(rows, boundary_start, "kwh")
+            delta_kwh = max(0.0, end_kwh - (start_kwh or 0.0))
+
+            end_cost = _value_at_or_before(rows, boundary_end, "cost_yen")
+            delta_cost: Optional[float] = None
+            if end_cost is not None:
+                start_cost = _value_at_or_before(rows, boundary_start, "cost_yen")
+                delta_cost = max(0.0, end_cost - (start_cost or 0.0))
+
+            cost = resolve_cost(delta_kwh, delta_cost, unit_price)
+            by_source_kwh[source] = round(delta_kwh, 3)
+            hour_kwh += delta_kwh
+            if cost is not None:
+                hour_cost += cost
+            any_value = True
+
+        hours.append(
+            {
+                "hour": hour,
+                "kwh": round(hour_kwh, 3) if any_value else None,
+                "cost_yen": round(hour_cost) if any_value else None,
+                "by_source": by_source_kwh,
+            }
+        )
+
+    return {
+        "date": date.isoformat(),
+        "unit_price": unit_price,
+        "sources": sources,
+        "has_data": has_data,
+        "hours": hours,
+    }
+
+
+def get_hourly(db: Optional[Session], date: datetime.date) -> Dict[str, Any]:
+    unit_price = get_unit_price(db)
+
+    if database.DB_MOCK or db is None:
+        readings = database.generate_mock_energy_readings(date)
+    else:
+        readings = _fetch_readings(db, date)
+
+    return build_hourly(readings, date, unit_price)
