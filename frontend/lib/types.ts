@@ -181,6 +181,28 @@ export interface EnergyBreakdown {
   updated_at: string | null;
 }
 
+/** 1時間ぶんの内訳。`kwh` が `null` なら、その時間帯はまだ記録が無い（未来か、記録開始前） */
+export interface EnergyHourlyHour {
+  /** 0〜23 */
+  hour: number;
+  kwh: number | null;
+  cost_yen: number | null;
+  /** `{ "aircon": 0.31, "tapo:冷蔵庫": 0.11 }`。値の無い取得元は入らない */
+  by_source: Record<string, number>;
+}
+
+/** 消費電力カードの「時間ごと」表示が使う集計。`GET /api/energy/hourly?date=` の戻り */
+export interface EnergyHourly {
+  /** `2026-08-22` */
+  date: string;
+  unit_price: number;
+  /** その日にデータのあった取得元 */
+  sources: string[];
+  /** false の場合、この日はまだ時間ごとの記録が無い（機能をリリースする前の日など） */
+  has_data: boolean;
+  hours: EnergyHourlyHour[];
+}
+
 /** `today` / `yesterday` / `daily` の1件。取得元が値を返さなかった日は kwh が null */
 export interface EnergySourceDayPoint {
   date: string;

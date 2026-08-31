@@ -1,20 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, X } from "lucide-react";
-import { fetchEnergySummary, updateUiSettings } from "@/lib/api";
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { fetchEnergyHourly, fetchEnergySummary, updateUiSettings } from "@/lib/api";
 import { PowerSourceDetail } from "@/components/power-source-detail";
 import {
   buildEnergyDailyRows,
+  buildEnergyHourlyColumns,
   buildEnergySourceColors,
   buildEnergyStackColumns,
   buildEnergyStackSegments,
   formatEnergyDate,
   formatEnergyDateWithWeekday,
+  formatEnergyHour,
   formatKwh,
   formatYen,
+  shiftEnergyDate,
 } from "@/lib/energy";
-import type { EnergyBreakdown, EnergySourceSummary, EnergyTotal } from "@/lib/types";
+import type {
+  EnergyBreakdown,
+  EnergyHourly,
+  EnergySourceSummary,
+  EnergyTotal,
+} from "@/lib/types";
 
 interface PowerDetailPanelProps {
   open: boolean;
@@ -63,6 +71,33 @@ export function PowerDetailPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const todayIso = breakdown?.this_month.end ?? null;
+  const [tab, setTab] = useState<"daily" | "hourly">("daily");
+  const [hourlyDate, setHourlyDate] = useState<string | null>(() => todayIso);
+  const [hourly, setHourly] = useState<EnergyHourly | null>(null);
+  const [hourlyLoading, setHourlyLoading] = useState(false);
+  const [hourlyError, setHourlyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "hourly" || !hourlyDate) return;
+    let cancelled = false;
+    setHourlyLoading(true);
+    setHourlyError(null);
+    fetchEnergyHourly(hourlyDate)
+      .then((data) => {
+        if (!cancelled) setHourly(data);
+      })
+      .catch(() => {
+        if (!cancelled) setHourlyError("時間ごとのデータを取得できませんでした");
+      })
+      .finally(() => {
+        if (!cancelled) setHourlyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, hourlyDate]);
+
   // デバイスをクリックしたときに開く、そのデバイス単体の推移
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const [sourceSummary, setSourceSummary] = useState<EnergySourceSummary | null>(null);
@@ -96,6 +131,8 @@ export function PowerDetailPanel({
   const colors = buildEnergySourceColors(sources);
   const columns = buildEnergyStackColumns(breakdown);
   const rows = buildEnergyDailyRows(breakdown?.daily ?? []);
+  const hourlyColumns = buildEnergyHourlyColumns(hourly, sources, colors);
+  const hourlyRows = hourlyColumns.filter((column) => column.kwh != null);
   const selectedRow = sources.find((row) => row.source === selectedSource) ?? null;
 
   const plugCount = sources.filter((row) => row.source.startsWith("tapo:")).length;
@@ -192,90 +229,232 @@ export function PowerDetailPanel({
                 </div>
               )}
 
-              {columns.length > 1 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex h-[110px] items-end gap-[3px]">
-                    {columns.map((column) => (
-                      <div
-                        key={column.date}
-                        className="flex min-w-0 flex-1 flex-col justify-end gap-[1.5px]"
-                        style={{ height: `${Math.max(4, column.ratio * 100)}%` }}
-                        title={`${formatEnergyDate(column.date)} ${formatKwh(column.kwh)}`}
-                      >
-                        {column.segments.map((segment) => (
-                          <span
-                            key={segment.source}
-                            className="block min-h-px rounded-[1.5px]"
-                            style={{
-                              height: `${segment.share * 100}%`,
-                              backgroundColor: segment.color,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex justify-between border-t pt-1.5 text-[10.5px] text-muted-foreground tabular-nums">
-                    <span>{formatEnergyDate(columns[0].date)}</span>
-                    <span>日別（記録のある日だけ）</span>
-                    <span>{formatEnergyDate(columns[columns.length - 1].date)}</span>
-                  </div>
-                </div>
-              )}
+            <div className="flex w-fit gap-1 rounded-full bg-muted p-[3px]">
+              <button
+                type="button"
+                onClick={() => setTab("daily")}
+                className={`rounded-full px-3.5 py-1 text-xs font-bold ${
+                  tab === "daily"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground"
+                }`}
+              >
+                日別
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("hourly")}
+                className={`rounded-full px-3.5 py-1 text-xs font-bold ${
+                  tab === "hourly"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground"
+                }`}
+              >
+                時間ごと
+              </button>
+            </div>
 
-              {sources.length > 0 && (
-                <div className="flex flex-wrap gap-x-1 gap-y-1 text-xs text-muted-foreground">
-                  {sources.map((row) => (
-                    <button
-                      key={row.source}
-                      type="button"
-                      onClick={() => setSelectedSource(row.source)}
-                      className="-mx-1 flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                      aria-label={`${row.label}の使用量推移を見る`}
-                    >
-                      <span
-                        className="size-2 rounded-[3px]"
-                        style={{ backgroundColor: colors[row.source] ?? "#95a5a6" }}
-                        aria-hidden
-                      />
-                      {row.label}
-                      <span className="tabular-nums">
-                        {row.this_month_kwh.toFixed(1)} kWh
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
+            {tab === "hourly" && hourlyDate && (
               <div className="flex flex-col gap-2">
-                <span className="text-xs font-bold">電気料金の単価</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.1"
-                    value={priceInput}
-                    onChange={(e) => setPriceInput(e.target.value)}
-                    aria-label="電気料金の単価（円/kWh）"
-                    className="w-24 rounded-xl border bg-card px-2.5 py-1.5 text-right text-sm font-bold tabular-nums"
-                  />
-                  <span className="text-xs text-muted-foreground">円/kWh</span>
+                <div className="flex items-center justify-between text-[13px] font-bold">
                   <button
                     type="button"
-                    onClick={() => void handleSave()}
-                    disabled={saving}
-                    className="ml-auto rounded-full bg-primary px-4 py-1.5 text-xs font-bold text-primary-foreground disabled:opacity-50"
+                    onClick={() => setHourlyDate(shiftEnergyDate(hourlyDate, -1))}
+                    className="flex size-7 items-center justify-center rounded-full bg-muted"
+                    aria-label="前の日"
                   >
-                    {saving ? "保存中..." : "保存"}
+                    <ChevronLeft className="size-4" />
+                  </button>
+                  <span className="flex items-center gap-1.5">
+                    {formatEnergyDateWithWeekday(hourlyDate)}
+                    {todayIso === hourlyDate && (
+                      <span className="rounded-full bg-[var(--energy-surface)] px-1.5 py-px text-[10px] font-bold text-[var(--energy-color)]">
+                        今日
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setHourlyDate(shiftEnergyDate(hourlyDate, 1))}
+                    disabled={!todayIso || hourlyDate >= todayIso}
+                    className="flex size-7 items-center justify-center rounded-full bg-muted disabled:opacity-35"
+                    aria-label="次の日"
+                  >
+                    <ChevronRight className="size-4" />
                   </button>
                 </div>
-                {error && <p className="text-xs text-destructive">{error}</p>}
-                <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-                  エアコンの金額は白くまくんアプリが返す実額をそのまま使うため、この単価の影響を受けません。単価を掛けた目安になるのは、使用量（kWh）しか返さないスマートプラグなどです。
-                </p>
-              </div>
 
+                {hourlyLoading ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    読み込み中...
+                  </p>
+                ) : hourlyError ? (
+                  <p className="py-6 text-center text-sm text-destructive">{hourlyError}</p>
+                ) : !hourly?.has_data ? (
+                  <div className="flex flex-col items-center gap-1 rounded-2xl bg-muted px-4 py-7 text-center">
+                    <span className="text-[13px] font-bold">
+                      この日の時間ごとの記録はありません
+                    </span>
+                    <span className="text-[11.5px] leading-relaxed text-muted-foreground">
+                      時間ごとの記録は、この機能をリリースした日から先の分だけ残ります。
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex h-[110px] items-end gap-[2px]">
+                      {hourlyColumns.map((column) => (
+                        <div
+                          key={column.hour}
+                          className="flex min-w-0 flex-1 flex-col justify-end gap-px"
+                          style={{ height: `${Math.max(column.kwh == null ? 0 : 4, column.ratio * 100)}%` }}
+                          title={
+                            column.kwh == null
+                              ? `${formatEnergyHour(column.hour)}台 記録なし`
+                              : `${formatEnergyHour(column.hour)}台 ${formatKwh(column.kwh)}`
+                          }
+                        >
+                          {column.segments.map((segment) => (
+                            <span
+                              key={segment.source}
+                              className="block min-h-px rounded-[1.5px]"
+                              style={{
+                                height: `${segment.share * 100}%`,
+                                backgroundColor: segment.color,
+                              }}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between border-t pt-1.5 text-[10.5px] text-muted-foreground tabular-nums">
+                      <span>0時</span>
+                      <span>12時</span>
+                      <span>24時</span>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 pt-1">
+                      {hourlyRows.length === 0 ? (
+                        <p className="py-4 text-center text-sm text-muted-foreground">
+                          まだ記録がありません
+                        </p>
+                      ) : (
+                        hourlyRows.map((row) => (
+                          <div
+                            key={row.hour}
+                            className="flex items-center gap-2.5 text-[13px] tabular-nums"
+                          >
+                            <span className="w-11 shrink-0 text-muted-foreground">
+                              {formatEnergyHour(row.hour)}
+                            </span>
+                            <span className="flex h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                              {row.segments.map((segment) => (
+                                <span
+                                  key={segment.source}
+                                  className="block h-full"
+                                  style={{
+                                    width: `${segment.share * 100}%`,
+                                    backgroundColor: segment.color,
+                                  }}
+                                />
+                              ))}
+                            </span>
+                            <span className="w-[62px] shrink-0 text-right font-bold">
+                              {formatKwh(row.kwh)}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {tab === "daily" && columns.length > 1 && (
+              <div className="flex flex-col gap-2">
+                <div className="flex h-[110px] items-end gap-[3px]">
+                  {columns.map((column) => (
+                    <div
+                      key={column.date}
+                      className="flex min-w-0 flex-1 flex-col justify-end gap-[1.5px]"
+                      style={{ height: `${Math.max(4, column.ratio * 100)}%` }}
+                      title={`${formatEnergyDate(column.date)} ${formatKwh(column.kwh)}`}
+                    >
+                      {column.segments.map((segment) => (
+                        <span
+                          key={segment.source}
+                          className="block min-h-px rounded-[1.5px]"
+                          style={{
+                            height: `${segment.share * 100}%`,
+                            backgroundColor: segment.color,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between border-t pt-1.5 text-[10.5px] text-muted-foreground tabular-nums">
+                  <span>{formatEnergyDate(columns[0].date)}</span>
+                  <span>日別（記録のある日だけ）</span>
+                  <span>{formatEnergyDate(columns[columns.length - 1].date)}</span>
+                </div>
+              </div>
+            )}
+
+            {sources.length > 0 && (
+              <div className="flex flex-wrap gap-x-1 gap-y-1 text-xs text-muted-foreground">
+                {sources.map((row) => (
+                  <button
+                    key={row.source}
+                    type="button"
+                    onClick={() => setSelectedSource(row.source)}
+                    className="-mx-1 flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label={`${row.label}の使用量推移を見る`}
+                  >
+                    <span
+                      className="size-2 rounded-[3px]"
+                      style={{ backgroundColor: colors[row.source] ?? "#95a5a6" }}
+                      aria-hidden
+                    />
+                    {row.label}
+                    <span className="tabular-nums">
+                      {row.this_month_kwh.toFixed(1)} kWh
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-bold">電気料金の単価</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.1"
+                  value={priceInput}
+                  onChange={(e) => setPriceInput(e.target.value)}
+                  aria-label="電気料金の単価（円/kWh）"
+                  className="w-24 rounded-xl border bg-card px-2.5 py-1.5 text-right text-sm font-bold tabular-nums"
+                />
+                <span className="text-xs text-muted-foreground">円/kWh</span>
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  className="ml-auto rounded-full bg-primary px-4 py-1.5 text-xs font-bold text-primary-foreground disabled:opacity-50"
+                >
+                  {saving ? "保存中..." : "保存"}
+                </button>
+              </div>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                エアコンの金額は白くまくんアプリが返す実額をそのまま使うため、この単価の影響を受けません。単価を掛けた目安になるのは、使用量（kWh）しか返さないスマートプラグなどです。
+              </p>
+            </div>
+
+            {tab === "daily" && (
               <div className="flex flex-col gap-1.5">
                 <div className="flex justify-between text-[11.5px] text-muted-foreground">
                   <span>日別（直近{rows.length}日）</span>
@@ -316,6 +495,7 @@ export function PowerDetailPanel({
                   ))
                 )}
               </div>
+            )}
             </div>
           )}
         </div>

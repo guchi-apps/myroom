@@ -3,6 +3,7 @@ import {
   AIRCON_ENERGY_COLOR,
   buildEnergyComparison,
   buildEnergyDailyRows,
+  buildEnergyHourlyColumns,
   buildEnergySingleColumns,
   buildEnergySourceColors,
   buildEnergyStackColumns,
@@ -11,13 +12,15 @@ import {
   energySourceRatio,
   formatEnergyDate,
   formatEnergyDateWithWeekday,
+  formatEnergyHour,
   formatKwh,
   formatWatts,
   formatYen,
   hasEnergyData,
   isEnergyStale,
+  shiftEnergyDate,
 } from "@/lib/energy";
-import type { EnergyBreakdown, EnergySourceRow } from "@/lib/types";
+import type { EnergyBreakdown, EnergyHourly, EnergySourceRow } from "@/lib/types";
 
 function buildSourceRow(overrides: Partial<EnergySourceRow> = {}): EnergySourceRow {
   return {
@@ -284,6 +287,79 @@ describe("日別一覧とカードの棒", () => {
     const { sources } = buildBreakdown();
     expect(energySourceRatio(sources, sources[0])).toBe(1);
     expect(Number(energySourceRatio(sources, sources[1]).toFixed(2))).toBe(0.46);
+  });
+});
+
+describe("時間ごと（#300）", () => {
+  function buildHourly(overrides: Partial<EnergyHourly> = {}): EnergyHourly {
+    const emptyHours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      kwh: null,
+      cost_yen: null,
+      by_source: {},
+    }));
+    return {
+      date: "2026-08-31",
+      unit_price: 31,
+      sources: ["aircon", "tapo:冷蔵庫"],
+      has_data: true,
+      hours: emptyHours,
+      ...overrides,
+    };
+  }
+
+  it("日付を日単位でずらす（UTC正午基準）", () => {
+    expect(shiftEnergyDate("2026-08-31", 1)).toBe("2026-09-01");
+    expect(shiftEnergyDate("2026-08-31", -1)).toBe("2026-08-30");
+  });
+
+  it("時間帯は「7時」のように出す", () => {
+    expect(formatEnergyHour(7)).toBe("7時");
+  });
+
+  it("記録の無い時間帯はセグメントを作らない", () => {
+    const columns = buildEnergyHourlyColumns(
+      buildHourly(),
+      buildBreakdown().sources,
+      buildEnergySourceColors(buildBreakdown().sources)
+    );
+    expect(columns).toHaveLength(24);
+    expect(columns.every((column) => column.segments.length === 0)).toBe(true);
+  });
+
+  it("取得元ごとの内訳にラベルと色、割合を付ける", () => {
+    const hours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      kwh: null as number | null,
+      cost_yen: null as number | null,
+      by_source: {} as Record<string, number>,
+    }));
+    hours[8] = {
+      hour: 8,
+      kwh: 0.6,
+      cost_yen: 19,
+      by_source: { aircon: 0.5, "tapo:冷蔵庫": 0.1 },
+    };
+    const breakdown = buildBreakdown();
+    const columns = buildEnergyHourlyColumns(
+      buildHourly({ hours }),
+      breakdown.sources,
+      buildEnergySourceColors(breakdown.sources)
+    );
+
+    const hour8 = columns[8];
+    expect(hour8.kwh).toBe(0.6);
+    expect(hour8.segments.map((segment) => segment.source)).toEqual([
+      "aircon",
+      "tapo:冷蔵庫",
+    ]);
+    expect(hour8.segments[0].label).toBe("エアコン");
+    expect(hour8.segments[0].share).toBeCloseTo(0.5 / 0.6);
+    expect(hour8.ratio).toBe(1);
+  });
+
+  it("hourly が無ければ空配列", () => {
+    expect(buildEnergyHourlyColumns(null, [], {})).toEqual([]);
   });
 });
 

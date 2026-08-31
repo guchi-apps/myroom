@@ -309,6 +309,26 @@ def migrate():
                 """))
                 print("Table 'cleaner_runs' created.")
 
+            # 時間ごと表示（#300）のための当日累計スナップショット。上書きの daily_energy と
+            # 違い追記する。収集スクリプトの実行頻度（エアコン=1時間ごと、Tapo=5分ごと）が
+            # そのままポーリング間隔になるため、収集スクリプト側の変更は不要。
+            print("Checking if 'energy_readings' table exists...")
+            if _table_exists(conn, "energy_readings"):
+                print("Table 'energy_readings' already exists.")
+            else:
+                print("Creating table 'energy_readings'...")
+                conn.execute(text("""
+                    CREATE TABLE energy_readings (
+                        recorded_at DATETIME NOT NULL,
+                        source VARCHAR(64) NOT NULL,
+                        kwh FLOAT NULL,
+                        cost_yen FLOAT NULL,
+                        power_w FLOAT NULL,
+                        PRIMARY KEY (recorded_at, source)
+                    )
+                """))
+                print("Table 'energy_readings' created.")
+
             # 月ごとの確定請求（#249）。はぴeみる電のお知らせメール由来。
             # 引越しの月は旧契約と新契約の2通が届くため、contract_key まで主キーに含める。
             print("Checking if 'utility_bills' table exists...")

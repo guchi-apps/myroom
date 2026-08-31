@@ -14,6 +14,7 @@ import {
   type DeviceDataLoadStatus,
   type DeviceInfo,
   type EnergyBreakdown,
+  type EnergyHourly,
   type EnergySourceSummary,
   type HistoryPoint,
   type LatestData,
@@ -534,6 +535,12 @@ export async function saveRemoteConfig(
 export async function fetchEnergyBreakdown(days = 30): Promise<EnergyBreakdown> {
   const params = new URLSearchParams({ days: String(days) });
   return fetchJson<EnergyBreakdown>(`/api/energy/breakdown?${params.toString()}`);
+}
+
+/** 消費電力カードの「時間ごと」表示用。指定した1日の時間帯別の内訳を取る */
+export async function fetchEnergyHourly(date: string): Promise<EnergyHourly> {
+  const params = new URLSearchParams({ date });
+  return fetchJson<EnergyHourly>(`/api/energy/hourly?${params.toString()}`);
 }
 
 /** 消費電力の詳細パネルでデバイスをクリックしたときに、そのデバイス単体の推移を取る */

@@ -1351,7 +1351,7 @@ async def create_daily_energy(
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     try:
-        written = energy.upsert_records(db, records)
+        written = energy.upsert_records(db, records, now=get_now_jst())
         return {"status": "ok", "written": written}
     except Exception as e:
         db.rollback()
@@ -1381,6 +1381,24 @@ def get_energy_breakdown(
     家全体の今日・今月・先月同日までの合計と、日別の内訳を1度に返す。
     """
     return energy.get_breakdown(db, get_now_jst().date(), history_days=days)
+
+
+@app.get("/api/energy/hourly")
+def get_energy_hourly(
+    date: str = Query(...),
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """消費電力カードの詳細パネル「時間ごと」用。指定した1日の時間帯別の内訳を返す。
+
+    時間帯の使用量は `energy_readings`（当日累計の時系列）の差分から出すため、
+    このテーブルへ記録し始めた日より前を指定すると `has_data: false` が返る。
+    """
+    try:
+        parsed_date = energy.parse_date(date)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    return energy.get_hourly(db, parsed_date)
 
 
 @app.post("/api/bills")
