@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
-import { fetchEnergyHourly, updateUiSettings } from "@/lib/api";
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { fetchEnergyHourly, fetchEnergySummary, updateUiSettings } from "@/lib/api";
+import { PowerSourceDetail } from "@/components/power-source-detail";
 import {
   buildEnergyDailyRows,
   buildEnergyHourlyColumns,
@@ -16,7 +17,12 @@ import {
   formatYen,
   shiftEnergyDate,
 } from "@/lib/energy";
-import type { EnergyBreakdown, EnergyHourly, EnergyTotal } from "@/lib/types";
+import type {
+  EnergyBreakdown,
+  EnergyHourly,
+  EnergySourceSummary,
+  EnergyTotal,
+} from "@/lib/types";
 
 interface PowerDetailPanelProps {
   open: boolean;
@@ -26,7 +32,7 @@ interface PowerDetailPanelProps {
   onUnitPriceSaved: (unitPrice: number) => void;
 }
 
-function Tile({ caption, total }: { caption: string; total: EnergyTotal }) {
+export function Tile({ caption, total }: { caption: string; total: EnergyTotal }) {
   return (
     <div className="rounded-2xl bg-muted px-3 py-2.5">
       <div className="text-[11px] leading-tight text-muted-foreground">
@@ -92,6 +98,33 @@ export function PowerDetailPanel({
     };
   }, [tab, hourlyDate]);
 
+  // デバイスをクリックしたときに開く、そのデバイス単体の推移
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [sourceSummary, setSourceSummary] = useState<EnergySourceSummary | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState(false);
+
+  useEffect(() => {
+    if (!selectedSource) return;
+    let cancelled = false;
+    setSourceSummary(null);
+    setSourceLoading(true);
+    setSourceError(false);
+    fetchEnergySummary(selectedSource, 30)
+      .then((data) => {
+        if (!cancelled) setSourceSummary(data);
+      })
+      .catch(() => {
+        if (!cancelled) setSourceError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setSourceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSource]);
+
   if (!open) return null;
 
   const sources = breakdown?.sources ?? [];
@@ -100,6 +133,7 @@ export function PowerDetailPanel({
   const rows = buildEnergyDailyRows(breakdown?.daily ?? []);
   const hourlyColumns = buildEnergyHourlyColumns(hourly, sources, colors);
   const hourlyRows = hourlyColumns.filter((column) => column.kwh != null);
+  const selectedRow = sources.find((row) => row.source === selectedSource) ?? null;
 
   const plugCount = sources.filter((row) => row.source.startsWith("tapo:")).length;
   const hasAircon = sources.some((row) => row.source === "aircon");
@@ -132,11 +166,36 @@ export function PowerDetailPanel({
     <div className="fixed inset-0 z-50 flex min-h-0 items-end justify-center bg-black/40 sm:items-center sm:p-4">
       <div className="flex min-h-0 max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[20px] bg-card shadow-lg sm:max-h-[88vh] sm:rounded-[20px]">
         <div className="flex shrink-0 items-center justify-between gap-2 border-b px-5 py-4">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-bold">消費電力</h2>
-            <p className="text-xs text-muted-foreground">
-              {subtitle || "取得元なし"}
-            </p>
+          <div className="flex min-w-0 items-center gap-1">
+            {selectedSource && (
+              <button
+                type="button"
+                onClick={() => setSelectedSource(null)}
+                className="flex size-8 shrink-0 items-center justify-center rounded-full hover:bg-accent"
+                aria-label="消費電力の詳細に戻る"
+              >
+                <ArrowLeft className="size-5" />
+              </button>
+            )}
+            <div className="min-w-0">
+              {selectedSource ? (
+                <h2 className="flex items-center gap-1.5 truncate text-lg font-bold">
+                  <span
+                    className="size-2.5 shrink-0 rounded-[3px]"
+                    style={{ backgroundColor: colors[selectedSource] ?? "#95a5a6" }}
+                    aria-hidden
+                  />
+                  <span className="truncate">
+                    {selectedRow?.label ?? selectedSource}
+                  </span>
+                </h2>
+              ) : (
+                <h2 className="truncate text-lg font-bold">消費電力</h2>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {selectedSource ? "使用量の推移" : subtitle || "取得元なし"}
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -149,17 +208,26 @@ export function PowerDetailPanel({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 [-webkit-overflow-scrolling:touch]">
-          <div className="flex flex-col gap-4">
-            {breakdown && (
-              <div className="grid grid-cols-3 gap-2">
-                <Tile
-                  caption="今月"
-                  total={breakdown.this_month}
-                />
-                <Tile caption="先月同日まで" total={breakdown.last_month_to_date} />
-                <Tile caption="先月" total={breakdown.last_month} />
-              </div>
-            )}
+          {selectedSource ? (
+            <PowerSourceDetail
+              label={selectedRow?.label ?? selectedSource}
+              color={colors[selectedSource] ?? "#95a5a6"}
+              summary={sourceSummary}
+              loading={sourceLoading}
+              error={sourceError}
+            />
+          ) : (
+            <div className="flex flex-col gap-4">
+              {breakdown && (
+                <div className="grid grid-cols-3 gap-2">
+                  <Tile
+                    caption="今月"
+                    total={breakdown.this_month}
+                  />
+                  <Tile caption="先月同日まで" total={breakdown.last_month_to_date} />
+                  <Tile caption="先月" total={breakdown.last_month} />
+                </div>
+              )}
 
             <div className="flex w-fit gap-1 rounded-full bg-muted p-[3px]">
               <button
@@ -334,9 +402,15 @@ export function PowerDetailPanel({
             )}
 
             {sources.length > 0 && (
-              <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-xs text-muted-foreground">
+              <div className="flex flex-wrap gap-x-1 gap-y-1 text-xs text-muted-foreground">
                 {sources.map((row) => (
-                  <span key={row.source} className="flex items-center gap-1.5">
+                  <button
+                    key={row.source}
+                    type="button"
+                    onClick={() => setSelectedSource(row.source)}
+                    className="-mx-1 flex items-center gap-1.5 rounded-full py-0.5 pl-1 pr-2 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label={`${row.label}の使用量推移を見る`}
+                  >
                     <span
                       className="size-2 rounded-[3px]"
                       style={{ backgroundColor: colors[row.source] ?? "#95a5a6" }}
@@ -346,7 +420,7 @@ export function PowerDetailPanel({
                     <span className="tabular-nums">
                       {row.this_month_kwh.toFixed(1)} kWh
                     </span>
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
@@ -422,7 +496,8 @@ export function PowerDetailPanel({
                 )}
               </div>
             )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -203,6 +203,27 @@ export interface EnergyHourly {
   hours: EnergyHourlyHour[];
 }
 
+/** `today` / `yesterday` / `daily` の1件。取得元が値を返さなかった日は kwh が null */
+export interface EnergySourceDayPoint {
+  date: string;
+  kwh: number | null;
+  cost_yen: number | null;
+}
+
+/** 取得元1つぶんの集計。`GET /api/energy/summary?source=...` の戻り */
+export interface EnergySourceSummary {
+  source: string;
+  unit_price: number;
+  today: EnergySourceDayPoint | null;
+  yesterday: EnergySourceDayPoint | null;
+  this_month: EnergyTotal;
+  last_month: EnergyTotal;
+  last_month_to_date: EnergyTotal;
+  daily: EnergySourceDayPoint[];
+  latest_date: string | null;
+  updated_at: string | null;
+}
+
 /**
  * 請求1か月ぶんの、電気またはガスの合計。
  * 引越しの月は契約が2つあるため、金額も使用量も足したものが入る（`contracts` が2になる）。

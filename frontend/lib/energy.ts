@@ -208,6 +208,32 @@ export function buildEnergyStackColumns(
     }));
 }
 
+export interface EnergySingleColumn {
+  date: string;
+  kwh: number;
+  /** 期間内の最大値を 1 とした高さの比 */
+  ratio: number;
+}
+
+/**
+ * デバイス単体の日別棒グラフ。`buildEnergyStackColumns` の単色版。
+ *
+ * 記録の無い日は棒そのものを作らない（理由は `buildEnergyStackColumns` と同じ）。
+ */
+export function buildEnergySingleColumns(
+  daily: readonly { date: string; kwh: number | null }[]
+): EnergySingleColumn[] {
+  const withData = daily.filter(
+    (day): day is { date: string; kwh: number } => (day.kwh ?? 0) > 0
+  );
+  const max = Math.max(...withData.map((day) => day.kwh), 0);
+  return withData.map((day) => ({
+    date: day.date,
+    kwh: day.kwh,
+    ratio: max > 0 ? day.kwh / max : 0,
+  }));
+}
+
 /** いまの消費電力。返さない取得元（エアコン）は「—」 */
 export function formatWatts(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";

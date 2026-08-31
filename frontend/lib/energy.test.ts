@@ -4,6 +4,7 @@ import {
   buildEnergyComparison,
   buildEnergyDailyRows,
   buildEnergyHourlyColumns,
+  buildEnergySingleColumns,
   buildEnergySourceColors,
   buildEnergyStackColumns,
   buildEnergyStackSegments,
@@ -239,6 +240,35 @@ describe("積み上げ", () => {
       })
     );
     expect(columns.map((column) => column.date)).toEqual(["2026-08-22"]);
+  });
+});
+
+describe("単一デバイスの棒", () => {
+  it("記録が無ければ空配列になる", () => {
+    expect(buildEnergySingleColumns([])).toEqual([]);
+    expect(
+      buildEnergySingleColumns([
+        { date: "2026-08-21", kwh: null },
+        { date: "2026-08-22", kwh: 0 },
+      ])
+    ).toEqual([]);
+  });
+
+  it("0kWhの日は除外される", () => {
+    const columns = buildEnergySingleColumns([
+      { date: "2026-08-20", kwh: 0 },
+      { date: "2026-08-21", kwh: 1.5 },
+    ]);
+    expect(columns.map((column) => column.date)).toEqual(["2026-08-21"]);
+  });
+
+  it("棒の高さは期間内の最大値で正規化する", () => {
+    const columns = buildEnergySingleColumns([
+      { date: "2026-08-20", kwh: 1.0 },
+      { date: "2026-08-21", kwh: 2.0 },
+      { date: "2026-08-22", kwh: 0.5 },
+    ]);
+    expect(columns.map((column) => column.ratio)).toEqual([0.5, 1, 0.25]);
   });
 });
 

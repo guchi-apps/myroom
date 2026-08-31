@@ -15,6 +15,7 @@ import {
   type DeviceInfo,
   type EnergyBreakdown,
   type EnergyHourly,
+  type EnergySourceSummary,
   type HistoryPoint,
   type LatestData,
   type OutdoorLocation,
@@ -540,6 +541,15 @@ export async function fetchEnergyBreakdown(days = 30): Promise<EnergyBreakdown> 
 export async function fetchEnergyHourly(date: string): Promise<EnergyHourly> {
   const params = new URLSearchParams({ date });
   return fetchJson<EnergyHourly>(`/api/energy/hourly?${params.toString()}`);
+}
+
+/** 消費電力の詳細パネルでデバイスをクリックしたときに、そのデバイス単体の推移を取る */
+export async function fetchEnergySummary(
+  source: string,
+  days = 30
+): Promise<EnergySourceSummary> {
+  const params = new URLSearchParams({ source, days: String(days) });
+  return fetchJson<EnergySourceSummary>(`/api/energy/summary?${params.toString()}`);
 }
 
 /** 電気・ガス料金カード用。はぴeみる電のメール由来の月次請求を取る */
