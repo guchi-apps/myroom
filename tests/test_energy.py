@@ -105,6 +105,18 @@ def test_energy_summary_returns_mock_data(authed_client):
     assert payload["this_month"]["cost_yen"] >= 0
 
 
+def test_energy_summary_returns_mock_data_for_plug_source(authed_client):
+    """消費電力の詳細パネルでデバイスをクリックしたときに叩く経路。
+
+    aircon 以外の source（`tapo:冷蔵庫` のような値）でも壊れないことを固定する。
+    """
+    response = authed_client.get("/api/energy/summary?source=tapo:冷蔵庫&days=30")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "tapo:冷蔵庫"
+    assert len(payload["daily"]) == 30
+
+
 def test_energy_post_accepts_records(client):
     response = client.post(
         "/api/energy",
