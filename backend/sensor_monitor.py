@@ -1,4 +1,4 @@
-"""センサーデータの鮮度を監視し、未到達時に Signaly で通知する。"""
+"""センサーデータの鮮度・室温湿度の異常を監視し、Signaly と PWA Push で通知する。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import database, device_config, signaly_notify
+from . import database, device_config, notify_events, signaly_notify, ui_settings
 
 load_dotenv()
 
@@ -25,6 +25,14 @@ STATE_PATH = Path(__file__).resolve().parent.parent / "data" / "sensor_alert_sta
 STALE_THRESHOLD_MINUTES = int(os.getenv("SENSOR_STALE_MINUTES", "15"))
 REMINDER_INTERVAL_MINUTES = int(os.getenv("SENSOR_ALERT_REMINDER_MINUTES", "60"))
 NOTIFY_ON_RECOVERY = os.getenv("SENSOR_NOTIFY_ON_RECOVERY", "true").lower() == "true"
+
+#: 室温・湿度の異常判定の対象と表示（#293）。ui_settings.ROOM_ANOMALY_METRICS と揃える
+METRIC_LABELS: Dict[str, "tuple[str, str]"] = {
+    "temperature": ("室温", "℃"),
+    "humidity": ("湿度", "%"),
+}
+#: 上限・下限の境界からこの幅だけ内側に戻るまでは「まだ異常」として扱う（連続通知の抑止）
+ANOMALY_HYSTERESIS: Dict[str, float] = {"temperature": 0.5, "humidity": 3.0}
 
 
 class SensorStatus(TypedDict):
@@ -139,10 +147,14 @@ def _device_state_entry(state: Dict[str, Any], device_id: int) -> Dict[str, Any]
     if not isinstance(entry, dict):
         entry = {"status": "ok", "notified_at": None}
         devices[key] = entry
+    # 既存の状態ファイル（鮮度のみ）にも後から足せるよう、無ければ補う
+    entry.setdefault("metrics", {})
     return entry
 
 
-def _should_send_reminder(notified_at: Optional[str], now: datetime.datetime) -> bool:
+def _should_send_reminder(
+    notified_at: Optional[str], now: datetime.datetime, reminder_minutes: int
+) -> bool:
     if not notified_at:
         return True
     try:
@@ -150,7 +162,163 @@ def _should_send_reminder(notified_at: Optional[str], now: datetime.datetime) ->
     except ValueError:
         return True
     elapsed = (now - previous).total_seconds() / 60.0
-    return elapsed >= REMINDER_INTERVAL_MINUTES
+    return elapsed >= reminder_minutes
+
+
+def _latest_reading(db: Session, device_id: int) -> Optional["database.SensorRecord"]:
+    return (
+        db.query(database.SensorRecord)
+        .filter(database.SensorRecord.device_id == device_id)
+        .order_by(database.SensorRecord.datetime.desc())
+        .first()
+    )
+
+
+def _direction_for_value(value: float, thresholds: Dict[str, float]) -> Optional[str]:
+    if value > thresholds["max"]:
+        return "high"
+    if value < thresholds["min"]:
+        return "low"
+    return None
+
+
+def _has_recovered(
+    value: float, thresholds: Dict[str, float], direction: str, hysteresis: float
+) -> bool:
+    if direction == "high":
+        return value <= thresholds["max"] - hysteresis
+    if direction == "low":
+        return value >= thresholds["min"] + hysteresis
+    return True
+
+
+def _evaluate_device_anomalies(
+    *,
+    db: Session,
+    device: SensorStatus,
+    thresholds_by_metric: Dict[str, Dict[str, float]],
+    reminder_minutes: int,
+    device_state: Dict[str, Any],
+    now: datetime.datetime,
+    now_str: str,
+) -> bool:
+    """1台ぶんの室温・湿度を評価し、遷移があれば通知する。状態を変えたら True を返す。"""
+    record = _latest_reading(db, device["device_id"])
+    if record is None:
+        return False
+
+    metrics_state = device_state.setdefault("metrics", {})
+    changed = False
+
+    for metric, (label, unit) in METRIC_LABELS.items():
+        value = getattr(record, metric, None)
+        if value is None:
+            continue
+
+        thresholds = thresholds_by_metric.get(metric)
+        if thresholds is None:
+            continue
+
+        metric_state = metrics_state.get(metric)
+        if not isinstance(metric_state, dict):
+            metric_state = {"direction": None, "notified_at": None}
+            metrics_state[metric] = metric_state
+
+        previous_direction = metric_state.get("direction")
+        hysteresis = ANOMALY_HYSTERESIS.get(metric, 0.0)
+
+        if previous_direction in ("high", "low"):
+            if _has_recovered(value, thresholds, previous_direction, hysteresis):
+                if NOTIFY_ON_RECOVERY:
+                    _send_anomaly_notification(
+                        device=device,
+                        metric=metric,
+                        label=label,
+                        unit=unit,
+                        value=value,
+                        thresholds=thresholds,
+                        direction=None,
+                        now=now,
+                    )
+                metric_state["direction"] = None
+                metric_state["notified_at"] = None
+                changed = True
+            else:
+                should_remind = _should_send_reminder(
+                    metric_state.get("notified_at"), now, reminder_minutes
+                )
+                if should_remind:
+                    _send_anomaly_notification(
+                        device=device,
+                        metric=metric,
+                        label=label,
+                        unit=unit,
+                        value=value,
+                        thresholds=thresholds,
+                        direction=previous_direction,
+                        now=now,
+                    )
+                    metric_state["notified_at"] = now_str
+                    changed = True
+            continue
+
+        direction = _direction_for_value(value, thresholds)
+        if direction is not None:
+            _send_anomaly_notification(
+                device=device,
+                metric=metric,
+                label=label,
+                unit=unit,
+                value=value,
+                thresholds=thresholds,
+                direction=direction,
+                now=now,
+            )
+            metric_state["direction"] = direction
+            metric_state["notified_at"] = now_str
+            changed = True
+
+    return changed
+
+
+def _send_anomaly_notification(
+    *,
+    device: SensorStatus,
+    metric: str,
+    label: str,
+    unit: str,
+    value: float,
+    thresholds: Dict[str, float],
+    direction: Optional[str],
+    now: datetime.datetime,
+) -> None:
+    device_name = device["name"]
+    device_id = device["device_id"]
+
+    if direction is None:
+        title = f"{label}が正常に戻りました"
+        body = f"{device_name}の{label}は現在{value}{unit}です"
+        state_word = "recovered"
+    elif direction == "high":
+        title = f"{label}が高くなっています"
+        body = f"{device_name}の現在の{label}は{value}{unit}です。設定上限の{thresholds['max']}{unit}を超えました"
+        state_word = "high"
+    else:
+        title = f"{label}が低くなっています"
+        body = f"{device_name}の現在の{label}は{value}{unit}です。設定下限の{thresholds['min']}{unit}を下回りました"
+        state_word = "low"
+
+    notify_events.dispatch_push_event(
+        notify_events.NotificationEvent(
+            kind=f"room_anomaly_{metric}_{state_word}",
+            title=title,
+            body=body,
+            priority="high" if direction else "normal",
+            url="/",
+            occurred_at=now.isoformat(),
+            dedupe_key=f"room-anomaly-{device_id}-{metric}-{state_word}",
+        )
+    )
 
 
 def run_monitor(db: Optional[Session] = None, notify: bool = True) -> List[SensorStatus]:
@@ -164,6 +332,16 @@ def run_monitor(db: Optional[Session] = None, notify: bool = True) -> List[Senso
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     changed = False
 
+    settings = ui_settings.get_settings(db)
+    anomaly_enabled = settings.get(ui_settings.SETTING_ROOM_ANOMALY_NOTIFY_ENABLED, False)
+    thresholds_by_metric = settings.get(
+        ui_settings.SETTING_ROOM_ANOMALY_THRESHOLDS, ui_settings.DEFAULT_ROOM_ANOMALY_THRESHOLDS
+    )
+    anomaly_reminder_minutes = settings.get(
+        ui_settings.SETTING_ROOM_ANOMALY_REMINDER_MINUTES,
+        ui_settings.DEFAULT_ROOM_ANOMALY_REMINDER_MINUTES,
+    )
+
     for status in statuses:
         device_id = status["device_id"]
         entry = _device_state_entry(state, device_id)
@@ -172,7 +350,7 @@ def run_monitor(db: Optional[Session] = None, notify: bool = True) -> List[Senso
 
         if is_stale:
             should_notify = previous != "alerting" or _should_send_reminder(
-                entry.get("notified_at"), now
+                entry.get("notified_at"), now, REMINDER_INTERVAL_MINUTES
             )
             if should_notify:
                 signaly_notify.send_sensor_stale_notification(
@@ -181,6 +359,17 @@ def run_monitor(db: Optional[Session] = None, notify: bool = True) -> List[Senso
                     last_seen=status["last_seen"],
                     age_minutes=status["age_minutes"],
                     threshold_minutes=stale_threshold_minutes(),
+                )
+                notify_events.dispatch_push_event(
+                    notify_events.NotificationEvent(
+                        kind="sensor_stale",
+                        title="センサーデータが届いていません",
+                        body=f"{status['name']}のデータが{stale_threshold_minutes()}分以上届いていません",
+                        priority="high",
+                        url="/",
+                        occurred_at=now.isoformat(),
+                        dedupe_key=f"sensor-stale-{device_id}",
+                    )
                 )
                 entry["status"] = "alerting"
                 entry["notified_at"] = now_str
@@ -192,11 +381,34 @@ def run_monitor(db: Optional[Session] = None, notify: bool = True) -> List[Senso
                     device_id=device_id,
                     last_seen=status["last_seen"],
                 )
+                notify_events.dispatch_push_event(
+                    notify_events.NotificationEvent(
+                        kind="sensor_recovered",
+                        title="センサーデータが復旧しました",
+                        body=f"{status['name']}のデータを受信しました",
+                        priority="normal",
+                        url="/",
+                        occurred_at=now.isoformat(),
+                        dedupe_key=f"sensor-stale-{device_id}",
+                    )
+                )
             entry["status"] = "ok"
             entry["notified_at"] = None
             changed = True
         else:
             entry["status"] = "ok"
+
+        if anomaly_enabled and not is_stale and status["has_data"] and db is not None:
+            if _evaluate_device_anomalies(
+                db=db,
+                device=status,
+                thresholds_by_metric=thresholds_by_metric,
+                reminder_minutes=anomaly_reminder_minutes,
+                device_state=entry,
+                now=now,
+                now_str=now_str,
+            ):
+                changed = True
 
     if changed:
         _write_state(state)

@@ -20,6 +20,9 @@ import {
   type OutdoorLocationSearchResult,
   type SensorRecordsResponse,
   type SensorsStatusResponse,
+  type PushVapidPublicKeyResponse,
+  type PushSubscribeBody,
+  type PushTestResult,
   type TimeRange,
   type ChartViewRange,
   type UiSettings,
@@ -93,6 +96,45 @@ export async function updateUiSettings(
     throw new Error(body?.detail || `Request failed: ${res.status}`);
   }
   return res.json() as Promise<UiSettings>;
+}
+
+export async function fetchPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {
+  return fetchJson<PushVapidPublicKeyResponse>("/api/push/vapid-public-key");
+}
+
+export async function subscribePushNotifications(
+  subscription: PushSubscribeBody
+): Promise<void> {
+  const res = await fetchWithAuth("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(subscription),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function unsubscribePushNotifications(endpoint: string): Promise<void> {
+  const res = await fetchWithAuth("/api/push/subscribe", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function sendTestPushNotification(): Promise<PushTestResult> {
+  const res = await fetchWithAuth("/api/push/test", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<PushTestResult>;
 }
 
 export async function fetchLatest(deviceId = PRIMARY_SENSOR_DEVICE_ID): Promise<LatestData> {

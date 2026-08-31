@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, login_notify, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -209,6 +209,31 @@ class UiSettingsUpdate(BaseModel):
     energy_unit_price: Optional[float] = None
     #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
+    #: ゴミの日のPush通知を送るか
+    garbage_notify_enabled: Optional[bool] = None
+    #: ゴミの日の通知時刻（"HH:MM"）。null を送ると「未設定」に戻す
+    garbage_notify_time: Optional[str] = None
+    #: 室温・湿度の異常をPush通知するか
+    room_anomaly_notify_enabled: Optional[bool] = None
+    #: 指標ごとの上限・下限。{"temperature": {"min": ..., "max": ...}, "humidity": {...}}
+    room_anomaly_thresholds: Optional[Dict[str, Dict[str, float]]] = None
+    #: 同じ異常が続く間の再通知間隔（分）
+    room_anomaly_reminder_minutes: Optional[int] = None
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+    expirationTime: Optional[int] = None
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
 
 
 class CleaningTaskUpdate(BaseModel):
@@ -715,6 +740,55 @@ def get_internal_room_state(
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
     return garbage.build_payload()
+
+
+@app.get("/api/push/vapid-public-key")
+def get_push_vapid_public_key(_: dict = Depends(get_current_user)):
+    """PWA Pushの購読に使う公開鍵。秘密鍵はサーバーの外へは一切返さない。"""
+    public_key = push_notify.get_vapid_public_key()
+    if not public_key:
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    return {"publicKey": public_key, "configured": push_notify.is_configured()}
+
+
+@app.post("/api/push/subscribe")
+def subscribe_push(
+    body: PushSubscriptionBody,
+    request: Request,
+    _: dict = Depends(get_current_user),
+):
+    """この端末のブラウザ購読を保存する。ログイン済みの操作でのみ受け付ける。"""
+    if not push_notify.is_configured():
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    try:
+        saved = push_subscriptions.upsert_subscription(
+            body.model_dump(exclude={"expirationTime"}),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "endpoint": saved["endpoint"]}
+
+
+@app.delete("/api/push/subscribe")
+def unsubscribe_push(
+    body: PushUnsubscribeRequest,
+    _: dict = Depends(get_current_user),
+):
+    """この端末の購読を削除する。以後この端末へは配信しない。"""
+    removed = push_subscriptions.remove_subscription(body.endpoint)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    return {"status": "ok"}
+
+
+@app.post("/api/push/test")
+def send_test_push(_: dict = Depends(get_current_user)):
+    """いま保存されている購読すべてへテスト通知を送る。"""
+    if not push_notify.is_configured():
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    result = push_notify.send_test_push()
+    return {"status": "ok", **result}
 
 
 @app.get("/api/cleaning")

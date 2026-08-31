@@ -19,8 +19,31 @@ SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
 SETTING_REMOTE_BUTTONS = "remote_buttons"
 SETTING_REMOTE_BUTTON_DEFS = "remote_button_defs"
 SETTING_REMOTE_CATALOG = "remote_catalog"
+#: ゴミの日のPush通知を送るか（#293）
+SETTING_GARBAGE_NOTIFY_ENABLED = "garbage_notify_enabled"
+#: 通知時刻（"HH:MM"）。未設定（None）は data/garbage.json の notify_hour を使う
+SETTING_GARBAGE_NOTIFY_TIME = "garbage_notify_time"
+#: 室温・湿度の異常をPush通知するか（#293）
+SETTING_ROOM_ANOMALY_NOTIFY_ENABLED = "room_anomaly_notify_enabled"
+#: 指標ごとの上限・下限。{"temperature": {"min": 16.0, "max": 30.0}, "humidity": {...}}
+SETTING_ROOM_ANOMALY_THRESHOLDS = "room_anomaly_thresholds"
+#: 同じ異常が続く間の再通知間隔（分）
+SETTING_ROOM_ANOMALY_REMINDER_MINUTES = "room_anomaly_reminder_minutes"
 
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
+
+DEFAULT_GARBAGE_NOTIFY_ENABLED = True
+DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED = False
+#: 温湿度の異常判定に使う既定の上限・下限。画面で変えるまではこの値を使う
+DEFAULT_ROOM_ANOMALY_THRESHOLDS: Dict[str, Dict[str, float]] = {
+    "temperature": {"min": 16.0, "max": 30.0},
+    "humidity": {"min": 30.0, "max": 70.0},
+}
+DEFAULT_ROOM_ANOMALY_REMINDER_MINUTES = 60
+MIN_ROOM_ANOMALY_REMINDER_MINUTES = 5
+MAX_ROOM_ANOMALY_REMINDER_MINUTES = 1440
+#: 異常とみなす指標。ここに無いキーは _normalize_room_anomaly_thresholds が捨てる
+ROOM_ANOMALY_METRICS = ("temperature", "humidity")
 
 # 電気料金の単価（円/kWh）。取得元は使用量しか返さないため、金額はこの単価から計算する。
 # 既定値は関西電力の従量電灯Aの第2段階あたりの目安。
@@ -63,6 +86,13 @@ def _default_settings() -> Dict[str, Any]:
         # と区別する必要があるため、既定値を {} にはしない（#262）
         SETTING_REMOTE_BUTTON_DEFS: None,
         SETTING_REMOTE_CATALOG: None,
+        SETTING_GARBAGE_NOTIFY_ENABLED: DEFAULT_GARBAGE_NOTIFY_ENABLED,
+        SETTING_GARBAGE_NOTIFY_TIME: None,
+        SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED,
+        SETTING_ROOM_ANOMALY_THRESHOLDS: {
+            metric: dict(values) for metric, values in DEFAULT_ROOM_ANOMALY_THRESHOLDS.items()
+        },
+        SETTING_ROOM_ANOMALY_REMINDER_MINUTES: DEFAULT_ROOM_ANOMALY_REMINDER_MINUTES,
     }
 
 
@@ -288,6 +318,67 @@ def _normalize_remote_catalog(raw: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+def _normalize_bool(raw: Any, default: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return default
+
+
+def _normalize_time_hhmm(raw: Any) -> Optional[str]:
+    """"HH:MM" を検証して "%02d:%02d" へ正規化する。空・壊れた値は None（未設定）。
+
+    None は「画面でまだ設定していない」の意味で、呼び出し側（garbage_notify）は
+    data/garbage.json の notify_hour へフォールバックする。
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    parts = raw.strip().split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _normalize_room_anomaly_thresholds(raw: Any) -> Dict[str, Dict[str, float]]:
+    """指標ごとの上限・下限。min >= max や数値でない値は既定へ落とす。"""
+    if not isinstance(raw, dict):
+        return {metric: dict(values) for metric, values in DEFAULT_ROOM_ANOMALY_THRESHOLDS.items()}
+
+    normalized: Dict[str, Dict[str, float]] = {}
+    for metric in ROOM_ANOMALY_METRICS:
+        entry = raw.get(metric)
+        default = DEFAULT_ROOM_ANOMALY_THRESHOLDS[metric]
+        if not isinstance(entry, dict):
+            normalized[metric] = dict(default)
+            continue
+        try:
+            min_value = float(entry.get("min", default["min"]))
+            max_value = float(entry.get("max", default["max"]))
+        except (TypeError, ValueError):
+            normalized[metric] = dict(default)
+            continue
+        if min_value >= max_value:
+            normalized[metric] = dict(default)
+            continue
+        normalized[metric] = {"min": round(min_value, 1), "max": round(max_value, 1)}
+    return normalized
+
+
+def _normalize_room_anomaly_reminder_minutes(raw: Any) -> int:
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_ROOM_ANOMALY_REMINDER_MINUTES
+    return max(
+        MIN_ROOM_ANOMALY_REMINDER_MINUTES, min(MAX_ROOM_ANOMALY_REMINDER_MINUTES, minutes)
+    )
+
+
 def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     defaults = _default_settings()
     if not raw:
@@ -325,6 +416,19 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             raw.get(SETTING_REMOTE_BUTTON_DEFS)
         ),
         SETTING_REMOTE_CATALOG: _normalize_remote_catalog(raw.get(SETTING_REMOTE_CATALOG)),
+        SETTING_GARBAGE_NOTIFY_ENABLED: _normalize_bool(
+            raw.get(SETTING_GARBAGE_NOTIFY_ENABLED), DEFAULT_GARBAGE_NOTIFY_ENABLED
+        ),
+        SETTING_GARBAGE_NOTIFY_TIME: _normalize_time_hhmm(raw.get(SETTING_GARBAGE_NOTIFY_TIME)),
+        SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: _normalize_bool(
+            raw.get(SETTING_ROOM_ANOMALY_NOTIFY_ENABLED), DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED
+        ),
+        SETTING_ROOM_ANOMALY_THRESHOLDS: _normalize_room_anomaly_thresholds(
+            raw.get(SETTING_ROOM_ANOMALY_THRESHOLDS)
+        ),
+        SETTING_ROOM_ANOMALY_REMINDER_MINUTES: _normalize_room_anomaly_reminder_minutes(
+            raw.get(SETTING_ROOM_ANOMALY_REMINDER_MINUTES)
+        ),
     }
 
 
@@ -419,6 +523,29 @@ def save_settings(
         ),
         SETTING_REMOTE_CATALOG: updates.get(
             SETTING_REMOTE_CATALOG, current.get(SETTING_REMOTE_CATALOG)
+        ),
+        SETTING_GARBAGE_NOTIFY_ENABLED: updates.get(
+            SETTING_GARBAGE_NOTIFY_ENABLED,
+            current.get(SETTING_GARBAGE_NOTIFY_ENABLED, DEFAULT_GARBAGE_NOTIFY_ENABLED),
+        ),
+        SETTING_GARBAGE_NOTIFY_TIME: updates.get(
+            SETTING_GARBAGE_NOTIFY_TIME, current.get(SETTING_GARBAGE_NOTIFY_TIME)
+        ),
+        SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: updates.get(
+            SETTING_ROOM_ANOMALY_NOTIFY_ENABLED,
+            current.get(
+                SETTING_ROOM_ANOMALY_NOTIFY_ENABLED, DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED
+            ),
+        ),
+        SETTING_ROOM_ANOMALY_THRESHOLDS: updates.get(
+            SETTING_ROOM_ANOMALY_THRESHOLDS,
+            current.get(SETTING_ROOM_ANOMALY_THRESHOLDS, DEFAULT_ROOM_ANOMALY_THRESHOLDS),
+        ),
+        SETTING_ROOM_ANOMALY_REMINDER_MINUTES: updates.get(
+            SETTING_ROOM_ANOMALY_REMINDER_MINUTES,
+            current.get(
+                SETTING_ROOM_ANOMALY_REMINDER_MINUTES, DEFAULT_ROOM_ANOMALY_REMINDER_MINUTES
+            ),
         ),
     }
     normalized = _normalize_settings(merged)

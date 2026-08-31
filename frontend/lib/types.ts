@@ -121,6 +121,36 @@ export interface UiSettings {
   energy_unit_price: number;
   /** 「電気の操作」のボタンID -> 付けた名前・隠す指定。既定のままのボタンは入らない */
   remote_buttons: Record<string, RemoteButtonSetting>;
+  /** ゴミの日のPush通知を送るか（#293） */
+  garbage_notify_enabled: boolean;
+  /** ゴミの日の通知時刻（"HH:MM"）。null は未設定（data/garbage.json の既定を使う） */
+  garbage_notify_time: string | null;
+  /** 室温・湿度の異常をPush通知するか */
+  room_anomaly_notify_enabled: boolean;
+  /** 指標ごとの上限・下限 */
+  room_anomaly_thresholds: {
+    temperature: { min: number; max: number };
+    humidity: { min: number; max: number };
+  };
+  /** 同じ異常が続く間の再通知間隔（分） */
+  room_anomaly_reminder_minutes: number;
+}
+
+export interface PushVapidPublicKeyResponse {
+  publicKey: string;
+  configured: boolean;
+}
+
+export interface PushSubscribeBody {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  expirationTime?: number | null;
+}
+
+export interface PushTestResult {
+  status: string;
+  sent: number;
+  total: number;
 }
 
 export interface EnergyTotal {
