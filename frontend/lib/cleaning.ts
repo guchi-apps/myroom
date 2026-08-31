@@ -9,6 +9,20 @@
 /** 掃除の状態。overdue=期限を過ぎた / today=今日が期限 / upcoming=まだ先 */
 export type CleaningStatus = "overdue" | "today" | "upcoming";
 
+/**
+ * 実施履歴の1件。
+ *
+ * **掃除した日（date）とアプリへ登録した日時（recorded_at）は別の値**（#294）。
+ * 予定の計算・一覧・最終掃除日はすべて date を見る。recorded_at は「いつ入力したか」を
+ * 後から辿るためだけに持ち、`date` の文字列だけで保存されていた古い記録では null になる。
+ */
+export interface CleaningHistoryEntry {
+  /** 掃除した日（YYYY-MM-DD） */
+  date: string;
+  /** アプリへ登録した日時（ISO8601・JST）。古い記録では null */
+  recorded_at: string | null;
+}
+
 export interface CleaningTask {
   id: string;
   name: string;
@@ -16,8 +30,8 @@ export interface CleaningTask {
   interval_days: number;
   /** やることの手順。空でもよい */
   steps: string[];
-  /** 実施した日。新しい順。最大10件 */
-  history: string[];
+  /** 実施履歴。掃除した日の新しい順。最大10件 */
+  history: CleaningHistoryEntry[];
   /** 最後にやった日。一度もやっていなければ null */
   last_done: string | null;
   next_due: string;
@@ -131,8 +145,50 @@ export function buildCleaningRows(schedule: CleaningSchedule): CleaningTask[] {
 }
 
 /** 項目シートに出す直近の実施履歴 */
-export function visibleHistory(task: CleaningTask): string[] {
+export function visibleHistory(task: CleaningTask): CleaningHistoryEntry[] {
   return task.history.slice(0, VISIBLE_HISTORY_COUNT);
+}
+
+/**
+ * 履歴の行に添える「登録: 8/31 9:15」。
+ *
+ * 掃除した日と登録した日が同じ行には出さない。その場で押した記録に「登録: 今日」と
+ * 書いても何も足さず、後から入れた記録だけが目立たなくなる。
+ */
+export function formatRecordedAt(entry: CleaningHistoryEntry): string | null {
+  if (!entry.recorded_at) return null;
+  // "2026-08-31T09:15:00+09:00" -> ["2026-08-31", "09:15"]。端末の時計で解釈すると
+  // タイムゾーンで日付がずれるので、サーバーが返した JST の文字列をそのまま切る
+  const [day, rest] = entry.recorded_at.split("T");
+  if (!day || !rest || day === entry.date) return null;
+  const [hour, minute] = rest.split(":");
+  if (!hour || !minute) return null;
+  return `登録: ${formatCleaningDate(day)} ${Number(hour)}:${minute}`;
+}
+
+/**
+ * 「掃除した日」に選べる日の下限。カレンダーを無限にさかのぼれても意味が無いので、
+ * 履歴に残る件数と同じだけ過去（`HISTORY_LIMIT` 相当）より広めの90日で止める。
+ */
+export const MAX_BACKDATE_DAYS = 90;
+
+/** today から days 日前の YYYY-MM-DD。UTC 正午で数えて日付ずれを避ける */
+export function shiftDate(date: string, days: number): string {
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+/** 記録ボタンの文言。今日なら日付を出さず、過去日なら「いつの記録か」を出す */
+export function formatMarkDoneLabel(date: string, today: string): string {
+  return date === today ? "今日 掃除した" : `${formatCleaningDate(date)} に掃除した`;
+}
+
+/** 掃除した日として受け付けられる範囲かどうか（未来と、さかのぼりすぎを弾く） */
+export function isSelectableDoneDate(date: string, today: string): boolean {
+  const days = diffDays(date, today);
+  return days !== null && days >= 0 && days <= MAX_BACKDATE_DAYS;
 }
 
 /** 入力欄の値を保存できる形へ寄せる。間隔は範囲外を丸め、空の手順は落とす */

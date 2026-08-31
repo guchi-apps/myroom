@@ -6,12 +6,17 @@ import { Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  MAX_BACKDATE_DAYS,
   MAX_INTERVAL_DAYS,
   MIN_INTERVAL_DAYS,
   formatCleaningDateWithWeekday,
   formatCleaningInterval,
   formatHistoryAge,
   formatLastDone,
+  formatMarkDoneLabel,
+  formatRecordedAt,
+  isSelectableDoneDate,
+  shiftDate,
   toCleaningTaskInput,
   visibleHistory,
   type CleaningSchedule,
@@ -65,11 +70,12 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 interface CleaningDetailPanelProps {
   open: boolean;
   task: CleaningTask | null;
-  /** サーバー（JST）の今日。「◯日前」の基準にする */
+  /** サーバー（JST）の今日。「◯日前」の基準と、選べる日の上限にする */
   today: string;
   busy: boolean;
   onClose: () => void;
-  onMarkDone: (task: CleaningTask) => void;
+  onMarkDone: (task: CleaningTask, date: string) => void;
+  onDeleteDone: (task: CleaningTask, date: string) => void;
 }
 
 /**
@@ -77,18 +83,36 @@ interface CleaningDetailPanelProps {
  *
  * 編集はここではなく「設定」に寄せた。1件だけ直したいときと、
  * 全体を見渡して増減させたいときは別の操作で、混ぜるとどちらも使いにくくなる。
+ *
+ * 開いているかどうかの判定だけをここで行い、中身は `DetailSheet` に分ける。
+ * 入力の状態を持つのは中身のほうで、`key` に項目のidと今日を入れて
+ * 「別の項目を開いた」「日付が変わった」ときに初期値から入れ直す。
  */
-export function CleaningDetailPanel({
-  open,
+export function CleaningDetailPanel({ open, task, ...rest }: CleaningDetailPanelProps) {
+  if (!open || !task) return null;
+  return <DetailSheet key={`${task.id}:${rest.today}`} task={task} {...rest} />;
+}
+
+function DetailSheet({
   task,
   today,
   busy,
   onClose,
   onMarkDone,
-}: CleaningDetailPanelProps) {
-  if (!open || !task) return null;
+  onDeleteDone,
+}: Omit<CleaningDetailPanelProps, "open" | "task"> & { task: CleaningTask }) {
+  // 掃除した日。初期値はサーバー（JST）の今日。当日に押し忘れたときだけ過去へずらす
+  const [doneDate, setDoneDate] = useState(today);
+  // 取り消しは押し間違えると次の掃除日が動くので、同じ行でもう一度押させる
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const history = visibleHistory(task);
+  const yesterday = shiftDate(today, -1);
+  const earliest = shiftDate(today, -MAX_BACKDATE_DAYS);
+  const validDate = isSelectableDoneDate(doneDate, today);
+  // 記録した直後はこれが立つ。押しても増えないボタンを押せるままにしておくと、
+  // 記録できたのかどうかが画面から読めない
+  const alreadyRecorded = task.history.some((item) => item.date === doneDate);
 
   return (
     <Sheet title={task.name} subtitle={formatCleaningInterval(task.interval_days)} onClose={onClose}>
@@ -122,14 +146,61 @@ export function CleaningDetailPanel({
           </div>
         )}
 
-        <Button
-          type="button"
-          className="h-12 w-full rounded-2xl text-[15px] font-bold"
-          disabled={busy}
-          onClick={() => onMarkDone(task)}
-        >
-          {busy ? "記録中..." : "今日 掃除した"}
-        </Button>
+        <div className="flex flex-col gap-2.5 rounded-2xl border border-emerald-600/60 p-3.5 dark:border-emerald-400/50">
+          <div className="flex items-baseline gap-2">
+            <FieldLabel>掃除した日</FieldLabel>
+            <span className="ml-auto text-[11px] text-muted-foreground">
+              今日より後は選べません
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Input
+              type="date"
+              aria-label="掃除した日"
+              value={doneDate}
+              min={earliest}
+              max={today}
+              onChange={(event) => setDoneDate(event.target.value)}
+              className="h-11 flex-1 tabular-nums"
+            />
+            <Button
+              type="button"
+              variant={doneDate === today ? "default" : "outline"}
+              className="h-11 shrink-0 rounded-full px-4 text-[13px] font-bold"
+              onClick={() => setDoneDate(today)}
+            >
+              今日
+            </Button>
+            <Button
+              type="button"
+              variant={doneDate === yesterday ? "default" : "outline"}
+              className="h-11 shrink-0 rounded-full px-4 text-[13px] font-bold"
+              onClick={() => setDoneDate(yesterday)}
+            >
+              昨日
+            </Button>
+          </div>
+
+          <Button
+            type="button"
+            className="h-12 w-full rounded-2xl text-[15px] font-bold"
+            disabled={busy || !validDate || alreadyRecorded}
+            onClick={() => onMarkDone(task, doneDate)}
+          >
+            {busy
+              ? "記録中..."
+              : alreadyRecorded
+                ? "この日は記録済み"
+                : formatMarkDoneLabel(doneDate, today)}
+          </Button>
+
+          {!validDate && (
+            <p className="text-xs text-destructive">
+              今日から{MAX_BACKDATE_DAYS}日前までの日付を選んでください。
+            </p>
+          )}
+        </div>
 
         <div>
           <FieldLabel>最近やった日</FieldLabel>
@@ -137,17 +208,56 @@ export function CleaningDetailPanel({
             <p className="text-sm text-muted-foreground">まだ記録がありません</p>
           ) : (
             <div className="flex flex-col">
-              {history.map((date) => (
-                <div
-                  key={date}
-                  className="flex items-baseline justify-between border-t border-border py-1.5 text-sm tabular-nums first:border-t-0"
-                >
-                  <span>{formatCleaningDateWithWeekday(date)}</span>
-                  <span className="text-muted-foreground">{formatHistoryAge(date, today)}</span>
-                </div>
-              ))}
+              {history.map((entry) => {
+                const recordedAt = formatRecordedAt(entry);
+                const confirming = pendingDelete === entry.date;
+                return (
+                  <div
+                    key={entry.date}
+                    className="flex items-baseline gap-2 border-t border-border py-1.5 text-sm tabular-nums first:border-t-0"
+                  >
+                    <span className="min-w-0">
+                      {formatCleaningDateWithWeekday(entry.date)}
+                      {recordedAt && (
+                        <span className="ml-1.5 text-[11px] text-muted-foreground">
+                          {recordedAt}
+                        </span>
+                      )}
+                    </span>
+                    <span className="ml-auto shrink-0 text-muted-foreground">
+                      {formatHistoryAge(entry.date, today)}
+                    </span>
+                    {confirming ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingDelete(null);
+                          onDeleteDone(task, entry.date);
+                        }}
+                        disabled={busy}
+                        className="shrink-0 rounded-full bg-destructive px-2.5 py-0.5 text-[11px] font-bold text-white disabled:opacity-50"
+                      >
+                        取り消す
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(entry.date)}
+                        disabled={busy}
+                        className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
+                        aria-label={`${entry.date}の記録を取り消す`}
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            日付を間違えたときは、その行を取り消してから正しい日で記録し直してください。
+          </p>
         </div>
       </div>
     </Sheet>

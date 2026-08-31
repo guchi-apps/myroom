@@ -424,11 +424,41 @@ export async function updateCleaningTasks(
   return res.json() as Promise<CleaningSchedule>;
 }
 
-/** 掃除をやった記録を足す。次にやる日はこの日から数え直される */
-export async function markCleaningDone(taskId: string): Promise<CleaningSchedule> {
+/**
+ * 掃除をやった記録を足す。次にやる日はこの日から数え直される。
+ *
+ * `date`（YYYY-MM-DD）は掃除した日で、省略するとサーバーの今日（JST）。
+ * 当日に押し忘れたときのために過去の日を渡せる。未来の日はサーバーが400で弾く（#294）。
+ */
+export async function markCleaningDone(
+  taskId: string,
+  date?: string
+): Promise<CleaningSchedule> {
   const res = await fetchWithAuth(
     `/api/cleaning/tasks/${encodeURIComponent(taskId)}/done`,
-    { method: "POST" }
+    date
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date }),
+        }
+      : { method: "POST" }
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<CleaningSchedule>;
+}
+
+/** 掃除の記録を1件取り消す。日付を間違えて登録したときの直し方（#294） */
+export async function deleteCleaningDone(
+  taskId: string,
+  date: string
+): Promise<CleaningSchedule> {
+  const res = await fetchWithAuth(
+    `/api/cleaning/tasks/${encodeURIComponent(taskId)}/done/${encodeURIComponent(date)}`,
+    { method: "DELETE" }
   );
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { detail?: string } | null;

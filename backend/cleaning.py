@@ -14,6 +14,15 @@ DB_MOCK（ローカルのモック実行）のときは `data/cleaning.json` へ
 
 次の掃除日は「最後にやった日 + 間隔（日数）」で決める。曜日固定にすると、
 1日ずれただけで次の週まで飛んでしまい、掃除の実態と合わない。
+
+実施履歴の1件は `{"date": "2026-08-30", "recorded_at": "2026-08-31T09:15:00+09:00"}`。
+**掃除した日（date）とアプリへ登録した日時（recorded_at）は別の値**で、予定の計算・
+一覧・最終掃除日はすべて date を見る（#294）。当日に押し忘れて翌日に前日ぶんを
+登録できるようにするための分けかたで、recorded_at は「いつ入力したか」を後から
+辿るためだけに持つ。
+
+`["2026-08-30", ...]` という**日付の文字列だけの古い形も読める**。読み取り時に
+`recorded_at: None` を補うので、`migrate_db.py` へのDDLもデータの書き換えも要らない。
 """
 
 from __future__ import annotations
@@ -54,6 +63,11 @@ def get_today_jst() -> datetime.date:
     return datetime.datetime.now(JST).date()
 
 
+def get_now_jst() -> datetime.datetime:
+    """登録日時に入れる「いま」。秒より細かい値は要らないので落とす。"""
+    return datetime.datetime.now(JST).replace(microsecond=0)
+
+
 # --- 正規化 -------------------------------------------------------------------
 
 
@@ -88,21 +102,50 @@ def _normalize_interval(raw: Any) -> int:
     return max(MIN_INTERVAL_DAYS, min(MAX_INTERVAL_DAYS, interval))
 
 
-def _normalize_history(raw: Any) -> List[str]:
-    """実施日の一覧。新しい順に並べ、重複と未来の日付は落とす。"""
+def _parse_recorded_at(value: Any) -> Optional[str]:
+    """登録日時。読めない値は「分からない」として捨てる（掃除した日には影響しない）。"""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    # タイムゾーンが無い値は JST として読む。この列に入るのは自分で書いた値だけ
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=JST)
+    return parsed.astimezone(JST).replace(microsecond=0).isoformat()
+
+
+def _normalize_history(raw: Any) -> List[Dict[str, Any]]:
+    """実施履歴。掃除した日の新しい順に並べ、重複と未来の日付は落とす。
+
+    古い形（日付の文字列だけの配列）もそのまま読み、登録日時は None にする。
+    既存の記録を書き換えずに新しい形へ移すための受け口（#294）。
+    """
     if not isinstance(raw, list):
         return []
 
     today = get_today_jst()
-    dates: List[datetime.date] = []
+    entries: List[Tuple[datetime.date, Optional[str]]] = []
+    seen: List[datetime.date] = []
     for entry in raw:
-        parsed = _parse_date(entry)
-        if parsed is None or parsed > today or parsed in dates:
+        if isinstance(entry, dict):
+            day = _parse_date(entry.get("date"))
+            recorded_at = _parse_recorded_at(entry.get("recorded_at"))
+        else:
+            day = _parse_date(entry)
+            recorded_at = None
+        # 同じ日が2つあるときは先に来たほうを残す。押し直しで登録日時が動かない
+        if day is None or day > today or day in seen:
             continue
-        dates.append(parsed)
+        seen.append(day)
+        entries.append((day, recorded_at))
 
-    dates.sort(reverse=True)
-    return [day.isoformat() for day in dates[:HISTORY_LIMIT]]
+    entries.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {"date": day.isoformat(), "recorded_at": recorded_at}
+        for day, recorded_at in entries[:HISTORY_LIMIT]
+    ]
 
 
 def _normalize_task(raw: Any, index: int, used_ids: List[str]) -> Optional[Dict[str, Any]]:
@@ -157,9 +200,20 @@ def normalize_tasks(raw: Any) -> List[Dict[str, Any]]:
 # --- 予定の計算 ---------------------------------------------------------------
 
 
+def history_dates(task: Dict[str, Any]) -> List[datetime.date]:
+    """履歴に入っている「掃除した日」。新しい順。"""
+    days = []
+    for entry in task.get("history") or []:
+        day = _parse_date(entry.get("date") if isinstance(entry, dict) else entry)
+        if day is not None:
+            days.append(day)
+    return days
+
+
 def last_done(task: Dict[str, Any]) -> Optional[datetime.date]:
-    history = task.get("history") or []
-    return _parse_date(history[0]) if history else None
+    """最後に掃除した日。登録した日ではなく、履歴の「掃除した日」の最新を返す。"""
+    days = history_dates(task)
+    return days[0] if days else None
 
 
 def next_due(task: Dict[str, Any], today: datetime.date) -> datetime.date:
@@ -292,22 +346,60 @@ def mark_done(
     db: Optional[Session] = None,
     *,
     done_on: Optional[datetime.date] = None,
+    recorded_at: Optional[datetime.datetime] = None,
 ) -> Tuple[List[Dict[str, Any]], bool]:
     """掃除をやった記録を足す。戻り値は（保存後の一覧, 見つかったか）。
 
-    同じ日に2回押しても履歴は増えない（`_normalize_history` が重複を落とす）。
+    `done_on` は掃除した日で、省略すると今日。当日に押し忘れた場合は過去の日を渡す。
+    登録日時（`recorded_at`）はこれとは別に、いま押した時刻を持つ（#294）。
+
+    同じ日に2回押しても履歴は増えず、**先に入っていた登録日時も変えない**
+    （`_normalize_history` が同じ日の後ろのほうを落とすので、既存を先に並べる）。
     """
     tasks = get_tasks(db)
-    day = (done_on or get_today_jst()).isoformat()
+    entry = {
+        "date": (done_on or get_today_jst()).isoformat(),
+        "recorded_at": (recorded_at or get_now_jst()).isoformat(),
+    }
 
     found = False
     for task in tasks:
         if task["id"] == task_id:
-            task["history"] = _normalize_history([day, *task["history"]])
+            task["history"] = _normalize_history([*task["history"], entry])
             found = True
             break
 
     if not found:
+        return tasks, False
+
+    if database.DB_MOCK or db is None:
+        return _write_file_tasks(tasks), True
+    return _write_db_tasks(db, tasks), True
+
+
+def remove_done(
+    task_id: str,
+    done_on: datetime.date,
+    db: Optional[Session] = None,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """掃除の記録を1件取り消す。戻り値は（保存後の一覧, 消したか）。
+
+    日付を間違えて登録したときの直し方はこれ1つ（消してから正しい日で登録し直す）。
+    履歴を直接書き換える口を作らないのは、登録日時が実態とずれないようにするため。
+    """
+    tasks = get_tasks(db)
+    target = done_on.isoformat()
+
+    removed = False
+    for task in tasks:
+        if task["id"] != task_id:
+            continue
+        kept = [entry for entry in task["history"] if entry.get("date") != target]
+        removed = len(kept) != len(task["history"])
+        task["history"] = kept
+        break
+
+    if not removed:
         return tasks, False
 
     if database.DB_MOCK or db is None:
