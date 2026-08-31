@@ -1,6 +1,6 @@
 import datetime
 
-from backend import energy, ui_settings
+from backend import database, energy, ui_settings
 
 
 def _rows(values):
@@ -265,3 +265,84 @@ def test_energy_post_accepts_watts(client):
     )
     assert response.status_code == 200
     assert response.json()["status"] == "mock_ok"
+
+
+# ---------------------------------------------------------------- 時間ごと（#300）
+
+
+def _reading(hour, minute, kwh, source="aircon", cost_yen=None, date="2026-08-22"):
+    return {
+        "recorded_at": datetime.datetime.combine(
+            datetime.date.fromisoformat(date), datetime.time(hour, minute)
+        ),
+        "source": source,
+        "kwh": kwh,
+        "cost_yen": cost_yen,
+    }
+
+
+def test_build_hourly_computes_deltas_between_snapshots():
+    readings = [_reading(8, 0, 0.5), _reading(9, 0, 1.2)]
+    result = energy.build_hourly(readings, datetime.date(2026, 8, 22), 31.0)
+
+    hours = {row["hour"]: row for row in result["hours"]}
+    assert result["has_data"] is True
+    assert result["sources"] == ["aircon"]
+    # 8時台の直前にスナップショットが無いので、8時の累計(0.5)がそのままその時間帯の使用量になる
+    assert hours[8]["kwh"] == 0.5
+    assert hours[8]["cost_yen"] == round(energy.resolve_cost(0.5, None, 31.0))
+    assert hours[9]["kwh"] == 0.7
+    # 7時台は最初のスナップショットより前なので「まだ分からない」
+    assert hours[7]["kwh"] is None
+    # 10時台以降は新しいスナップショットが無いので差分0（直近値のまま）
+    assert hours[10]["kwh"] == 0.0
+    assert hours[23]["kwh"] == 0.0
+
+
+def test_build_hourly_splits_by_source():
+    readings = [
+        _reading(8, 0, 0.5, source="aircon"),
+        _reading(8, 0, 0.1, source="tapo:冷蔵庫"),
+    ]
+    result = energy.build_hourly(readings, datetime.date(2026, 8, 22), 31.0)
+    hour8 = next(row for row in result["hours"] if row["hour"] == 8)
+    assert hour8["by_source"] == {"aircon": 0.5, "tapo:冷蔵庫": 0.1}
+    assert hour8["kwh"] == 0.6
+    assert result["sources"] == ["aircon", "tapo:冷蔵庫"]
+
+
+def test_build_hourly_prefers_source_cost_over_unit_price():
+    readings = [_reading(8, 0, 0.5, cost_yen=20.0), _reading(9, 0, 1.2, cost_yen=50.0)]
+    result = energy.build_hourly(readings, datetime.date(2026, 8, 22), 31.0)
+    hours = {row["hour"]: row for row in result["hours"]}
+    assert hours[9]["cost_yen"] == 30  # 実額の差分（50-20）
+
+
+def test_build_hourly_without_readings_has_no_data():
+    result = energy.build_hourly([], datetime.date(2026, 8, 22), 31.0)
+    assert result["has_data"] is False
+    assert result["sources"] == []
+    assert all(row["kwh"] is None for row in result["hours"])
+    assert len(result["hours"]) == 24
+
+
+def test_energy_hourly_requires_auth(client):
+    response = client.get("/api/energy/hourly", params={"date": "2026-08-22"})
+    assert response.status_code == 401
+
+
+def test_energy_hourly_returns_mock_data_for_today(authed_client):
+    today = database._today_jst().isoformat()
+    response = authed_client.get("/api/energy/hourly", params={"date": today})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["date"] == today
+    assert payload["has_data"] is True
+    assert len(payload["hours"]) == 24
+
+
+def test_energy_hourly_reports_no_data_for_old_dates(authed_client):
+    old_date = (database._today_jst() - datetime.timedelta(days=10)).isoformat()
+    response = authed_client.get("/api/energy/hourly", params={"date": old_date})
+    assert response.status_code == 200
+    assert response.json()["has_data"] is False
