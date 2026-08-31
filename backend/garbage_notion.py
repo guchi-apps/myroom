@@ -8,6 +8,12 @@ dayspan など Notion を読むアプリのカレンダーに出すことが目�
 同じ品目は1件しか無いため一意になる。状態ファイルにページIDを持たず、毎回
 Notion 側を引いて差分を取るので、状態を失っても二重登録にならない。
 
+日付プロパティには collection_time（data/garbage.json・既定 08:30）を足した
+`2026-09-01T08:30:00+09:00` の形で書く。dayspan は時刻の有無だけで終日エリアと
+時間グリッドを振り分けるため、時刻を入れるとカレンダーの収集時刻の位置に出る。
+**照合は日付だけで行い、時刻の差は「更新」の理由として扱う**（キーに時刻まで
+入れると、時刻を変えたときに同じ日のページが作り直されてしまう）。
+
 **myroom が書いたページかどうかは select プロパティ「種類」の値で判断する。**
 これが無いと人が手で作ったページと区別できず、範囲外になったページを片付けられない。
 そのため「種類」は必須とし、見つからない場合は1件も書かずに中止する。
@@ -96,15 +102,29 @@ def _build_memo(category: Dict[str, Any], notes: List[str]) -> str:
     return MEMO_SEPARATOR.join(parts)
 
 
+def _collection_start(day: datetime.date, collection_time: datetime.time) -> str:
+    """収集日と収集時刻から、Notion の日付プロパティへ入れる文字列を作る。
+
+    JSTのオフセットを付けた `2026-09-01T08:30:00+09:00` の形。オフセットを省くと
+    Notion 側がユーザーのタイムゾーンで解釈するため、必ず付けて書く。
+    """
+    return datetime.datetime.combine(day, collection_time, tzinfo=garbage.JST).isoformat()
+
+
 def build_entries(config: Dict[str, Any], today: datetime.date) -> List[Dict[str, str]]:
-    """今日から window_days 日先までの、Notion に在るべきページの一覧。"""
+    """今日から window_days 日先までの、Notion に在るべきページの一覧。
+
+    date は照合に使う日付（YYYY-MM-DD）、start は日付プロパティへ書く時刻付きの値。
+    """
     end = today + datetime.timedelta(days=config["notion"]["window_days"])
+    collection_time = garbage.collection_time_of(config)
     entries: List[Dict[str, str]] = []
     for day in garbage.collection_days(config, today, end):
         for category in day["categories"]:
             entries.append(
                 {
                     "date": day["date"].isoformat(),
+                    "start": _collection_start(day["date"], collection_time),
                     "title": category["name"],
                     "memo": _build_memo(category, day["notes"]),
                 }
@@ -177,7 +197,7 @@ def to_notion_properties(
 ) -> Dict[str, Any]:
     properties: Dict[str, Any] = {
         resolved["title"]: {"title": [{"text": {"content": entry["title"]}}]},
-        resolved["date"]: {"date": {"start": entry["date"]}},
+        resolved["date"]: {"date": {"start": entry["start"]}},
         resolved["category"]: {"select": {"name": category_value}},
     }
     if "memo" in resolved:
@@ -221,9 +241,10 @@ def parse_page(page: Any, resolved: Dict[str, str]) -> Optional[Dict[str, str]]:
     memo = _plain_text((memo_property or {}).get("rich_text"))
 
     return {
-        # 時刻付きで入っていても日付だけで照合する（myroom は日付のみで書く）
         "page_id": str(page_id),
+        # 照合は日付だけで行う。時刻の差は plan_changes が「更新」として拾う
         "date": str(date)[:10],
+        "start": str(date),
         "title": title,
         "memo": memo,
     }
@@ -251,11 +272,36 @@ def _build_filter(
 # --- 差分 ---------------------------------------------------------------------
 
 
+def _same_instant(left: str, right: str) -> bool:
+    """日付プロパティの2つの値が同じ時点を指すか。
+
+    Notion が返す値は、書き込んだ文字列と1バイトずつ同じとは限らない
+    （`2026-09-01T08:30:00.000+09:00` のようにミリ秒が付く・オフセットの書き方が変わる）。
+    文字列のまま比べると毎回「変わった」ことになり、同期のたびに全件を更新してしまうため、
+    同じ時点を指すかで比べる。日付のみ（`2026-09-01`）と時刻付きは別物として扱う
+    ——時刻を書くようになる前のページを拾って書き直すのがねらい。
+    """
+    try:
+        return datetime.datetime.fromisoformat(left) == datetime.datetime.fromisoformat(right)
+    except (TypeError, ValueError):
+        return left == right
+
+
+def _needs_update(page: Dict[str, str], entry: Dict[str, str]) -> bool:
+    return page["memo"] != entry["memo"] or not _same_instant(
+        page.get("start", page["date"]), entry["start"]
+    )
+
+
 def plan_changes(
     expected: List[Dict[str, str]],
     existing: List[Dict[str, str]],
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """在るべき一覧と Notion 側の現状から、作成・更新・アーカイブを決める。"""
+    """在るべき一覧と Notion 側の現状から、作成・更新・アーカイブを決める。
+
+    照合キーは（日付, タイトル）のみ。収集時刻を変えたときや、時刻を書くようになる前の
+    ページが残っているときは、作り直さずに更新で直す。
+    """
     expected_by_key = {(entry["date"], entry["title"]): entry for entry in expected}
 
     existing_by_key: Dict[Tuple[str, str], Dict[str, str]] = {}
@@ -272,7 +318,7 @@ def plan_changes(
     update = [
         {**expected_by_key[key], "page_id": page["page_id"]}
         for key, page in existing_by_key.items()
-        if key in expected_by_key and page["memo"] != expected_by_key[key]["memo"]
+        if key in expected_by_key and _needs_update(page, expected_by_key[key])
     ]
     archive = [
         page for key, page in existing_by_key.items() if key not in expected_by_key
