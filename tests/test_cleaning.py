@@ -4,6 +4,11 @@ from backend import cleaning, cleaning_notion
 
 TODAY = datetime.date(2026, 8, 26)
 
+
+def history_dates(task):
+    """履歴の「掃除した日」だけを取り出す。登録日時は実行時刻なので照合しない"""
+    return [entry["date"] for entry in task["history"]]
+
 SAMPLE_TASKS = [
     {
         "id": "kitchen-sink",
@@ -80,7 +85,7 @@ def test_history_is_newest_first_without_duplicates_or_future():
             }
         ]
     )
-    assert tasks[0]["history"] == ["2026-08-23", "2026-08-20"]
+    assert history_dates(tasks[0]) == ["2026-08-23", "2026-08-20"]
 
 
 def test_save_tasks_keeps_history_of_existing_ids(data_dir):
@@ -92,7 +97,7 @@ def test_save_tasks_keeps_history_of_existing_ids(data_dir):
         [{"id": "kitchen-sink", "name": "キッチンのシンク", "interval_days": 5}]
     )
     assert saved[0]["name"] == "キッチンのシンク"
-    assert saved[0]["history"] == ["2026-08-25"]
+    assert history_dates(saved[0]) == ["2026-08-25"]
 
 
 def test_mark_done_twice_in_a_day_does_not_duplicate(data_dir):
@@ -101,13 +106,90 @@ def test_mark_done_twice_in_a_day_does_not_duplicate(data_dir):
     tasks, found = cleaning.mark_done("toilet", done_on=TODAY)
 
     assert found is True
-    assert tasks[0]["history"] == [TODAY.isoformat()]
+    assert history_dates(tasks[0]) == [TODAY.isoformat()]
 
 
 def test_mark_done_reports_unknown_id(data_dir):
     tasks, found = cleaning.mark_done("nope")
     assert found is False
     assert tasks == []
+
+
+# --- 掃除した日と登録した日時（#294） -----------------------------------------
+
+
+def test_mark_done_keeps_done_date_and_recorded_at_apart(data_dir):
+    """当日に押し忘れて翌日に前日ぶんを入れても、掃除した日は前日のまま。"""
+    cleaning.save_tasks([{"id": "sink", "name": "シンク", "interval_days": 3}])
+    recorded = datetime.datetime(2026, 8, 26, 9, 15, tzinfo=cleaning.JST)
+    tasks, _ = cleaning.mark_done(
+        "sink", done_on=datetime.date(2026, 8, 25), recorded_at=recorded
+    )
+
+    assert tasks[0]["history"] == [
+        {"date": "2026-08-25", "recorded_at": "2026-08-26T09:15:00+09:00"}
+    ]
+    # 予定の計算は登録日ではなく掃除した日から数える
+    assert cleaning.last_done(tasks[0]) == datetime.date(2026, 8, 25)
+    assert cleaning.next_due(tasks[0], TODAY) == datetime.date(2026, 8, 28)
+
+
+def test_mark_done_twice_keeps_the_first_recorded_at(data_dir):
+    """同じ日を押し直しても、最初に登録した時刻を上書きしない。"""
+    cleaning.save_tasks([{"id": "sink", "name": "シンク", "interval_days": 3}])
+    first = datetime.datetime(2026, 8, 26, 9, 15, tzinfo=cleaning.JST)
+    later = datetime.datetime(2026, 8, 26, 21, 0, tzinfo=cleaning.JST)
+    cleaning.mark_done("sink", done_on=TODAY, recorded_at=first)
+    tasks, _ = cleaning.mark_done("sink", done_on=TODAY, recorded_at=later)
+
+    assert tasks[0]["history"] == [
+        {"date": TODAY.isoformat(), "recorded_at": "2026-08-26T09:15:00+09:00"}
+    ]
+
+
+def test_old_history_of_plain_dates_is_read_as_unknown_recorded_at():
+    """日付の文字列だけで保存されていた記録も、書き換えずにそのまま読める。"""
+    tasks = cleaning.normalize_tasks(
+        [{"name": "トイレ", "history": ["2026-08-23", {"date": "2026-08-20"}]}]
+    )
+    assert tasks[0]["history"] == [
+        {"date": "2026-08-23", "recorded_at": None},
+        {"date": "2026-08-20", "recorded_at": None},
+    ]
+
+
+def test_recorded_at_without_timezone_is_read_as_jst():
+    tasks = cleaning.normalize_tasks(
+        [
+            {
+                "name": "床",
+                "history": [{"date": "2026-08-23", "recorded_at": "2026-08-24T07:05:00"}],
+            }
+        ]
+    )
+    assert tasks[0]["history"][0]["recorded_at"] == "2026-08-24T07:05:00+09:00"
+
+
+def test_remove_done_deletes_one_record(data_dir):
+    """日付を間違えて登録したときは、その1件を取り消して入れ直す。"""
+    cleaning.save_tasks([{"id": "sink", "name": "シンク", "interval_days": 3}])
+    cleaning.mark_done("sink", done_on=datetime.date(2026, 8, 25))
+    cleaning.mark_done("sink", done_on=datetime.date(2026, 8, 20))
+
+    tasks, removed = cleaning.remove_done("sink", datetime.date(2026, 8, 25))
+    assert removed is True
+    assert history_dates(tasks[0]) == ["2026-08-20"]
+
+    # 保存されているので、取り直しても消えたまま
+    assert history_dates(cleaning.get_tasks()[0]) == ["2026-08-20"]
+
+
+def test_remove_done_reports_unknown_date(data_dir):
+    cleaning.save_tasks([{"id": "sink", "name": "シンク", "interval_days": 3}])
+    cleaning.mark_done("sink", done_on=datetime.date(2026, 8, 25))
+
+    _, removed = cleaning.remove_done("sink", datetime.date(2026, 8, 24))
+    assert removed is False
 
 
 # --- Notion への書き出し ------------------------------------------------------
@@ -341,7 +423,7 @@ def test_sync_creates_updates_archives_and_reads_back(data_dir, monkeypatch):
     assert summary["completed"] == 1
     # 完了を読み戻したので、お風呂は今日やった扱い → 次の期限は 9/2 へ動く
     by_id = {task["id"]: task for task in cleaning.get_tasks()}
-    assert by_id["bath"]["history"] == [TODAY.isoformat()]
+    assert history_dates(by_id["bath"]) == [TODAY.isoformat()]
 
     assert [page_id for page_id, _ in updated] == ["p-bath", "p-toilet"]
     updated_by_id = dict(updated)

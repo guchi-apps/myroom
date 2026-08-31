@@ -28,7 +28,7 @@ const schedule: CleaningSchedule = {
       days_until: -2,
       status: "overdue",
       last_done: "2026-07-25",
-      history: ["2026-07-25"],
+      history: [{ date: "2026-07-25", recorded_at: null }],
     }),
     task({ id: "sink", name: "キッチンのシンク", interval_days: 3 }),
     task({

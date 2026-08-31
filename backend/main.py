@@ -737,6 +737,25 @@ def update_cleaning_tasks(
     return cleaning.build_payload(tasks)
 
 
+def _parse_cleaning_done_date(value: Optional[str]) -> Optional[datetime.date]:
+    """掃除した日を受ける。未指定は None（＝今日）、未来の日と読めない値は400。
+
+    未来の日を黙って落とすと `_normalize_history` が捨てて「押したのに増えない」に
+    見えるので、ここで弾いて理由を返す。
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="date は YYYY-MM-DD で指定してください"
+        ) from None
+    if parsed > cleaning.get_today_jst():
+        raise HTTPException(status_code=400, detail="未来の日付は指定できません")
+    return parsed
+
+
 @app.post("/api/cleaning/tasks/{task_id}/done")
 def mark_cleaning_done(
     task_id: str,
@@ -744,19 +763,34 @@ def mark_cleaning_done(
     db: Session = Depends(database.get_db),
     _: dict = Depends(get_current_user),
 ):
-    """掃除をやった記録を足す。次にやる日はこの日から数え直す。"""
-    done_on = None
-    if body is not None and body.date:
-        try:
-            done_on = datetime.date.fromisoformat(body.date)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="date は YYYY-MM-DD で指定してください"
-            ) from None
+    """掃除をやった記録を足す。次にやる日はこの日から数え直す。
+
+    `date` は「掃除した日」で、省略すると今日（JST）。当日に押し忘れたときのために
+    過去の日を受けるが、**未来の日は受けない**（#294）。登録した日時は別に記録される。
+    """
+    done_on = _parse_cleaning_done_date(body.date if body is not None else None)
 
     tasks, found = cleaning.mark_done(task_id, db, done_on=done_on)
     if not found:
         raise HTTPException(status_code=404, detail="指定された掃除が見つかりません")
+    return cleaning.build_payload(tasks)
+
+
+@app.delete("/api/cleaning/tasks/{task_id}/done/{done_date}")
+def delete_cleaning_done(
+    task_id: str,
+    done_date: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """掃除の記録を1件取り消す。日付を間違えて登録したときの直し方（#294）。"""
+    done_on = _parse_cleaning_done_date(done_date)
+    if done_on is None:
+        raise HTTPException(status_code=400, detail="date は YYYY-MM-DD で指定してください")
+
+    tasks, removed = cleaning.remove_done(task_id, done_on, db)
+    if not removed:
+        raise HTTPException(status_code=404, detail="指定された掃除の記録が見つかりません")
     return cleaning.build_payload(tasks)
 
 

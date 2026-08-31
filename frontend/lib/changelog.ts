@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.6.0",
+    date: "2026-08-31",
+    changes: [
+      "掃除の記録で「掃除した日」を選べるようになりました。当日に記録し忘れても、あとから正しい日付で登録できます。日付を間違えて記録してしまった場合は、その記録を取り消してから登録し直せます。",
+    ],
+  },
+  {
     version: "4.5.1",
     date: "2026-08-30",
     changes: [

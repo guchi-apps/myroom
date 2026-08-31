@@ -27,6 +27,7 @@ import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { AirconControlPanel } from "@/components/aircon-control-panel";
 import {
+  deleteCleaningDone,
   fetchBillsSummary,
   fetchCleaningSchedule,
   fetchDashboardData,
@@ -646,11 +647,31 @@ export function MyRoomDashboard() {
   /**
    * 掃除をやった記録を足す。応答が次の予定まで含んだ一覧なので、
    * 取り直さずにそのまま置き換える。
+   *
+   * `date` は掃除した日。カードの「やった」ボタンは渡さず、サーバーの今日になる。
+   * 詳細シートからは選んだ日が渡る（当日に押し忘れたぶんを後から入れられる・#294）。
    */
-  const handleMarkCleaningDone = useCallback(async (task: CleaningTask) => {
+  const handleMarkCleaningDone = useCallback(async (task: CleaningTask, date?: string) => {
     setCleaningBusyId(task.id);
     try {
-      setCleaningSchedule(await markCleaningDone(task.id));
+      setCleaningSchedule(await markCleaningDone(task.id, date));
+      setCleaningError(false);
+    } catch (err) {
+      if (err instanceof AuthError) {
+        setIsAuthenticated(false);
+        return;
+      }
+      setCleaningError(true);
+    } finally {
+      setCleaningBusyId(null);
+    }
+  }, [setIsAuthenticated]);
+
+  /** 掃除の記録を1件取り消す。日付を間違えて登録したときの直し方（#294） */
+  const handleDeleteCleaningDone = useCallback(async (task: CleaningTask, date: string) => {
+    setCleaningBusyId(task.id);
+    try {
+      setCleaningSchedule(await deleteCleaningDone(task.id, date));
       setCleaningError(false);
     } catch (err) {
       if (err instanceof AuthError) {
@@ -1461,8 +1482,11 @@ export function MyRoomDashboard() {
           today={cleaningSchedule?.today ?? ""}
           busy={cleaningBusyId === activeCleaningTask.id}
           onClose={() => setCleaningTaskId(null)}
-          onMarkDone={(task) => {
-            void handleMarkCleaningDone(task);
+          onMarkDone={(task, date) => {
+            void handleMarkCleaningDone(task, date);
+          }}
+          onDeleteDone={(task, date) => {
+            void handleDeleteCleaningDone(task, date);
           }}
         />
       )}

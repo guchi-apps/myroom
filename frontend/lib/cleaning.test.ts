@@ -8,13 +8,23 @@ import {
   formatCleaningInterval,
   formatHistoryAge,
   formatLastDone,
+  formatMarkDoneLabel,
+  formatRecordedAt,
+  isSelectableDoneDate,
+  shiftDate,
   toCleaningTaskInput,
   visibleHistory,
+  type CleaningHistoryEntry,
   type CleaningSchedule,
   type CleaningTask,
 } from "@/lib/cleaning";
 
 const TODAY = "2026-08-26";
+
+/** 履歴の1件。登録日時を指定しない場合は古い記録（未記録）として扱う */
+function entry(date: string, recordedAt: string | null = null): CleaningHistoryEntry {
+  return { date, recorded_at: recordedAt };
+}
 
 function task(overrides: Partial<CleaningTask> & { id: string; name: string }): CleaningTask {
   return {
@@ -111,9 +121,59 @@ describe("visibleHistory", () => {
     const withHistory = task({
       id: "a",
       name: "a",
-      history: ["2026-08-23", "2026-08-20", "2026-08-17", "2026-08-14"],
+      history: ["2026-08-23", "2026-08-20", "2026-08-17", "2026-08-14"].map((date) =>
+        entry(date)
+      ),
     });
-    expect(visibleHistory(withHistory)).toEqual(["2026-08-23", "2026-08-20", "2026-08-17"]);
+    expect(visibleHistory(withHistory).map((item) => item.date)).toEqual([
+      "2026-08-23",
+      "2026-08-20",
+      "2026-08-17",
+    ]);
+  });
+});
+
+describe("formatRecordedAt", () => {
+  it("掃除した日と登録した日が違う行にだけ出す", () => {
+    expect(
+      formatRecordedAt({ date: "2026-08-25", recorded_at: "2026-08-26T09:15:00+09:00" })
+    ).toBe("登録: 8/26 9:15");
+  });
+
+  it("その場で押した記録には出さない", () => {
+    expect(
+      formatRecordedAt({ date: "2026-08-26", recorded_at: "2026-08-26T09:15:00+09:00" })
+    ).toBeNull();
+  });
+
+  it("登録日時が残っていない古い記録には出さない", () => {
+    expect(formatRecordedAt({ date: "2026-08-25", recorded_at: null })).toBeNull();
+  });
+});
+
+describe("shiftDate", () => {
+  it("月をまたいでも1日ずれない", () => {
+    expect(shiftDate("2026-09-01", -1)).toBe("2026-08-31");
+    expect(shiftDate("2026-01-01", -1)).toBe("2025-12-31");
+  });
+});
+
+describe("formatMarkDoneLabel", () => {
+  it("今日なら日付を出さず、過去日なら日付を出す", () => {
+    expect(formatMarkDoneLabel(TODAY, TODAY)).toBe("今日 掃除した");
+    expect(formatMarkDoneLabel("2026-08-25", TODAY)).toBe("8/25 に掃除した");
+  });
+});
+
+describe("isSelectableDoneDate", () => {
+  it("今日と過去は選べる", () => {
+    expect(isSelectableDoneDate(TODAY, TODAY)).toBe(true);
+    expect(isSelectableDoneDate("2026-08-25", TODAY)).toBe(true);
+  });
+
+  it("未来と、さかのぼりすぎは選べない", () => {
+    expect(isSelectableDoneDate("2026-08-27", TODAY)).toBe(false);
+    expect(isSelectableDoneDate("2026-01-01", TODAY)).toBe(false);
   });
 });
 
