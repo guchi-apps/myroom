@@ -48,6 +48,21 @@ def write_config(data_dir, config=None):
     )
 
 
+def expected_entry(date, title, memo="", start=None):
+    """build_entries が返す1件ぶん。"""
+    return {
+        "date": date,
+        "start": start or f"{date}T08:30:00+09:00",
+        "title": title,
+        "memo": memo,
+    }
+
+
+def existing_page(page_id, date, title, memo="", start=None):
+    """parse_page が返す1件ぶん。"""
+    return {**expected_entry(date, title, memo, start), "page_id": page_id}
+
+
 def notion_page(page_id, date, title, memo=""):
     """Notion のクエリ結果1件ぶん。parse_page が読む形に合わせる。"""
     return {
@@ -132,6 +147,16 @@ def test_build_entries_creates_one_entry_per_category_and_day(config):
     assert entries[0]["memo"] == "生ごみ"
     assert entries[2]["memo"] == "生ごみ／振替収集"
     assert entries[1]["memo"] == ""
+    # 日付プロパティへ書く値は collection_time（既定 08:30）を足したJST付きのISO
+    assert entries[0]["start"] == "2026-08-11T08:30:00+09:00"
+
+
+def test_build_entries_uses_the_configured_collection_time(data_dir):
+    """収集時刻を変えたら、Notion へ書く時刻もそちらへ揃う。"""
+    write_config(data_dir, {**SAMPLE_CONFIG, "collection_time": "9:15"})
+    entries = garbage_notion.build_entries(garbage.load_config(), datetime.date(2026, 8, 11))
+
+    assert entries[0]["start"] == "2026-08-11T09:15:00+09:00"
 
 
 # --- プロパティの解決 ---------------------------------------------------------
@@ -181,11 +206,16 @@ def test_resolve_properties_requires_the_category_property(config):
     assert "種類" in errors[0]
 
 
-def test_to_notion_properties_writes_date_only(config):
-    entry = {"date": "2026-08-11", "title": "普通ごみ", "memo": "生ごみ"}
+def test_to_notion_properties_writes_the_collection_time(config):
+    entry = {
+        "date": "2026-08-11",
+        "start": "2026-08-11T08:30:00+09:00",
+        "title": "普通ごみ",
+        "memo": "生ごみ",
+    }
     properties = garbage_notion.to_notion_properties(entry, RESOLVED, "ゴミの日")
 
-    assert properties["日付"] == {"date": {"start": "2026-08-11"}}
+    assert properties["日付"] == {"date": {"start": "2026-08-11T08:30:00+09:00"}}
     assert properties["タイトル"]["title"][0]["text"]["content"] == "普通ごみ"
     assert properties["種類"] == {"select": {"name": "ゴミの日"}}
     assert properties["メモ"]["rich_text"][0]["text"]["content"] == "生ごみ"
@@ -196,33 +226,62 @@ def test_to_notion_properties_writes_date_only(config):
 
 def test_plan_changes_creates_updates_and_archives():
     expected = [
-        {"date": "2026-08-11", "title": "普通ごみ", "memo": "生ごみ"},
-        {"date": "2026-08-12", "title": "資源ごみ", "memo": "振替収集"},
+        expected_entry("2026-08-11", "普通ごみ", "生ごみ"),
+        expected_entry("2026-08-12", "資源ごみ", "振替収集"),
     ]
     existing = [
         # メモが変わった -> 更新
-        {"page_id": "p2", "date": "2026-08-12", "title": "資源ごみ", "memo": ""},
+        existing_page("p2", "2026-08-12", "資源ごみ"),
         # 中止になって期待から消えた -> アーカイブ
-        {"page_id": "p3", "date": "2026-08-14", "title": "普通ごみ", "memo": ""},
+        existing_page("p3", "2026-08-14", "普通ごみ"),
     ]
     changes = garbage_notion.plan_changes(expected, existing)
 
     assert [entry["date"] for entry in changes["create"]] == ["2026-08-11"]
     assert changes["update"] == [
-        {"page_id": "p2", "date": "2026-08-12", "title": "資源ごみ", "memo": "振替収集"}
+        {**expected_entry("2026-08-12", "資源ごみ", "振替収集"), "page_id": "p2"}
     ]
     assert [page["page_id"] for page in changes["archive"]] == ["p3"]
 
 
 def test_plan_changes_leaves_unchanged_pages_alone():
-    entry = {"date": "2026-08-11", "title": "普通ごみ", "memo": "生ごみ"}
+    entry = expected_entry("2026-08-11", "普通ごみ", "生ごみ")
     changes = garbage_notion.plan_changes([entry], [{**entry, "page_id": "p1"}])
     assert changes == {"create": [], "update": [], "archive": []}
 
 
+def test_plan_changes_ignores_notions_millisecond_form():
+    """返ってくる値は書いた文字列と同一とは限らない。文字列で比べると毎回全件更新になる。"""
+    entry = expected_entry("2026-08-11", "普通ごみ", "生ごみ")
+    page = {**entry, "page_id": "p1", "start": "2026-08-11T08:30:00.000+09:00"}
+
+    assert garbage_notion.plan_changes([entry], [page])["update"] == []
+
+
+def test_plan_changes_updates_pages_written_before_the_time_was_added():
+    """時刻を書くようになる前のページは、作り直さずに更新で直す。"""
+    entry = expected_entry("2026-08-11", "普通ごみ", "生ごみ")
+    page = {**entry, "page_id": "p1", "start": "2026-08-11"}
+
+    changes = garbage_notion.plan_changes([entry], [page])
+
+    assert changes["create"] == [] and changes["archive"] == []
+    assert changes["update"] == [{**entry, "page_id": "p1"}]
+
+
+def test_plan_changes_updates_when_the_collection_time_changes():
+    entry = expected_entry("2026-08-11", "普通ごみ", "生ごみ")
+    page = {**entry, "page_id": "p1", "start": "2026-08-11T08:30:00+09:00"}
+    entry = {**entry, "start": "2026-08-11T09:15:00+09:00"}
+
+    assert garbage_notion.plan_changes([entry], [page])["update"] == [
+        {**entry, "page_id": "p1"}
+    ]
+
+
 def test_plan_changes_archives_duplicate_pages():
     """同期が途中で落ちて同じ日・同じ品目が2件できたら、余分な方を片付ける。"""
-    entry = {"date": "2026-08-11", "title": "普通ごみ", "memo": ""}
+    entry = expected_entry("2026-08-11", "普通ごみ")
     changes = garbage_notion.plan_changes(
         [entry], [{**entry, "page_id": "p1"}, {**entry, "page_id": "p2"}]
     )
@@ -230,13 +289,14 @@ def test_plan_changes_archives_duplicate_pages():
     assert [page["page_id"] for page in changes["archive"]] == ["p2"]
 
 
-def test_parse_page_reads_date_only_from_a_datetime():
+def test_parse_page_keeps_the_date_for_matching_and_the_start_as_written():
     parsed = garbage_notion.parse_page(
         notion_page("p1", "2026-08-11T08:00:00+09:00", "普通ごみ", "生ごみ"), RESOLVED
     )
     assert parsed == {
         "page_id": "p1",
         "date": "2026-08-11",
+        "start": "2026-08-11T08:00:00+09:00",
         "title": "普通ごみ",
         "memo": "生ごみ",
     }
@@ -265,7 +325,7 @@ def test_sync_creates_missing_pages(data_dir, monkeypatch, notion_env):
         "dry_run": False,
     }
     assert len(fake.created) == 4
-    assert fake.created[0]["日付"] == {"date": {"start": "2026-08-11"}}
+    assert fake.created[0]["日付"] == {"date": {"start": "2026-08-11T08:30:00+09:00"}}
     assert fake.updated == []
     assert fake.archived == []
 
@@ -290,9 +350,12 @@ def test_sync_updates_and_archives(data_dir, monkeypatch, notion_env):
     write_config(data_dir)
     fake = FakeNotion(
         pages=[
-            notion_page("p1", "2026-08-11", "普通ごみ", "生ごみ"),  # そのまま
-            notion_page("p2", "2026-08-16", "普通ごみ", "生ごみ"),  # メモが古い -> 更新
-            notion_page("p3", "2026-08-14", "普通ごみ", "生ごみ"),  # 中止された -> アーカイブ
+            # そのまま
+            notion_page("p1", "2026-08-11T08:30:00.000+09:00", "普通ごみ", "生ごみ"),
+            # メモが古い -> 更新
+            notion_page("p2", "2026-08-16T08:30:00.000+09:00", "普通ごみ", "生ごみ"),
+            # 中止された -> アーカイブ
+            notion_page("p3", "2026-08-14T08:30:00.000+09:00", "普通ごみ", "生ごみ"),
         ]
     ).install(monkeypatch)
 
@@ -304,6 +367,21 @@ def test_sync_updates_and_archives(data_dir, monkeypatch, notion_env):
     assert fake.updated[0][0] == "p2"
     assert fake.updated[0][1]["メモ"]["rich_text"][0]["text"]["content"] == "生ごみ／振替収集"
     assert fake.archived == ["p3"]
+
+
+def test_sync_rewrites_pages_that_have_no_time_yet(data_dir, monkeypatch, notion_env):
+    """時刻を書くようになる前のページは、アーカイブせず更新で時刻を足す。"""
+    write_config(data_dir)
+    fake = FakeNotion(
+        pages=[notion_page("p1", "2026-08-11", "普通ごみ", "生ごみ")]
+    ).install(monkeypatch)
+
+    summary = garbage_notion.sync(datetime.date(2026, 8, 11))
+
+    assert summary["updated"] == 1
+    assert summary["archived"] == 0
+    assert fake.updated[0][0] == "p1"
+    assert fake.updated[0][1]["日付"] == {"date": {"start": "2026-08-11T08:30:00+09:00"}}
 
 
 def test_sync_is_a_no_op_the_second_time(data_dir, monkeypatch, notion_env):
