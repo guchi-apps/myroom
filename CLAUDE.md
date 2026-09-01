@@ -379,6 +379,10 @@ secret / variable で、1Passwordは「人が管理する唯一の正」とし�
   **後者は個人アカウントのセッションが必要**（サービスアカウントではGitHubへ書き込めない）
 - `OP_SERVICE_ACCOUNT_TOKEN` のrepository secretは残してある。使うのは上記の同期のときだけで、
   デプロイでは使わない
+- **secretの値は必ず1行に収める。** `deploy.yml`の`sync_env_var`は`printf '%s=%s\n'`で本番の
+  `.env`へ書くため、改行を含む値（PEM・秘密鍵・JSON）を入れると`.env`の書式そのものが壊れ、
+  python-dotenvが2行目以降を**別のキー**として読む（#337でVAPID秘密鍵に実際に該当した）。
+  複数行になる値は、base64などの1行の表現に直してから1Passwordへ入れること
 
 ## デプロイ後のヘルスチェック
 
