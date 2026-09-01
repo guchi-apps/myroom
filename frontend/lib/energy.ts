@@ -274,6 +274,14 @@ export const KEPCO_OTHER_SOURCE = "kepco_other";
 export const KEPCO_OTHER_LABEL = "その他";
 export const KEPCO_OTHER_COLOR = "#95a5a6";
 
+/**
+ * KEPCO「みるでん」の、時間ごとCSVのダウンロードページ（#317）。
+ *
+ * 取り込むCSVはここでしか手に入らないため、取り込みボタンの隣にリンクとして出す。
+ * 入口を増やすと片方が古くなるので、貼るのはこの1か所だけにする。
+ */
+export const KEPCO_MIRUDEN_DOWNLOAD_URL = "https://kepco.jp/miruden/mypage/download";
+
 export interface EnergyHourlySegment {
   source: string;
   label: string;
