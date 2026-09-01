@@ -143,6 +143,11 @@ export interface UiSettings {
   light_thresholds: Record<string, number>;
   /** 電気料金の単価（円/kWh）。使用量に掛けて電気代の目安を出す */
   energy_unit_price: number;
+  /**
+   * 消費電力の取得元（`tapo:冷蔵庫`）-> 画面に出す別名（#335）。
+   * 既定の名前（Tapoアプリで付けた名前）のままの取得元は入らない
+   */
+  energy_source_names: Record<string, string>;
   /** 「電気の操作」のボタンID -> 付けた名前・隠す指定。既定のままのボタンは入らない */
   remote_buttons: Record<string, RemoteButtonSetting>;
   /** ゴミの日のPush通知を送るか（#293） */
@@ -192,8 +197,13 @@ export interface EnergyTotal {
 export interface EnergySourceRow {
   /** `aircon` / `tapo:冷蔵庫` */
   source: string;
-  /** 画面に出す名前。`tapo:` は落とし、`aircon` は「エアコン」になる */
+  /** 画面に出す名前。別名を付けていればそれ、無ければ `default_label` と同じ */
   label: string;
+  /**
+   * 別名を当てる前の名前（#335）。`tapo:` を落としただけの、Tapoアプリで付けた名前。
+   * 設定画面が「Tapoの名前」を出すのと、上書き中かどうかの判定に使う
+   */
+  default_label: string;
   today_kwh: number | null;
   today_cost_yen: number | null;
   /** いまの消費電力（W）。返すのはスマートプラグだけで、エアコンは null */

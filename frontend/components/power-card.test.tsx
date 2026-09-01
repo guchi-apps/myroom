@@ -9,6 +9,7 @@ const breakdown: EnergyBreakdown = {
     {
       source: "aircon",
       label: "エアコン",
+      default_label: "エアコン",
       today_kwh: 1.86,
       today_cost_yen: 57.7,
       power_w: null,
@@ -18,6 +19,7 @@ const breakdown: EnergyBreakdown = {
     {
       source: "tapo:冷蔵庫",
       label: "冷蔵庫",
+      default_label: "冷蔵庫",
       today_kwh: 0.86,
       today_cost_yen: 26.7,
       power_w: 38.2,

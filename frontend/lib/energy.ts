@@ -122,6 +122,21 @@ const PLUG_COLOR_PALETTE = CHART_COLOR_PALETTE.filter(
 
 export const AIRCON_ENERGY_SOURCE = "aircon";
 
+/** スマートプラグの取得元に付く前置き。`backend/energy.py` の `TAPO_SOURCE_PREFIX` と同じ */
+export const TAPO_SOURCE_PREFIX = "tapo:";
+
+/**
+ * 名前を付け替えられる取得元だけを抜き出す（#335）。
+ *
+ * エアコンの名前は「いまの環境の設定」が持っており、KEPCOの「その他」は機器ですらない。
+ * ここで扱うのはスマートプラグだけに絞る。
+ */
+export function pickRenamableEnergySources(
+  sources: readonly EnergySourceRow[]
+): EnergySourceRow[] {
+  return sources.filter((row) => row.source.startsWith(TAPO_SOURCE_PREFIX));
+}
+
 // ------------------------------------------------------------ KEPCO「その他」（#302／#319）
 //
 // KEPCO CSV実測（家全体）とエアコン・スマートプラグ実測の差分。`backend/energy.py` の
