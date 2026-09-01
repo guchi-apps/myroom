@@ -19,6 +19,9 @@ export interface LatestData {
   outdoor_temperature?: number;
   outdoor_humidity?: number;
   outdoor_pressure?: number;
+  outdoor_weather_code?: number | null;
+  outdoor_weather_label?: string | null;
+  outdoor_weather_icon?: string | null;
 }
 
 export interface SensorRecord {
@@ -88,17 +91,38 @@ export interface OutdoorLocation {
   name: string;
 }
 
+/** 登録済みの屋外地点（#308で複数登録に対応） */
+export interface OutdoorLocationEntry {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  is_primary: boolean;
+}
+
+/** 特定の地点の「いまの天気」（#308） */
+export interface OutdoorLocationWeather {
+  id: string;
+  name: string;
+  temperature: number | null;
+  humidity: number | null;
+  pressure: number | null;
+  weather_code: number | null;
+  weather_label: string | null;
+  weather_icon: string | null;
+  observed_at: string | null;
+}
+
 export interface DeviceInfo {
   id: number;
   name: string;
   inherits_from?: number | null;
 }
 
-/** Open-Meteo 等 API から取得する屋外気象データの表示ラベル */
+/** 屋外地点の表示名。以前は「地点データ(場所名)」の形だったが、冗長なため場所名だけにする（#308） */
 export function formatOutdoorApiLabel(locationName?: string | null): string {
   const trimmed = locationName?.trim();
-  if (trimmed) return `地点データ(${trimmed})`;
-  return "地点データ(未登録)";
+  return trimmed || "地点未登録";
 }
 
 export interface UiSettings {
@@ -121,6 +145,36 @@ export interface UiSettings {
   energy_unit_price: number;
   /** 「電気の操作」のボタンID -> 付けた名前・隠す指定。既定のままのボタンは入らない */
   remote_buttons: Record<string, RemoteButtonSetting>;
+  /** ゴミの日のPush通知を送るか（#293） */
+  garbage_notify_enabled: boolean;
+  /** ゴミの日の通知時刻（"HH:MM"）。null は未設定（data/garbage.json の既定を使う） */
+  garbage_notify_time: string | null;
+  /** 室温・湿度の異常をPush通知するか */
+  room_anomaly_notify_enabled: boolean;
+  /** 指標ごとの上限・下限 */
+  room_anomaly_thresholds: {
+    temperature: { min: number; max: number };
+    humidity: { min: number; max: number };
+  };
+  /** 同じ異常が続く間の再通知間隔（分） */
+  room_anomaly_reminder_minutes: number;
+}
+
+export interface PushVapidPublicKeyResponse {
+  publicKey: string;
+  configured: boolean;
+}
+
+export interface PushSubscribeBody {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  expirationTime?: number | null;
+}
+
+export interface PushTestResult {
+  status: string;
+  sent: number;
+  total: number;
 }
 
 export interface EnergyTotal {
@@ -201,6 +255,15 @@ export interface EnergyHourly {
   /** false の場合、この日はまだ時間ごとの記録が無い（機能をリリースする前の日など） */
   has_data: boolean;
   hours: EnergyHourlyHour[];
+}
+
+/** KEPCO「みるでん」CSVの取り込み結果。`POST /api/energy/kepco/import` の戻り */
+export interface EnergyKepcoImportResult {
+  status: "ok" | "mock_ok";
+  imported_rows: number;
+  imported_days: number;
+  period_start: string | null;
+  period_end: string | null;
 }
 
 /** `today` / `yesterday` / `daily` の1件。取得元が値を返さなかった日は kwh が null */

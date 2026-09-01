@@ -15,13 +15,19 @@ import {
   type DeviceInfo,
   type EnergyBreakdown,
   type EnergyHourly,
+  type EnergyKepcoImportResult,
   type EnergySourceSummary,
   type HistoryPoint,
   type LatestData,
   type OutdoorLocation,
+  type OutdoorLocationEntry,
   type OutdoorLocationSearchResult,
+  type OutdoorLocationWeather,
   type SensorRecordsResponse,
   type SensorsStatusResponse,
+  type PushVapidPublicKeyResponse,
+  type PushSubscribeBody,
+  type PushTestResult,
   type TimeRange,
   type ChartViewRange,
   type UiSettings,
@@ -97,6 +103,45 @@ export async function updateUiSettings(
   return res.json() as Promise<UiSettings>;
 }
 
+export async function fetchPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {
+  return fetchJson<PushVapidPublicKeyResponse>("/api/push/vapid-public-key");
+}
+
+export async function subscribePushNotifications(
+  subscription: PushSubscribeBody
+): Promise<void> {
+  const res = await fetchWithAuth("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(subscription),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function unsubscribePushNotifications(endpoint: string): Promise<void> {
+  const res = await fetchWithAuth("/api/push/subscribe", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function sendTestPushNotification(): Promise<PushTestResult> {
+  const res = await fetchWithAuth("/api/push/test", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<PushTestResult>;
+}
+
 export async function fetchLatest(deviceId = PRIMARY_SENSOR_DEVICE_ID): Promise<LatestData> {
   return fetchJson<LatestData>(`/api/latest?device=${deviceId}`);
 }
@@ -125,7 +170,8 @@ export async function fetchHistory(
 export async function fetchOutdoorHistoryWindow(
   start: Date,
   end: Date,
-  viewRange: ChartViewRange
+  viewRange: ChartViewRange,
+  locationId?: string | null
 ): Promise<HistoryPoint[]> {
   const params = new URLSearchParams({
     start: toApiDateTime(start),
@@ -133,6 +179,9 @@ export async function fetchOutdoorHistoryWindow(
   });
   if (viewRange === "year") {
     params.set("range", "year");
+  }
+  if (locationId) {
+    params.set("location_id", locationId);
   }
   const data = await fetchJson<Record<string, unknown>[]>(
     `/api/outdoor-history?${params.toString()}`
@@ -325,6 +374,79 @@ export async function searchOutdoorLocations(
     `/api/outdoor-location/search?${params}`
   );
   return data.results;
+}
+
+interface OutdoorLocationInput {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+async function outdoorLocationRequest(
+  url: string,
+  init: RequestInit
+): Promise<OutdoorLocationEntry> {
+  const res = await fetchWithAuth(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init.headers },
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<OutdoorLocationEntry>;
+}
+
+/** 登録済みの屋外地点の一覧（#308） */
+export async function fetchOutdoorLocations(): Promise<OutdoorLocationEntry[]> {
+  const data = await fetchJson<{ locations: OutdoorLocationEntry[] }>(
+    "/api/outdoor-locations"
+  );
+  return data.locations;
+}
+
+export async function createOutdoorLocation(
+  input: OutdoorLocationInput
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest("/api/outdoor-locations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateOutdoorLocationById(
+  id: string,
+  input: OutdoorLocationInput
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest(`/api/outdoor-locations/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteOutdoorLocation(id: string): Promise<void> {
+  const res = await fetchWithAuth(`/api/outdoor-locations/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function setPrimaryOutdoorLocation(
+  id: string
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest(`/api/outdoor-locations/${id}/primary`, {
+    method: "PUT",
+  });
+}
+
+/** 指定した地点の「いまの天気」（#308） */
+export async function fetchOutdoorLocationWeather(
+  id: string
+): Promise<OutdoorLocationWeather> {
+  return fetchJson<OutdoorLocationWeather>(`/api/outdoor-locations/${id}/weather`);
 }
 
 export async function fetchSensorRecords(
@@ -550,6 +672,21 @@ export async function fetchEnergySummary(
 ): Promise<EnergySourceSummary> {
   const params = new URLSearchParams({ source, days: String(days) });
   return fetchJson<EnergySourceSummary>(`/api/energy/summary?${params.toString()}`);
+}
+
+/** KEPCO「みるでん」の時間ごとCSVを取り込む。「その他」（#302）の元データになる */
+export async function importKepcoCsv(file: File): Promise<EnergyKepcoImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchWithAuth("/api/energy/kepco/import", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<EnergyKepcoImportResult>;
 }
 
 /** 電気・ガス料金カード用。はぴeみる電のメール由来の月次請求を取る */

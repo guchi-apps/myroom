@@ -2,8 +2,10 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { ChevronRight, CloudSun, LineChart, RefreshCw } from "lucide-react";
+import { ChevronRight, LineChart, RefreshCw } from "lucide-react";
+import { WeatherIcon } from "@/lib/weather-icon";
 import { AppSettingsSheet } from "@/components/app-settings-sheet";
+import { NotificationSettingsSheet } from "@/components/notification-settings-sheet";
 import { LifeSettingsSheet } from "@/components/life-settings-sheet";
 import { RemoteButtonSettingsSheet } from "@/components/remote-button-settings-sheet";
 import { SettingsIconButton } from "@/components/ui/settings-icon-button";
@@ -342,6 +344,7 @@ export function MyRoomDashboard() {
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [sensorStatuses, setSensorStatuses] = useState<SensorDeviceStatus[]>([]);
   const [garbageSchedule, setGarbageSchedule] = useState<GarbageSchedule | null>(null);
   const [garbageError, setGarbageError] = useState(false);
@@ -1158,7 +1161,8 @@ export function MyRoomDashboard() {
                       key="outdoor"
                       title={formatOutdoorApiLabel(outdoorLocation?.name)}
                       titleIcon={
-                        <CloudSun
+                        <WeatherIcon
+                          icon={outdoorLatest?.outdoor_weather_icon}
                           className="size-4 shrink-0 text-muted-foreground"
                           strokeWidth={1.75}
                         />
@@ -1169,6 +1173,13 @@ export function MyRoomDashboard() {
                         outdoorLoadStatus,
                         dashboardDataLoaded
                       )}
+                      badge={
+                        outdoorLatest?.outdoor_weather_label ? (
+                          <span className="inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
+                            {outdoorLatest.outdoor_weather_label}
+                          </span>
+                        ) : undefined
+                      }
                       action={
                         <ChevronRight
                           className="size-5 shrink-0 text-muted-foreground/60"
@@ -1391,7 +1402,19 @@ export function MyRoomDashboard() {
           setAppSettingsOpen(false);
           setVersionHistoryOpen(true);
         }}
+        onOpenNotificationSettings={() => {
+          setAppSettingsOpen(false);
+          setNotificationSettingsOpen(true);
+        }}
       />
+
+      {/* 設定シートの上に重ねる。閉じると設定へ戻る */}
+      {notificationSettingsOpen ? (
+        <NotificationSettingsSheet
+          open={notificationSettingsOpen}
+          onClose={() => setNotificationSettingsOpen(false)}
+        />
+      ) : null}
 
       <TrendPanel
         open={trendPanelOpen}

@@ -112,6 +112,27 @@ class EnergyReadingRecord(Base):
     power_w = Column(Float, nullable=True)
 
 
+class KepcoHourlyUsageRecord(Base):
+    """KEPCO「みるでん」からダウンロードしたCSV由来の、家全体の時間ごと実測（#302）。
+
+    `energy_readings` と違い累計スナップショットではなく、その時間帯に使った実測値を
+    そのまま持つ（KEPCOのCSV自体がその形で配っているため）。エアコン・スマートプラグの
+    実測との差分は `backend/energy.py` の `build_hourly` が「その他」として組み立てる。
+
+    KEPCOのCSVはローリングウィンドウ（直近1か月強）なので、ユーザーは定期的に
+    再ダウンロード・再取り込みする想定。`(date, hour)` で upsert するため、
+    期間が重なっても二重計上しない。
+    """
+
+    __tablename__ = "kepco_hourly_usage"
+
+    date = Column(Date, primary_key=True)
+    hour = Column(Integer, primary_key=True)
+
+    kwh = Column(Float, nullable=False)
+    imported_at = Column(DateTime, nullable=True)
+
+
 class UtilityBillRecord(Base):
     """月ごとの確定請求（電気・ガス）。はぴeみる電のお知らせメール由来。
 
@@ -413,6 +434,30 @@ def generate_mock_energy_readings(date: datetime.date) -> list:
                 }
             )
     return rows
+
+
+def generate_mock_kepco_hourly(date: datetime.date, days: int = 40) -> list:
+    """モック用のKEPCO時間ごと実測（家全体）。
+
+    デバイスの実測より一回り大きい値にして、`build_hourly` の「その他」差分が
+    常にプラスで出るようにする（過去分もKEPCO側は遡って取り込める想定なので、
+    `generate_mock_energy_readings` と違い直近1〜2日に絞らない）。
+    """
+    today = _today_jst()
+    if date > today or date < today - datetime.timedelta(days=days):
+        return []
+
+    seasonal = 1.0 + 0.8 * abs(math.sin((date.timetuple().tm_yday / 365) * 2 * math.pi))
+    daily_total = max(0.0, seasonal * (4.2 + random.uniform(-1.2, 2.0)))
+    weight_sum = sum(HOURLY_ENERGY_WEIGHTS) or 1.0
+
+    return [
+        {
+            "hour": hour,
+            "kwh": round(daily_total * (weight / weight_sum), 3),
+        }
+        for hour, weight in enumerate(HOURLY_ENERGY_WEIGHTS)
+    ]
 
 
 #: モックの請求（電気）。(請求月からさかのぼる月数, 金額, kWh)。

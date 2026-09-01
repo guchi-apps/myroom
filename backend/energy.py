@@ -24,6 +24,11 @@ DEFAULT_SOURCE = "aircon"
 #: 「種別:識別子」の形にしておくと、機器が増えても列を足さずに済む。
 TAPO_SOURCE_PREFIX = "tapo:"
 
+#: KEPCO実測とエアコン・スマートプラグ実測の差分（#302）に使う疑似 source。
+#: 実体のある機器ではないため `daily_energy`/`energy_readings` には保存せず、
+#: 時間ごと表示（`build_hourly`）が算出のたびに組み立てる。
+KEPCO_OTHER_SOURCE = "kepco_other"
+
 #: ダッシュボードのカードが使う日別データの本数（直近30日ぶん）
 DEFAULT_HISTORY_DAYS = 30
 
@@ -36,6 +41,8 @@ def source_label(source: str) -> str:
     """
     if source == DEFAULT_SOURCE:
         return "エアコン"
+    if source == KEPCO_OTHER_SOURCE:
+        return "その他"
     if source.startswith(TAPO_SOURCE_PREFIX):
         return source[len(TAPO_SOURCE_PREFIX) :] or source
     return source
@@ -542,16 +549,29 @@ def build_hourly(
     readings: Sequence[Dict[str, Any]],
     date: datetime.date,
     unit_price: float,
+    kepco_hours: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """1日ぶんの時系列スナップショットから時間帯ごとの内訳を組み立てる。DBアクセスを含まない。"""
+    """1日ぶんの時系列スナップショットから時間帯ごとの内訳を組み立てる。DBアクセスを含まない。
+
+    `kepco_hours`（KEPCO CSV由来の時間ごと実測、#302）を渡すと、その時間帯の
+    エアコン・スマートプラグ実測との差分を `KEPCO_OTHER_SOURCE`（「その他」）として
+    積み増す。KEPCO実測のほうが小さい（測定誤差・端数処理由来）ときは0に丸め、
+    マイナスにはしない。
+    """
     by_source: Dict[str, List[Dict[str, Any]]] = {}
     for row in readings:
         by_source.setdefault(row["source"], []).append(row)
     for source, rows in by_source.items():
         by_source[source] = sorted(rows, key=lambda r: r["recorded_at"])
 
-    has_data = any(by_source.values())
+    kepco_by_hour: Dict[int, float] = {
+        row["hour"]: float(row["kwh"]) for row in (kepco_hours or []) if row.get("kwh") is not None
+    }
+
+    has_data = any(by_source.values()) or bool(kepco_by_hour)
     sources = sorted(by_source.keys())
+    if kepco_by_hour:
+        sources.append(KEPCO_OTHER_SOURCE)
 
     hours: List[Dict[str, Any]] = []
     for hour in range(24):
@@ -583,6 +603,17 @@ def build_hourly(
                 hour_cost += cost
             any_value = True
 
+        kepco_kwh = kepco_by_hour.get(hour)
+        if kepco_kwh is not None:
+            other_kwh = max(0.0, kepco_kwh - hour_kwh)
+            if other_kwh > 0:
+                by_source_kwh[KEPCO_OTHER_SOURCE] = round(other_kwh, 3)
+                hour_kwh += other_kwh
+                other_cost = resolve_cost(other_kwh, None, unit_price)
+                if other_cost is not None:
+                    hour_cost += other_cost
+            any_value = True
+
         hours.append(
             {
                 "hour": hour,
@@ -601,12 +632,24 @@ def build_hourly(
     }
 
 
+def _fetch_kepco_hours(db: Session, date: datetime.date) -> List[Dict[str, Any]]:
+    rows = (
+        db.query(database.KepcoHourlyUsageRecord)
+        .filter(database.KepcoHourlyUsageRecord.date == date)
+        .order_by(database.KepcoHourlyUsageRecord.hour.asc())
+        .all()
+    )
+    return [{"hour": row.hour, "kwh": row.kwh} for row in rows]
+
+
 def get_hourly(db: Optional[Session], date: datetime.date) -> Dict[str, Any]:
     unit_price = get_unit_price(db)
 
     if database.DB_MOCK or db is None:
         readings = database.generate_mock_energy_readings(date)
+        kepco_hours = database.generate_mock_kepco_hourly(date)
     else:
         readings = _fetch_readings(db, date)
+        kepco_hours = _fetch_kepco_hours(db, date)
 
-    return build_hourly(readings, date, unit_price)
+    return build_hourly(readings, date, unit_price, kepco_hours=kepco_hours)

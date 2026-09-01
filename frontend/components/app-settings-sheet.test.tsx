@@ -11,6 +11,7 @@ function render(open: boolean) {
       onReload={() => {}}
       onLogout={() => {}}
       onOpenVersionHistory={() => {}}
+      onOpenNotificationSettings={() => {}}
     />
   );
 }
@@ -26,6 +27,10 @@ describe("AppSettingsSheet", () => {
     expect(html).toContain("ログアウト");
     expect(html).toContain(`バージョン ${APP_VERSION}`);
     expect(html).toContain("更新履歴");
+  });
+
+  it("通知設定への入口を出す（#293）", () => {
+    expect(render(true)).toContain("通知設定");
   });
 
   it("再読み込みが「表示が崩れたとき用」だと分かる説明を添える", () => {

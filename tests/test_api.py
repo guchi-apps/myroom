@@ -27,6 +27,8 @@ def test_latest_returns_mock_data(authed_client):
     assert isinstance(data["temperature"], float)
     assert isinstance(data["illuminance"], float)
     assert data["outdoor_temperature"] == 25.0
+    assert data["outdoor_weather_label"] == "晴れ"
+    assert data["outdoor_weather_icon"] == "sun"
 
 
 def test_latest_rejects_invalid_device(authed_client):
@@ -242,6 +244,119 @@ def test_outdoor_location_search(authed_client):
     results = response.json()["results"]
     assert len(results) == 1
     assert results[0]["name"] == "大阪"
+
+
+def test_outdoor_locations_list_starts_with_one(authed_client):
+    response = authed_client.get("/api/outdoor-locations")
+    assert response.status_code == 200
+    locations = response.json()["locations"]
+    assert len(locations) == 1
+    assert locations[0]["is_primary"] is True
+
+
+def test_outdoor_locations_add_and_list(authed_client):
+    response = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    )
+    assert response.status_code == 200
+    created = response.json()
+    assert created["name"] == "実家"
+    assert created["is_primary"] is False
+
+    listed = authed_client.get("/api/outdoor-locations").json()["locations"]
+    assert len(listed) == 2
+
+
+def test_outdoor_locations_update(authed_client):
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+
+    response = authed_client.put(
+        f"/api/outdoor-locations/{created['id']}",
+        json={"name": "実家（改名）", "latitude": 35.7, "longitude": 139.7},
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "実家（改名）"
+
+
+def test_outdoor_locations_update_missing_returns_404(authed_client):
+    response = authed_client.put(
+        "/api/outdoor-locations/does-not-exist",
+        json={"name": "x", "latitude": 0, "longitude": 0},
+    )
+    assert response.status_code == 404
+
+
+def test_outdoor_locations_cannot_delete_primary(authed_client):
+    primary_id = authed_client.get("/api/outdoor-locations").json()["locations"][0]["id"]
+    response = authed_client.delete(f"/api/outdoor-locations/{primary_id}")
+    assert response.status_code == 400
+
+
+def test_outdoor_locations_delete_non_primary(authed_client):
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+
+    response = authed_client.delete(f"/api/outdoor-locations/{created['id']}")
+    assert response.status_code == 200
+
+    listed = authed_client.get("/api/outdoor-locations").json()["locations"]
+    assert len(listed) == 1
+
+
+def test_outdoor_locations_set_primary(authed_client):
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+
+    response = authed_client.put(f"/api/outdoor-locations/{created['id']}/primary")
+    assert response.status_code == 200
+    assert response.json()["id"] == created["id"]
+
+    listed = authed_client.get("/api/outdoor-locations").json()["locations"]
+    primary = next(loc for loc in listed if loc["is_primary"])
+    assert primary["id"] == created["id"]
+
+    # 基準地点が入れ替わったので、元の地点は削除できるようになる
+    old_primary_id = next(loc for loc in listed if not loc["is_primary"])["id"]
+    assert authed_client.delete(f"/api/outdoor-locations/{old_primary_id}").status_code == 200
+
+
+def test_outdoor_location_weather_by_id(authed_client):
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+
+    response = authed_client.get(f"/api/outdoor-locations/{created['id']}/weather")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "実家"
+    assert data["temperature"] == 25.0
+    assert data["weather_label"] == "晴れ"
+
+
+def test_outdoor_location_weather_missing_returns_404(authed_client):
+    response = authed_client.get("/api/outdoor-locations/does-not-exist/weather")
+    assert response.status_code == 404
+
+
+def test_outdoor_history_accepts_location_id(authed_client):
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+
+    response = authed_client.get(
+        f"/api/outdoor-history?range=day&location_id={created['id']}"
+    )
+    assert response.status_code == 200
 
 
 def test_aircon_latest_returns_mock_data(authed_client):

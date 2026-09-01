@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatOutdoorApiLabel,
   pickOutdoorLatestSource,
   resolveOutdoorBatchLoadStatus,
   type LatestData,
 } from "@/lib/types";
+
+describe("formatOutdoorApiLabel", () => {
+  it("returns the bare location name without the old '地点データ(...)' wrapper", () => {
+    expect(formatOutdoorApiLabel("茨木市")).toBe("茨木市");
+    expect(formatOutdoorApiLabel("  実家  ")).toBe("実家");
+  });
+
+  it("falls back to a placeholder when no name is set", () => {
+    expect(formatOutdoorApiLabel(undefined)).toBe("地点未登録");
+    expect(formatOutdoorApiLabel(null)).toBe("地点未登録");
+    expect(formatOutdoorApiLabel("")).toBe("地点未登録");
+  });
+});
 
 describe("outdoor latest helpers", () => {
   it("uses outdoor values from any visible device when primary device lacks them", () => {

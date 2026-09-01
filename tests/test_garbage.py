@@ -371,3 +371,65 @@ def test_notify_skips_when_no_collection_tomorrow(data_dir, monkeypatch):
     # 2026-08-13（木）の翌日 8/14（金）は例外で中止
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 13, 20, 0)) is None
     assert sent == []
+
+
+def test_notify_dispatches_a_push_event(data_dir, monkeypatch):
+    """#293: Signalyと同じタイミングでPush通知も送る。"""
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    monkeypatch.setattr(garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None)
+    dispatched = []
+    monkeypatch.setattr(
+        garbage_notify.notify_events,
+        "dispatch_push_event",
+        lambda event: dispatched.append(event),
+    )
+
+    garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
+
+    assert len(dispatched) == 1
+    assert dispatched[0].kind == "garbage"
+    assert "普通ごみ" in dispatched[0].title
+    assert dispatched[0].dedupe_key == "garbage-2026-08-11"
+
+
+def test_notify_skipped_when_disabled_via_settings(data_dir, monkeypatch):
+    """#293: 通知設定画面でオフにしたら送らない。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED: False})
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) is None
+    assert sent == []
+
+
+def test_notify_time_setting_overrides_notify_hour(data_dir, monkeypatch):
+    """#293: 画面で設定した通知時刻を data/garbage.json の notify_hour より優先する。"""
+    from backend import ui_settings
+
+    write_config(data_dir)  # notify_hour = 20（write_config の既定値）
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "07:00"})
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    # 20時（従来の notify_hour）ではもう送らない
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) is None
+    assert sent == []
+
+    # 7時（設定した時刻）に送る
+    entry = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 7, 0))
+    assert entry is not None
+    assert len(sent) == 1

@@ -338,6 +338,55 @@ def test_build_hourly_without_readings_has_no_data():
     assert len(result["hours"]) == 24
 
 
+# ------------------------------------------------------- KEPCO「その他」（#302）
+
+
+def test_build_hourly_adds_kepco_other_as_the_gap():
+    readings = [_reading(8, 0, 0.5, source="aircon")]
+    kepco_hours = [{"hour": 8, "kwh": 0.8}]
+    result = energy.build_hourly(
+        readings, datetime.date(2026, 8, 22), 31.0, kepco_hours=kepco_hours
+    )
+    hour8 = next(row for row in result["hours"] if row["hour"] == 8)
+    assert hour8["by_source"]["kepco_other"] == 0.3
+    assert hour8["kwh"] == 0.8
+    assert result["sources"] == ["aircon", "kepco_other"]
+
+
+def test_build_hourly_clamps_kepco_other_to_zero_when_devices_exceed_it():
+    """測定誤差・端数処理でエアコン等の実測がKEPCO実測を上回っても、マイナスにしない。"""
+    readings = [_reading(8, 0, 1.0, source="aircon")]
+    kepco_hours = [{"hour": 8, "kwh": 0.6}]
+    result = energy.build_hourly(
+        readings, datetime.date(2026, 8, 22), 31.0, kepco_hours=kepco_hours
+    )
+    hour8 = next(row for row in result["hours"] if row["hour"] == 8)
+    assert "kepco_other" not in hour8["by_source"]
+    assert hour8["kwh"] == 1.0
+
+
+def test_build_hourly_kepco_only_has_data_without_device_readings():
+    kepco_hours = [{"hour": 20, "kwh": 0.4}]
+    result = energy.build_hourly([], datetime.date(2026, 8, 22), 31.0, kepco_hours=kepco_hours)
+    assert result["has_data"] is True
+    assert result["sources"] == ["kepco_other"]
+    hour20 = next(row for row in result["hours"] if row["hour"] == 20)
+    assert hour20["by_source"] == {"kepco_other": 0.4}
+    assert hour20["cost_yen"] == round(energy.resolve_cost(0.4, None, 31.0))
+    hour0 = next(row for row in result["hours"] if row["hour"] == 0)
+    assert hour0["kwh"] is None
+
+
+def test_build_hourly_without_kepco_hours_matches_previous_behaviour():
+    readings = [_reading(8, 0, 0.5, source="aircon")]
+    result = energy.build_hourly(readings, datetime.date(2026, 8, 22), 31.0)
+    assert result["sources"] == ["aircon"]
+
+
+def test_source_label_maps_kepco_other():
+    assert energy.source_label("kepco_other") == "その他"
+
+
 def test_energy_hourly_requires_auth(client):
     response = client.get("/api/energy/hourly", params={"date": "2026-08-22"})
     assert response.status_code == 401
@@ -354,7 +403,19 @@ def test_energy_hourly_returns_mock_data_for_today(authed_client):
 
 
 def test_energy_hourly_reports_no_data_for_old_dates(authed_client):
-    old_date = (database._today_jst() - datetime.timedelta(days=10)).isoformat()
+    # energy_readings のモックは直近1〜2日、KEPCOのモックは直近40日ぶんしか無いため、
+    # 両方の範囲より前を指定する
+    old_date = (database._today_jst() - datetime.timedelta(days=60)).isoformat()
     response = authed_client.get("/api/energy/hourly", params={"date": old_date})
     assert response.status_code == 200
     assert response.json()["has_data"] is False
+
+
+def test_energy_hourly_returns_kepco_other_for_dates_without_device_data(authed_client):
+    """機器の実測が残っていない過去日でも、KEPCO取り込み分だけで「その他」が出る（#302）。"""
+    old_date = (database._today_jst() - datetime.timedelta(days=10)).isoformat()
+    response = authed_client.get("/api/energy/hourly", params={"date": old_date})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_data"] is True
+    assert payload["sources"] == ["kepco_other"]
