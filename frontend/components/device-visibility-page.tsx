@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CloudSun,
   LayoutGrid,
-  Search,
   Snowflake,
   Thermometer,
 } from "lucide-react";
@@ -15,6 +14,7 @@ import type { LucideIcon } from "lucide-react";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { DeviceEditSheet } from "@/components/device-edit-sheet";
+import { OutdoorLocationsSheet } from "@/components/outdoor-locations-sheet";
 import {
   DeviceListItem,
   type DeviceListItemTrack,
@@ -25,10 +25,8 @@ import {
   fetchAirconUnits,
   fetchDevices,
   fetchOutdoorLocation,
-  searchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
-  updateOutdoorLocation,
 } from "@/lib/api";
 import {
   AIRCON_TARGET_COLOR_KEY,
@@ -56,7 +54,6 @@ import {
   type AirconUnitInfo,
   type DeviceInfo,
   type OutdoorLocation,
-  type OutdoorLocationSearchResult,
 } from "@/lib/types";
 import {
   findLeafDeviceId,
@@ -98,7 +95,6 @@ import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 
 type EditableTarget =
   | { kind: "device"; item: Extract<DisplayOrderItem, { type: "device" }> }
-  | { kind: "outdoor"; item: Extract<DisplayOrderItem, { type: "outdoor" }> }
   | { kind: "aircon"; item: Extract<DisplayOrderItem, { type: "aircon" }> };
 
 function draftKeyForItem(item: DisplayOrderItem, acId = 1): string {
@@ -178,12 +174,7 @@ export function DeviceVisibilityPage() {
   const [editingTarget, setEditingTarget] = useState<EditableTarget | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-
-  const [locationSearch, setLocationSearch] = useState("");
-  const [locationSearchResults, setLocationSearchResults] = useState<OutdoorLocationSearchResult[]>([]);
-  const [locationSearching, setLocationSearching] = useState(false);
-  const [latDraft, setLatDraft] = useState("");
-  const [lonDraft, setLonDraft] = useState("");
+  const [outdoorLocationsSheetOpen, setOutdoorLocationsSheetOpen] = useState(false);
 
   const sensorDeviceIds = useMemo(() => getSensorDeviceIds(devices), [devices]);
   const sensorDeviceIdsKey = sensorDeviceIds.join(",");
@@ -280,38 +271,6 @@ export function DeviceVisibilityPage() {
     setPressureOffsetDrafts(offsetDrafts);
     setLightThresholdDrafts(lightDrafts);
   }, [devices, airconUnits, outdoorLocation, pressureOffsets, lightThresholds]);
-
-  // 屋外編集シートを開いたとき、緯度・経度を初期化
-  useEffect(() => {
-    if (editingTarget?.kind !== "outdoor") return;
-    setLocationSearch("");
-    setLocationSearchResults([]);
-    setLatDraft(outdoorLocation ? String(outdoorLocation.latitude) : "");
-    setLonDraft(outdoorLocation ? String(outdoorLocation.longitude) : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingTarget?.kind]);
-
-  // 地名検索（デバウンス）
-  useEffect(() => {
-    if (editingTarget?.kind !== "outdoor") return;
-    const q = locationSearch.trim();
-    if (q.length < 2) {
-      setLocationSearchResults([]);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      setLocationSearching(true);
-      try {
-        const results = await searchOutdoorLocations(q);
-        setLocationSearchResults(results);
-      } catch {
-        setLocationSearchResults([]);
-      } finally {
-        setLocationSearching(false);
-      }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [locationSearch, editingTarget?.kind]);
 
   const persistDisplayOrder = useCallback((order: DisplayOrderItem[]) => {
     setDisplayOrder(order);
@@ -547,45 +506,6 @@ export function DeviceVisibilityPage() {
     }
   };
 
-  const saveOutdoorName = async () => {
-    const key = "outdoor";
-    const name = nameDrafts[key]?.trim();
-    if (!outdoorLocation) {
-      setErrors((prev) => ({ ...prev, [key]: "地点データが読み込めていません" }));
-      return;
-    }
-    if (!name) {
-      setErrors((prev) => ({ ...prev, [key]: "表示名を入力してください" }));
-      return;
-    }
-
-    const lat = Number(latDraft);
-    const lon = Number(lonDraft);
-    if (Number.isNaN(lat) || lat < -90 || lat > 90) {
-      setErrors((prev) => ({ ...prev, [key]: "緯度が正しくありません（-90〜90）" }));
-      return;
-    }
-    if (Number.isNaN(lon) || lon < -180 || lon > 180) {
-      setErrors((prev) => ({ ...prev, [key]: "経度が正しくありません（-180〜180）" }));
-      return;
-    }
-
-    setSavingKey(key);
-    setErrors((prev) => ({ ...prev, [key]: "" }));
-    try {
-      const saved = await updateOutdoorLocation({ name, latitude: lat, longitude: lon });
-      setOutdoorLocation(saved);
-      setEditingTarget(null);
-    } catch (err) {
-      setErrors((prev) => ({
-        ...prev,
-        [key]: err instanceof Error ? err.message : "保存に失敗しました",
-      }));
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
   const getAccentColor = (item: DisplayOrderItem) => {
     if (item.type === "device") return getDeviceChartColor(chartColors, item.deviceId);
     if (item.type === "aircon") {
@@ -670,74 +590,6 @@ export function DeviceVisibilityPage() {
     </div>
   );
 
-  const renderOutdoorLocationExtra = () => (
-    <>
-      <div className="space-y-2">
-        <Label htmlFor="outdoor-location-search">地名で検索</Label>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            id="outdoor-location-search"
-            value={locationSearch}
-            onChange={(e) => setLocationSearch(e.target.value)}
-            placeholder="例: 大阪, 渋谷, 札幌"
-            className="rounded-xl pl-9"
-          />
-        </div>
-        {locationSearching && (
-          <p className="text-xs text-muted-foreground">検索中...</p>
-        )}
-        {locationSearchResults.length > 0 && (
-          <ul className="max-h-40 overflow-y-auto rounded-xl border bg-muted">
-            {locationSearchResults.map((result) => (
-              <li key={`${result.latitude}-${result.longitude}-${result.label}`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraft("outdoor", result.name);
-                    setLatDraft(String(result.latitude));
-                    setLonDraft(String(result.longitude));
-                    setLocationSearch(result.label);
-                    setLocationSearchResults([]);
-                  }}
-                  className="w-full px-3 py-2.5 text-left text-sm hover:bg-accent"
-                >
-                  <span className="font-medium">{result.label}</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <Label htmlFor="outdoor-lat">緯度</Label>
-          <Input
-            id="outdoor-lat"
-            inputMode="decimal"
-            value={latDraft}
-            onChange={(e) => setLatDraft(e.target.value)}
-            className="rounded-xl"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="outdoor-lon">経度</Label>
-          <Input
-            id="outdoor-lon"
-            inputMode="decimal"
-            value={lonDraft}
-            onChange={(e) => setLonDraft(e.target.value)}
-            className="rounded-xl"
-          />
-        </div>
-      </div>
-    </>
-  );
-
   const renderEditSheet = () => {
     if (!editingTarget) return null;
 
@@ -809,39 +661,6 @@ export function DeviceVisibilityPage() {
           onInheritsFromChange={(value) =>
             setInheritsDrafts((prev) => ({ ...prev, [deviceId]: value }))
           }
-        />
-      );
-    }
-
-    if (editingTarget.kind === "outdoor") {
-      return (
-        <DeviceEditSheet
-          open
-          onClose={() => setEditingTarget(null)}
-          icon={Icon}
-          accentColor={getAccentColor(item)}
-          title={formatOutdoorApiLabel(outdoorLocation?.name)}
-          subtitle="地点名・座標・グラフの色を設定します"
-          nameLabel="表示名"
-          name={nameDrafts[key] ?? outdoorLocation?.name ?? ""}
-          onNameChange={(value) => setDraft(key, value)}
-          namePlaceholder="例: 茨木市"
-          extraContent={renderOutdoorLocationExtra()}
-          chartColors={[
-            {
-              id: `${key}-color`,
-              label: "グラフの色",
-              color: getOutdoorChartColor(chartColors),
-              onChange: (color) => handleColorChange("outdoor", color),
-            },
-          ]}
-          visible={isTargetVisible(hiddenKeys, item)}
-          onVisibleChange={(visible) => handleVisibilityChange(item, visible)}
-          visibilityId={`visible-${key}`}
-          onSave={() => void saveOutdoorName()}
-          saving={savingKey === key}
-          saveDisabled={!outdoorLocation}
-          error={errors[key]}
         />
       );
     }
@@ -963,7 +782,7 @@ export function DeviceVisibilityPage() {
                       if (item.type === "device") {
                         setEditingTarget({ kind: "device", item });
                       } else if (item.type === "outdoor") {
-                        setEditingTarget({ kind: "outdoor", item });
+                        setOutdoorLocationsSheetOpen(true);
                       } else {
                         setEditingTarget({ kind: "aircon", item });
                       }
@@ -1012,6 +831,17 @@ export function DeviceVisibilityPage() {
       </div>
 
       {renderEditSheet()}
+      <OutdoorLocationsSheet
+        open={outdoorLocationsSheetOpen}
+        onClose={() => setOutdoorLocationsSheetOpen(false)}
+        onChanged={() => void loadData()}
+        chartColor={getOutdoorChartColor(chartColors)}
+        onChartColorChange={(color) => handleColorChange("outdoor", color)}
+        dashboardVisible={isTargetVisible(hiddenKeys, { type: "outdoor" })}
+        onDashboardVisibleChange={(visible) =>
+          handleVisibilityChange({ type: "outdoor" }, visible)
+        }
+      />
     </div>
   );
 }

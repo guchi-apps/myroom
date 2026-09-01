@@ -19,7 +19,9 @@ import {
   type HistoryPoint,
   type LatestData,
   type OutdoorLocation,
+  type OutdoorLocationEntry,
   type OutdoorLocationSearchResult,
+  type OutdoorLocationWeather,
   type SensorRecordsResponse,
   type SensorsStatusResponse,
   type TimeRange,
@@ -125,7 +127,8 @@ export async function fetchHistory(
 export async function fetchOutdoorHistoryWindow(
   start: Date,
   end: Date,
-  viewRange: ChartViewRange
+  viewRange: ChartViewRange,
+  locationId?: string | null
 ): Promise<HistoryPoint[]> {
   const params = new URLSearchParams({
     start: toApiDateTime(start),
@@ -133,6 +136,9 @@ export async function fetchOutdoorHistoryWindow(
   });
   if (viewRange === "year") {
     params.set("range", "year");
+  }
+  if (locationId) {
+    params.set("location_id", locationId);
   }
   const data = await fetchJson<Record<string, unknown>[]>(
     `/api/outdoor-history?${params.toString()}`
@@ -325,6 +331,79 @@ export async function searchOutdoorLocations(
     `/api/outdoor-location/search?${params}`
   );
   return data.results;
+}
+
+interface OutdoorLocationInput {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+async function outdoorLocationRequest(
+  url: string,
+  init: RequestInit
+): Promise<OutdoorLocationEntry> {
+  const res = await fetchWithAuth(url, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init.headers },
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<OutdoorLocationEntry>;
+}
+
+/** 登録済みの屋外地点の一覧（#308） */
+export async function fetchOutdoorLocations(): Promise<OutdoorLocationEntry[]> {
+  const data = await fetchJson<{ locations: OutdoorLocationEntry[] }>(
+    "/api/outdoor-locations"
+  );
+  return data.locations;
+}
+
+export async function createOutdoorLocation(
+  input: OutdoorLocationInput
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest("/api/outdoor-locations", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateOutdoorLocationById(
+  id: string,
+  input: OutdoorLocationInput
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest(`/api/outdoor-locations/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteOutdoorLocation(id: string): Promise<void> {
+  const res = await fetchWithAuth(`/api/outdoor-locations/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+}
+
+export async function setPrimaryOutdoorLocation(
+  id: string
+): Promise<OutdoorLocationEntry> {
+  return outdoorLocationRequest(`/api/outdoor-locations/${id}/primary`, {
+    method: "PUT",
+  });
+}
+
+/** 指定した地点の「いまの天気」（#308） */
+export async function fetchOutdoorLocationWeather(
+  id: string
+): Promise<OutdoorLocationWeather> {
+  return fetchJson<OutdoorLocationWeather>(`/api/outdoor-locations/${id}/weather`);
 }
 
 export async function fetchSensorRecords(

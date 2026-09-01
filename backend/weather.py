@@ -24,8 +24,59 @@ def clear_outdoor_weather_cache() -> None:
         _outdoor_history_cache.clear()
 
 
-def get_coords(db: Optional[Session] = None) -> Tuple[float, float]:
-    loc = outdoor_config.get_location(db)
+# WMO Weather interpretation codes（Open-Meteoの`weather_code`）→ 日本語ラベルとアイコン種別。
+# アイコン種別はフロントエンドでlucide-reactの既存アイコンへ対応させるためのキー。
+_WEATHER_CODE_TABLE: Dict[int, Tuple[str, str]] = {
+    0: ("快晴", "sun"),
+    1: ("晴れ", "sun"),
+    2: ("晴れ時々くもり", "cloud-sun"),
+    3: ("くもり", "cloud"),
+    45: ("霧", "fog"),
+    48: ("霧", "fog"),
+    51: ("小雨", "rain"),
+    53: ("雨", "rain"),
+    55: ("強い雨", "rain"),
+    56: ("みぞれ", "rain"),
+    57: ("みぞれ", "rain"),
+    61: ("雨", "rain"),
+    63: ("雨", "rain"),
+    65: ("強い雨", "rain"),
+    66: ("みぞれ", "rain"),
+    67: ("みぞれ", "rain"),
+    71: ("雪", "snow"),
+    73: ("雪", "snow"),
+    75: ("大雪", "snow"),
+    77: ("雪", "snow"),
+    80: ("にわか雨", "rain"),
+    81: ("にわか雨", "rain"),
+    82: ("激しいにわか雨", "rain"),
+    85: ("にわか雪", "snow"),
+    86: ("にわか雪", "snow"),
+    95: ("雷雨", "storm"),
+    96: ("雷雨（ひょう）", "storm"),
+    99: ("雷雨（ひょう）", "storm"),
+}
+
+
+def describe_weather_code(code: Optional[float]) -> Optional[Dict[str, Any]]:
+    if code is None:
+        return None
+    try:
+        code_int = int(code)
+    except (TypeError, ValueError):
+        return None
+    label, icon = _WEATHER_CODE_TABLE.get(code_int, ("不明", "cloud"))
+    return {"code": code_int, "label": label, "icon": icon}
+
+
+def get_coords(
+    db: Optional[Session] = None, location_id: Optional[str] = None
+) -> Tuple[float, float]:
+    loc = None
+    if location_id:
+        loc = outdoor_config.get_location_by_id(location_id, db)
+    if loc is None:
+        loc = outdoor_config.get_primary_location(db)
     return loc["latitude"], loc["longitude"]
 
 
@@ -34,17 +85,21 @@ def _fetch_outdoor_weather(lat: float, lon: float) -> Optional[Dict[str, Any]]:
         url = (
             "https://api.open-meteo.com/v1/forecast?"
             f"latitude={lat}&longitude={lon}"
-            "&current=temperature_2m,relative_humidity_2m,surface_pressure"
+            "&current=temperature_2m,relative_humidity_2m,surface_pressure,weather_code"
             "&timezone=Asia%2FTokyo"
         )
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
             current = data.get("current", {})
+            condition = describe_weather_code(current.get("weather_code"))
             return {
                 "temperature": current.get("temperature_2m"),
                 "humidity": current.get("relative_humidity_2m"),
                 "pressure": current.get("surface_pressure"),
+                "weather_code": condition["code"] if condition else None,
+                "weather_label": condition["label"] if condition else None,
+                "weather_icon": condition["icon"] if condition else None,
                 # 観測時刻。`timezone=Asia/Tokyo` を渡しているのでJSTだがオフセットは付かない
                 # （例: "2026-08-19T21:00"）。オフセットの付与は受け取り側で行う。
                 "observed_at": current.get("time"),
@@ -55,11 +110,13 @@ def _fetch_outdoor_weather(lat: float, lon: float) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_outdoor_weather(db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+def get_outdoor_weather(
+    db: Optional[Session] = None, location_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
-    Open-Meteo APIから設定地点の現在の気温、湿度、気圧を取得する。
+    Open-Meteo APIから指定地点（省略時は基準地点）の現在の気温・湿度・気圧・天気概況を取得する。
     """
-    lat, lon = get_coords(db)
+    lat, lon = get_coords(db, location_id)
     cache_key = f"{lat:.4f},{lon:.4f}"
     now = time.time()
     with _cache_lock:
@@ -114,12 +171,14 @@ def get_outdoor_history(
     start_date: str,
     end_date: str,
     db: Optional[Session] = None,
+    location_id: Optional[str] = None,
 ) -> Optional[Dict[str, List[Any]]]:
     """
     指定された期間の外気履歴を取得する (ISO 8601 format: YYYY-MM-DD)
     1年以上前のデータにも対応するため、期間に応じて Forecast API と Archive API を使い分ける。
+    地点を省略すると基準地点の履歴を返す。
     """
-    lat, lon = get_coords(db)
+    lat, lon = get_coords(db, location_id)
     cache_key = f"{lat:.4f},{lon:.4f}|{start_date}|{end_date}"
     now = time.time()
 

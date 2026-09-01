@@ -58,16 +58,19 @@ def auth_headers():
 
 @pytest.fixture
 def mock_weather(monkeypatch):
-    def outdoor_weather(db=None):
+    def outdoor_weather(db=None, location_id=None):
         return {
             "temperature": 25.0,
             "humidity": 60.0,
             "pressure": 1013.0,
+            "weather_code": 1,
+            "weather_label": "晴れ",
+            "weather_icon": "sun",
             # Open-Meteo は timezone=Asia/Tokyo でもオフセットを付けずに返す。
             "observed_at": "2026-08-19T21:00",
         }
 
-    def outdoor_history(start, end, db=None):
+    def outdoor_history(start, end, db=None, location_id=None):
         start_dt = datetime.datetime.strptime(start, "%Y-%m-%d")
         end_dt = datetime.datetime.strptime(end, "%Y-%m-%d")
         times = []

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { CurrentReadings } from "@/components/current-readings";
 import { EnvironmentChart } from "@/components/environment-chart";
+import { WeatherIcon } from "@/lib/weather-icon";
 import type { ChartColorSettings } from "@/lib/chart-colors";
 import {
   outdoorMetricVisibilityKey,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import { buildOutdoorReadings } from "@/lib/device-metrics";
+import { fetchOutdoorLocations, fetchOutdoorLocationWeather } from "@/lib/api";
 import { useOutdoorChartHistory } from "@/lib/use-outdoor-chart-history";
 import {
   CHART_METRICS,
@@ -19,6 +21,8 @@ import {
   type ChartViewRange,
   type HistoryPoint,
   type LatestData,
+  type OutdoorLocationEntry,
+  type OutdoorLocationWeather,
 } from "@/lib/types";
 
 const OUTDOOR_LEGEND_ORDER: readonly DisplayOrderItem[] = [{ type: "outdoor" }];
@@ -28,7 +32,7 @@ const EMPTY_DEVICE_NAMES: Record<number, string> = {};
 interface OutdoorDetailPanelProps {
   open: boolean;
   locationName?: string;
-  /** カードから外した気圧を「いまの値」として出すための最新データ（#226） */
+  /** カードから外した気圧を「いまの値」として出すための最新データ（#226）。基準地点のもの */
   latest?: LatestData | null;
   chartColors: ChartColorSettings;
   lineVisibility: ChartLineVisibilitySettings;
@@ -53,12 +57,64 @@ export function OutdoorDetailPanel({
 }: OutdoorDetailPanelProps) {
   const [chartMetric, setChartMetric] = useState<ChartMetric>("temperature");
   const [viewRange, setViewRange] = useState<ChartViewRange>("day");
+  // 登録地点の一覧（#308）。オフライン時は切り替えを提供しない
+  const [locations, setLocations] = useState<OutdoorLocationEntry[] | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [selectedWeather, setSelectedWeather] = useState<OutdoorLocationWeather | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setChartMetric("temperature");
     setViewRange("day");
-  }, [open]);
+    setSelectedLocationId(null);
+    setSelectedWeather(null);
+    if (isOfflineMode) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchOutdoorLocations()
+      .then((list) => {
+        if (cancelled) return;
+        setLocations(list);
+        const primary = list.find((loc) => loc.is_primary) ?? list[0] ?? null;
+        setSelectedLocationId(primary?.id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setLocations(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isOfflineMode]);
+
+  const primaryLocationId = useMemo(
+    () => locations?.find((loc) => loc.is_primary)?.id ?? null,
+    [locations]
+  );
+  const isPrimarySelected =
+    selectedLocationId == null || selectedLocationId === primaryLocationId;
+  const selectedLocation = useMemo(
+    () => locations?.find((loc) => loc.id === selectedLocationId) ?? null,
+    [locations, selectedLocationId]
+  );
+
+  // 基準地点以外を選んだときだけ、その地点の「いまの天気」を取りに行く
+  // （選択が基準地点のときは selectedWeather を読まないので、明示的なクリアは不要）
+  useEffect(() => {
+    if (!open || isPrimarySelected || !selectedLocationId) return;
+    let cancelled = false;
+    void fetchOutdoorLocationWeather(selectedLocationId)
+      .then((data) => {
+        if (!cancelled) setSelectedWeather(data);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedWeather(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isPrimarySelected, selectedLocationId]);
 
   // パネルを開いた際は outdoor ラインを常に表示する(グローバル設定に関わらず)
   const lineVisibility = useMemo(() => {
@@ -82,9 +138,28 @@ export function OutdoorDetailPanel({
     offlineHistory,
     offlineCacheKey,
     pollIntervalMs: open && !isOfflineMode ? 30000 : 0,
+    locationId: isPrimarySelected ? null : selectedLocationId,
   });
 
   if (!open) return null;
+
+  const displayName = selectedLocation?.name ?? locationName;
+  const readingsSource: LatestData | null = isPrimarySelected
+    ? latest
+    : selectedWeather
+      ? {
+          outdoor_temperature: selectedWeather.temperature ?? undefined,
+          outdoor_humidity: selectedWeather.humidity ?? undefined,
+          outdoor_pressure: selectedWeather.pressure ?? undefined,
+        }
+      : null;
+  const weatherLabel = isPrimarySelected
+    ? latest?.outdoor_weather_label
+    : selectedWeather?.weather_label;
+  const weatherIconKey = isPrimarySelected
+    ? latest?.outdoor_weather_icon
+    : selectedWeather?.weather_icon;
+  const measuredAt = isPrimarySelected ? latest?.datetime : selectedWeather?.observed_at ?? undefined;
 
   return (
     <div className="fixed inset-0 z-50 flex min-h-0 items-end justify-center bg-black/40 sm:items-center sm:p-4">
@@ -92,9 +167,21 @@ export function OutdoorDetailPanel({
         <div className="flex shrink-0 items-center justify-between border-b px-5 py-4">
           <div className="min-w-0">
             <h2 className="truncate text-lg font-bold">
-              {formatOutdoorApiLabel(locationName)}
+              {formatOutdoorApiLabel(displayName)}
             </h2>
-            <p className="text-xs text-muted-foreground">Open-Meteo API</p>
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              {weatherLabel ? (
+                <>
+                  <WeatherIcon
+                    icon={weatherIconKey}
+                    className="size-3.5 shrink-0"
+                    strokeWidth={1.75}
+                  />
+                  {weatherLabel} ・
+                </>
+              ) : null}
+              Open-Meteo API
+            </p>
           </div>
           <button
             type="button"
@@ -106,10 +193,29 @@ export function OutdoorDetailPanel({
           </button>
         </div>
 
+        {locations && locations.length > 1 ? (
+          <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b px-4 py-2.5 [-webkit-overflow-scrolling:touch]">
+            {locations.map((loc) => (
+              <button
+                key={loc.id}
+                type="button"
+                onClick={() => setSelectedLocationId(loc.id)}
+                className={
+                  loc.id === selectedLocationId
+                    ? "shrink-0 rounded-full bg-foreground px-3.5 py-1.5 text-xs font-bold text-background"
+                    : "shrink-0 rounded-full bg-muted px-3.5 py-1.5 text-xs font-bold text-muted-foreground hover:bg-accent"
+                }
+              >
+                {loc.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]">
           <CurrentReadings
-            readings={buildOutdoorReadings(latest)}
-            measuredAt={latest?.datetime}
+            readings={buildOutdoorReadings(readingsSource)}
+            measuredAt={measuredAt}
           />
           <div className="px-3 py-3">
             <EnvironmentChart
@@ -127,7 +233,7 @@ export function OutdoorDetailPanel({
               noMoreOlderData={noMoreOlderData}
               onVisibleDomainChange={ensureVisibleRangeLoaded}
               legendOrder={OUTDOOR_LEGEND_ORDER}
-              outdoorLocationName={locationName}
+              outdoorLocationName={displayName}
               chartColors={chartColors}
               lineVisibility={lineVisibility}
               onLineVisibilityChange={onLineVisibilityChange ?? (() => {})}

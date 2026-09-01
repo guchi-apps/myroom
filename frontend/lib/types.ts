@@ -19,6 +19,9 @@ export interface LatestData {
   outdoor_temperature?: number;
   outdoor_humidity?: number;
   outdoor_pressure?: number;
+  outdoor_weather_code?: number | null;
+  outdoor_weather_label?: string | null;
+  outdoor_weather_icon?: string | null;
 }
 
 export interface SensorRecord {
@@ -88,17 +91,38 @@ export interface OutdoorLocation {
   name: string;
 }
 
+/** 登録済みの屋外地点（#308で複数登録に対応） */
+export interface OutdoorLocationEntry {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  is_primary: boolean;
+}
+
+/** 特定の地点の「いまの天気」（#308） */
+export interface OutdoorLocationWeather {
+  id: string;
+  name: string;
+  temperature: number | null;
+  humidity: number | null;
+  pressure: number | null;
+  weather_code: number | null;
+  weather_label: string | null;
+  weather_icon: string | null;
+  observed_at: string | null;
+}
+
 export interface DeviceInfo {
   id: number;
   name: string;
   inherits_from?: number | null;
 }
 
-/** Open-Meteo 等 API から取得する屋外気象データの表示ラベル */
+/** 屋外地点の表示名。以前は「地点データ(場所名)」の形だったが、冗長なため場所名だけにする（#308） */
 export function formatOutdoorApiLabel(locationName?: string | null): string {
   const trimmed = locationName?.trim();
-  if (trimmed) return `地点データ(${trimmed})`;
-  return "地点データ(未登録)";
+  return trimmed || "地点未登録";
 }
 
 export interface UiSettings {
