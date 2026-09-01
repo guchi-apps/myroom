@@ -352,6 +352,24 @@ def migrate():
                 """))
                 print("Table 'utility_bills' created.")
 
+            # KEPCO「みるでん」CSVからの時間ごと実測（家全体、#302）。energy_readings と違い
+            # 累計スナップショットではなく、その時間帯の実測値をそのまま持つ。
+            print("Checking if 'kepco_hourly_usage' table exists...")
+            if _table_exists(conn, "kepco_hourly_usage"):
+                print("Table 'kepco_hourly_usage' already exists.")
+            else:
+                print("Creating table 'kepco_hourly_usage'...")
+                conn.execute(text("""
+                    CREATE TABLE kepco_hourly_usage (
+                        date DATE NOT NULL,
+                        hour INT NOT NULL,
+                        kwh FLOAT NOT NULL,
+                        imported_at DATETIME NULL,
+                        PRIMARY KEY (date, hour)
+                    )
+                """))
+                print("Table 'kepco_hourly_usage' created.")
+
         print("Migration completed.")
 
     except Exception as e:

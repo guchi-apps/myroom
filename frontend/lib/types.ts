@@ -203,6 +203,15 @@ export interface EnergyHourly {
   hours: EnergyHourlyHour[];
 }
 
+/** KEPCO「みるでん」CSVの取り込み結果。`POST /api/energy/kepco/import` の戻り */
+export interface EnergyKepcoImportResult {
+  status: "ok" | "mock_ok";
+  imported_rows: number;
+  imported_days: number;
+  period_start: string | null;
+  period_end: string | null;
+}
+
 /** `today` / `yesterday` / `daily` の1件。取得元が値を返さなかった日は kwh が null */
 export interface EnergySourceDayPoint {
   date: string;
