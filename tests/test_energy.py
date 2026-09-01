@@ -523,3 +523,49 @@ def test_energy_hourly_returns_kepco_other_for_dates_without_device_data(authed_
     payload = response.json()
     assert payload["has_data"] is True
     assert payload["sources"] == ["kepco_other"]
+
+
+# ---------------------------------------------------- 取得元に付けた別名（#335）
+
+
+def test_resolve_source_label_prefers_the_override():
+    names = {"tapo:冷蔵庫": "キッチンの冷蔵庫"}
+    assert energy.resolve_source_label("tapo:冷蔵庫", names) == "キッチンの冷蔵庫"
+    # 別名の無い取得元は既定のまま
+    assert energy.resolve_source_label("tapo:テレビ", names) == "テレビ"
+    assert energy.resolve_source_label("aircon", names) == "エアコン"
+    # 空白だけの別名は上書きとみなさない
+    assert energy.resolve_source_label("tapo:冷蔵庫", {"tapo:冷蔵庫": "  "}) == "冷蔵庫"
+    assert energy.resolve_source_label("tapo:冷蔵庫", None) == "冷蔵庫"
+
+
+def test_build_breakdown_applies_source_names():
+    rows = _mixed_rows(
+        [
+            ("2026-08-22", "tapo:冷蔵庫", 0.86, 38.2),
+            ("2026-08-22", "tapo:テレビ", 0.31, 72.0),
+        ]
+    )
+    result = energy.build_breakdown(
+        rows,
+        datetime.date(2026, 8, 22),
+        31.0,
+        source_names={"tapo:冷蔵庫": "キッチンの冷蔵庫"},
+    )
+
+    by_source = {row["source"]: row for row in result["sources"]}
+    assert by_source["tapo:冷蔵庫"]["label"] == "キッチンの冷蔵庫"
+    # 別名を当てる前の名前も返す。設定画面が「Tapoの名前」を出すのに使う
+    assert by_source["tapo:冷蔵庫"]["default_label"] == "冷蔵庫"
+    assert by_source["tapo:テレビ"]["label"] == "テレビ"
+    assert by_source["tapo:テレビ"]["default_label"] == "テレビ"
+    # 別名を付けても source は変えない（過去の使用量と切らないため）
+    assert set(by_source) == {"tapo:冷蔵庫", "tapo:テレビ"}
+
+
+def test_build_breakdown_without_source_names_keeps_the_tapo_name():
+    rows = _mixed_rows([("2026-08-22", "tapo:冷蔵庫", 0.86, 38.2)])
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+
+    assert result["sources"][0]["label"] == "冷蔵庫"
+    assert result["sources"][0]["default_label"] == "冷蔵庫"

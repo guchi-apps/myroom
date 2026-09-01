@@ -16,6 +16,8 @@ SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
 SETTING_LIGHT_THRESHOLDS = "light_thresholds"
 SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
+#: 消費電力の取得元に付けた表示名の上書き（#335）。{"tapo:冷蔵庫": "キッチンの冷蔵庫"}
+SETTING_ENERGY_SOURCE_NAMES = "energy_source_names"
 SETTING_REMOTE_BUTTONS = "remote_buttons"
 SETTING_REMOTE_BUTTON_DEFS = "remote_button_defs"
 SETTING_REMOTE_CATALOG = "remote_catalog"
@@ -54,6 +56,10 @@ MAX_ENERGY_UNIT_PRICE = 1000.0
 # 読めなくなるだけなので、入り口で切っておく
 MAX_REMOTE_LABEL_LENGTH = 20
 
+# 消費電力の取得元に付けられる表示名の長さ。カードの名前欄は固定幅で、長い名前は
+# truncate されるだけなので、こちらも入り口で切っておく
+MAX_ENERGY_SOURCE_NAME_LENGTH = 20
+
 # 照明の点灯とみなす照度（lx）の上限。直射日光でも10万lx程度なので、これを超える値は
 # 打ち間違いとみなして捨てる。0以下は「判定しない」の意味なので同じく保存しない
 MAX_LIGHT_THRESHOLD_LUX = 100000.0
@@ -81,6 +87,9 @@ def _default_settings() -> Dict[str, Any]:
         # 既定のしきい値は置かず、画面から設定するまで表示を増やさない
         SETTING_LIGHT_THRESHOLDS: {},
         SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
+        # 空 = どの取得元にも別名を付けていない。既定の名前は `daily_energy.source`
+        # （Tapoアプリで付けた名前）が持っているので、ここに既定値は置かない
+        SETTING_ENERGY_SOURCE_NAMES: {},
         SETTING_REMOTE_BUTTONS: {},
         # None は「まだ画面から一度も保存していない」。空の groups（1つも登録していない）
         # と区別する必要があるため、既定値を {} にはしない（#262）
@@ -235,6 +244,34 @@ def _normalize_energy_unit_price(raw: Any) -> float:
     if price <= 0 or price > MAX_ENERGY_UNIT_PRICE:
         return DEFAULT_ENERGY_UNIT_PRICE
     return round(price, 2)
+
+
+def _normalize_energy_source_names(raw: Any) -> Dict[str, str]:
+    """消費電力の取得元に付けた別名（#335）。`{"tapo:冷蔵庫": "キッチンの冷蔵庫"}`。
+
+    **キーは `daily_energy.source` そのもので、名前を変えても source は変えない。**
+    source を書き換えると `(date, source)` が別物になり、過去の使用量と切れる。
+
+    値が空文字なら「上書きなし」なので保存しない。取得元が入れ替わったときに
+    古いキーのゴミを残さないための決まりで、`remote_buttons` と同じ考え方。
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: Dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        source = key.strip()
+        if not source:
+            continue
+        if not isinstance(value, str):
+            continue
+        name = value.strip()[:MAX_ENERGY_SOURCE_NAME_LENGTH]
+        if not name:
+            continue
+        normalized[source] = name
+    return normalized
 
 
 def _normalize_remote_buttons(raw: Any) -> Dict[str, Dict[str, Any]]:
@@ -409,6 +446,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         SETTING_ENERGY_UNIT_PRICE: _normalize_energy_unit_price(
             raw.get(SETTING_ENERGY_UNIT_PRICE, defaults[SETTING_ENERGY_UNIT_PRICE])
         ),
+        SETTING_ENERGY_SOURCE_NAMES: _normalize_energy_source_names(
+            raw.get(SETTING_ENERGY_SOURCE_NAMES, defaults[SETTING_ENERGY_SOURCE_NAMES])
+        ),
         SETTING_REMOTE_BUTTONS: _normalize_remote_buttons(
             raw.get(SETTING_REMOTE_BUTTONS, defaults[SETTING_REMOTE_BUTTONS])
         ),
@@ -514,6 +554,9 @@ def save_settings(
         SETTING_ENERGY_UNIT_PRICE: updates.get(
             SETTING_ENERGY_UNIT_PRICE,
             current.get(SETTING_ENERGY_UNIT_PRICE, DEFAULT_ENERGY_UNIT_PRICE),
+        ),
+        SETTING_ENERGY_SOURCE_NAMES: updates.get(
+            SETTING_ENERGY_SOURCE_NAMES, current.get(SETTING_ENERGY_SOURCE_NAMES, {})
         ),
         SETTING_REMOTE_BUTTONS: updates.get(
             SETTING_REMOTE_BUTTONS, current.get(SETTING_REMOTE_BUTTONS, {})

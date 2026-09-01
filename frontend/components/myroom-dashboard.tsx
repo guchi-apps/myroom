@@ -1588,6 +1588,9 @@ export function MyRoomDashboard() {
           onKepcoImported={() => {
             void refreshEnergyBreakdown();
           }}
+          onSourceNamesSaved={() => {
+            void refreshEnergyBreakdown();
+          }}
         />
       )}
 

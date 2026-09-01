@@ -13,6 +13,7 @@ function breakdown(daily: EnergyBreakdownDay[]): EnergyBreakdown {
       {
         source: "aircon",
         label: "エアコン",
+        default_label: "エアコン",
         today_kwh: 1.86,
         today_cost_yen: 57.7,
         power_w: null,
@@ -38,6 +39,7 @@ function render(daily: EnergyBreakdownDay[]) {
       onClose={noop}
       onUnitPriceSaved={noop}
       onKepcoImported={noop}
+      onSourceNamesSaved={noop}
     />
   );
 }

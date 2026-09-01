@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 import { fetchEnergyHourly, fetchEnergySummary, importKepcoCsv, updateUiSettings } from "@/lib/api";
 import { EnergyDateCalendar } from "@/components/energy-date-calendar";
+import { EnergySourceNameSheet } from "@/components/energy-source-name-sheet";
 import { PowerSourceDetail } from "@/components/power-source-detail";
+import { SettingsIconButton } from "@/components/ui/settings-icon-button";
 import {
   EnergyBarChartSkeleton,
   EnergyListSkeleton,
@@ -34,6 +36,7 @@ import {
   formatKwh,
   formatYen,
   hasEnergyKepcoOther,
+  pickRenamableEnergySources,
   shiftEnergyDate,
 } from "@/lib/energy";
 import type {
@@ -52,6 +55,8 @@ interface PowerDetailPanelProps {
   onUnitPriceSaved: (unitPrice: number) => void;
   /** KEPCOのCSVを取り込んだあと。日別の集計を取り直すために親へ知らせる（#319） */
   onKepcoImported: () => void;
+  /** 取得元の名前を保存したあと。ラベルを付け直すために親へ知らせる（#335） */
+  onSourceNamesSaved: () => void;
 }
 
 /** 「その他」が何かの説明。日別・時間ごとのどちらの一覧の下にも同じものを出す（#319） */
@@ -100,6 +105,7 @@ export function PowerDetailPanel({
   onClose,
   onUnitPriceSaved,
   onKepcoImported,
+  onSourceNamesSaved,
 }: PowerDetailPanelProps) {
   // 親が `open` のときだけマウントするため、初期値をここで決めれば開くたびに入れ直される
   const [priceInput, setPriceInput] = useState(() =>
@@ -116,6 +122,8 @@ export function PowerDetailPanel({
   const [hourlyError, setHourlyError] = useState<string | null>(null);
   // 日付を押すと開くカレンダー（#330）。離れた日へ矢印で何度も送らずに済ませるため
   const [calendarOpen, setCalendarOpen] = useState(false);
+  // 取得元（スマートプラグ）の名前を変えるシート（#335）
+  const [nameSheetOpen, setNameSheetOpen] = useState(false);
 
   useEffect(() => {
     if (tab !== "hourly" || !hourlyDate) return;
@@ -217,7 +225,9 @@ export function PowerDetailPanel({
   const dailyHasKepcoOther = hasEnergyKepcoOther(breakdown?.daily ?? []);
   const selectedRow = sources.find((row) => row.source === selectedSource) ?? null;
 
-  const plugCount = sources.filter((row) => row.source.startsWith("tapo:")).length;
+  // 名前を変えられるのはスマートプラグだけ（#335）。エアコンの名前は「いまの環境の設定」が持つ
+  const renamableSources = pickRenamableEnergySources(sources);
+  const plugCount = renamableSources.length;
   const hasAircon = sources.some((row) => row.source === "aircon");
   const subtitle = [
     hasAircon ? "エアコン" : null,
@@ -279,14 +289,27 @@ export function PowerDetailPanel({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex size-8 shrink-0 items-center justify-center rounded-full hover:bg-accent"
-            aria-label="閉じる"
-          >
-            <X className="size-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {/*
+              取得元の名前の設定（#335）。消費電力カードはカード全体が詳細を開くボタンで、
+              見出しの中にボタンを置けないため、入口はこのヘッダー1か所に持つ。
+              機器を1つ選んだあと（推移の画面）は、その場の設定ではないので出さない。
+            */}
+            {!selectedSource && plugCount > 0 && (
+              <SettingsIconButton
+                label="取得元の名前"
+                onClick={() => setNameSheetOpen(true)}
+              />
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex size-8 shrink-0 items-center justify-center rounded-full hover:bg-accent"
+              aria-label="閉じる"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
 
         <div
@@ -649,6 +672,19 @@ export function PowerDetailPanel({
             setCalendarOpen(false);
           }}
           onClose={() => setCalendarOpen(false)}
+        />
+      )}
+
+      {/* 開いているあいだだけ描く。下書きは sources から作られるため（#335） */}
+      {nameSheetOpen && (
+        <EnergySourceNameSheet
+          sources={renamableSources}
+          colors={colors}
+          onClose={() => setNameSheetOpen(false)}
+          onSave={async (names) => {
+            await updateUiSettings({ energy_source_names: names });
+            onSourceNamesSaved();
+          }}
         />
       )}
     </div>
