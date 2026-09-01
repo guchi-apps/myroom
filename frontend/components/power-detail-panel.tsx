@@ -18,6 +18,7 @@ import {
   formatEnergyHour,
   formatKwh,
   formatYen,
+  hasEnergyKepcoOther,
   shiftEnergyDate,
 } from "@/lib/energy";
 import type {
@@ -34,6 +35,22 @@ interface PowerDetailPanelProps {
   onClose: () => void;
   /** 単価を保存したあと。集計をやり直すために親へ知らせる */
   onUnitPriceSaved: (unitPrice: number) => void;
+  /** KEPCOのCSVを取り込んだあと。日別の集計を取り直すために親へ知らせる（#319） */
+  onKepcoImported: () => void;
+}
+
+/** 「その他」が何かの説明。日別・時間ごとのどちらの一覧の下にも同じものを出す（#319） */
+function KepcoOtherNote() {
+  return (
+    <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <span
+        className="mr-1 inline-block size-2 rounded-[2px] align-middle"
+        style={{ backgroundColor: KEPCO_OTHER_COLOR }}
+        aria-hidden
+      />
+      {KEPCO_OTHER_LABEL} = KEPCO実測（家全体）− エアコン・スマートプラグ実測
+    </p>
+  );
 }
 
 export function Tile({ caption, total }: { caption: string; total: EnergyTotal }) {
@@ -67,6 +84,7 @@ export function PowerDetailPanel({
   breakdown,
   onClose,
   onUnitPriceSaved,
+  onKepcoImported,
 }: PowerDetailPanelProps) {
   // 親が `open` のときだけマウントするため、初期値をここで決めれば開くたびに入れ直される
   const [priceInput, setPriceInput] = useState(() =>
@@ -102,7 +120,9 @@ export function PowerDetailPanel({
     };
   }, [tab, hourlyDate]);
 
-  // KEPCO「みるでん」の時間ごとCSVの取り込み（#302）
+  // KEPCO「みるでん」の時間ごとCSVの取り込み（#302）。
+  // 取り込んだ値は時間ごと・日別の両方の「その他」の元になるため、
+  // 導線はタブに寄せず、どちらのタブを開いていても押せる位置に置く（#319）。
   const kepcoFileInputRef = useRef<HTMLInputElement>(null);
   const [kepcoUploading, setKepcoUploading] = useState(false);
   const [kepcoError, setKepcoError] = useState<string | null>(null);
@@ -118,6 +138,9 @@ export function PowerDetailPanel({
     try {
       const result = await importKepcoCsv(file);
       setKepcoResult(result);
+      // 日別（親が持つ breakdown）と時間ごとの両方を取り直す。
+      // どちらのタブから取り込んでも、閉じずにもう一方へ切り替えれば反映済みになる。
+      onKepcoImported();
       if (hourlyDate) {
         const refreshed = await fetchEnergyHourly(hourlyDate);
         setHourly(refreshed);
@@ -164,6 +187,7 @@ export function PowerDetailPanel({
   const rows = buildEnergyDailyRows(breakdown?.daily ?? []);
   const hourlyColumns = buildEnergyHourlyColumns(hourly, sources, colors);
   const hourlyRows = hourlyColumns.filter((column) => column.kwh != null);
+  const dailyHasKepcoOther = hasEnergyKepcoOther(breakdown?.daily ?? []);
   const selectedRow = sources.find((row) => row.source === selectedSource) ?? null;
 
   const plugCount = sources.filter((row) => row.source.startsWith("tapo:")).length;
@@ -285,36 +309,36 @@ export function PowerDetailPanel({
               </button>
             </div>
 
+            <div className="flex flex-col gap-1">
+              <input
+                ref={kepcoFileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => void handleKepcoFileChange(e)}
+              />
+              <button
+                type="button"
+                onClick={() => kepcoFileInputRef.current?.click()}
+                disabled={kepcoUploading}
+                className="flex items-center gap-1.5 rounded-xl border border-dashed border-[var(--energy-color)] bg-[var(--energy-surface)] px-3 py-2 text-left text-[11.5px] font-bold text-[var(--energy-color)] disabled:opacity-60"
+              >
+                <Upload className="size-3.5 shrink-0" />
+                {kepcoUploading ? "取り込み中..." : "KEPCOの明細（CSV）を取り込む"}
+              </button>
+              {kepcoResult && (
+                <p className="text-[11px] text-muted-foreground">
+                  {kepcoResult.imported_days}日分・{kepcoResult.imported_rows}件を取り込みました
+                  {kepcoResult.period_start && kepcoResult.period_end
+                    ? `（${formatEnergyDate(kepcoResult.period_start)}〜${formatEnergyDate(kepcoResult.period_end)}）`
+                    : ""}
+                </p>
+              )}
+              {kepcoError && <p className="text-[11px] text-destructive">{kepcoError}</p>}
+            </div>
+
             {tab === "hourly" && hourlyDate && (
               <div className="flex flex-col gap-2">
-                <div className="flex flex-col gap-1">
-                  <input
-                    ref={kepcoFileInputRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    className="hidden"
-                    onChange={(e) => void handleKepcoFileChange(e)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => kepcoFileInputRef.current?.click()}
-                    disabled={kepcoUploading}
-                    className="flex items-center gap-1.5 rounded-xl border border-dashed border-[var(--energy-color)] bg-[var(--energy-surface)] px-3 py-2 text-left text-[11.5px] font-bold text-[var(--energy-color)] disabled:opacity-60"
-                  >
-                    <Upload className="size-3.5 shrink-0" />
-                    {kepcoUploading ? "取り込み中..." : "KEPCOの明細（CSV）を取り込む"}
-                  </button>
-                  {kepcoResult && (
-                    <p className="text-[11px] text-muted-foreground">
-                      {kepcoResult.imported_days}日分・{kepcoResult.imported_rows}件を取り込みました
-                      {kepcoResult.period_start && kepcoResult.period_end
-                        ? `（${formatEnergyDate(kepcoResult.period_start)}〜${formatEnergyDate(kepcoResult.period_end)}）`
-                        : ""}
-                    </p>
-                  )}
-                  {kepcoError && <p className="text-[11px] text-destructive">{kepcoError}</p>}
-                </div>
-
                 <div className="flex items-center justify-between text-[13px] font-bold">
                   <button
                     type="button"
@@ -425,16 +449,7 @@ export function PowerDetailPanel({
                       )}
                     </div>
 
-                    {hourly?.sources.includes(KEPCO_OTHER_SOURCE) && (
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">
-                        <span
-                          className="mr-1 inline-block size-2 rounded-[2px] align-middle"
-                          style={{ backgroundColor: KEPCO_OTHER_COLOR }}
-                          aria-hidden
-                        />
-                        {KEPCO_OTHER_LABEL} = KEPCO実測（家全体）− エアコン・スマートプラグ実測
-                      </p>
-                    )}
+                    {hourly?.sources.includes(KEPCO_OTHER_SOURCE) && <KepcoOtherNote />}
                   </>
                 )}
               </div>
@@ -564,6 +579,7 @@ export function PowerDetailPanel({
                     </div>
                   ))
                 )}
+                {dailyHasKepcoOther && <KepcoOtherNote />}
               </div>
             )}
             </div>

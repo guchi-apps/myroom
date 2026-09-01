@@ -122,6 +122,18 @@ const PLUG_COLOR_PALETTE = CHART_COLOR_PALETTE.filter(
 
 export const AIRCON_ENERGY_SOURCE = "aircon";
 
+// ------------------------------------------------------------ KEPCO「その他」（#302／#319）
+//
+// KEPCO CSV実測（家全体）とエアコン・スマートプラグ実測の差分。`backend/energy.py` の
+// `build_hourly`（時間ごと）と `build_breakdown`（日別）が算出する疑似 source で、
+// `breakdown.sources`（機器の一覧）には含まれない。ラベル・色をここで固定し、
+// `buildEnergyStackSegments`・`buildEnergyHourlyColumns` の汎用フォールバックに
+// 頼らないようにする（フォールバックのグレーとたまたま同じ色だが、意味づけが違うため別定数にする）。
+
+export const KEPCO_OTHER_SOURCE = "kepco_other";
+export const KEPCO_OTHER_LABEL = "その他";
+export const KEPCO_OTHER_COLOR = "#95a5a6";
+
 /**
  * 取得元 → 色。エアコンは固定で、それ以外は `sources` の並び順に配色する。
  *
@@ -154,27 +166,46 @@ export interface EnergyStackSegment {
   color: string;
 }
 
-/** 1日ぶんを取得元ごとのセグメントへ。値の無い取得元は入れない */
+/**
+ * 1日ぶんを取得元ごとのセグメントへ。値の無い取得元は入れない。
+ *
+ * 並びは `sources`（サーバーが決めた機器の順）が先で、そこに無い取得元は後ろへ回す。
+ * 「その他」（KEPCO実測との差分・#302／#319）は機器ではないため `sources` に入らないが、
+ * `by_source` には来る。時間ごと（`buildEnergyHourlyColumns`）と同じく、ここで拾って
+ * 専用のラベル・色を当てる。
+ */
 export function buildEnergyStackSegments(
   day: EnergyBreakdownDay,
   sources: readonly EnergySourceRow[],
   colors: Record<string, string>
 ): EnergyStackSegment[] {
-  const total = sources.reduce(
-    (sum, row) => sum + (day.by_source[row.source] ?? 0),
-    0
-  );
+  const labels = new Map(sources.map((row) => [row.source, row.label]));
+  const order = [
+    ...sources.map((row) => row.source),
+    ...Object.keys(day.by_source).filter((source) => !labels.has(source)),
+  ];
+
+  const total = order.reduce((sum, source) => sum + (day.by_source[source] ?? 0), 0);
   if (total <= 0) return [];
 
-  return sources
-    .map((row) => ({
-      source: row.source,
-      label: row.label,
-      kwh: day.by_source[row.source] ?? 0,
-      share: (day.by_source[row.source] ?? 0) / total,
-      color: colors[row.source] ?? "#95a5a6",
-    }))
+  return order
+    .map((source) => {
+      const kwh = day.by_source[source] ?? 0;
+      return {
+        source,
+        label:
+          source === KEPCO_OTHER_SOURCE ? KEPCO_OTHER_LABEL : labels.get(source) ?? source,
+        kwh,
+        share: kwh / total,
+        color: source === KEPCO_OTHER_SOURCE ? KEPCO_OTHER_COLOR : colors[source] ?? "#95a5a6",
+      };
+    })
     .filter((segment) => segment.kwh > 0);
+}
+
+/** 日別に「その他」が1日でも積まれているか。説明の注記を出すかの判定に使う（#319） */
+export function hasEnergyKepcoOther(days: readonly EnergyBreakdownDay[]): boolean {
+  return days.some((day) => (day.by_source[KEPCO_OTHER_SOURCE] ?? 0) > 0);
 }
 
 export interface EnergyStackColumn {
@@ -262,17 +293,6 @@ export function shiftEnergyDate(date: string, days: number): string {
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
 }
-
-// ------------------------------------------------------------ KEPCO「その他」（#302）
-//
-// KEPCO CSV実測（家全体）とエアコン・スマートプラグ実測の差分。`backend/energy.py` の
-// `build_hourly` が算出する疑似 source で、`breakdown.sources`（機器の一覧）には
-// 含まれない。ラベル・色をここで固定し、`buildEnergyHourlyColumns` の汎用フォールバックに
-// 頼らないようにする（フォールバックのグレーとたまたま同じ色だが、意味づけが違うため別定数にする）。
-
-export const KEPCO_OTHER_SOURCE = "kepco_other";
-export const KEPCO_OTHER_LABEL = "その他";
-export const KEPCO_OTHER_COLOR = "#95a5a6";
 
 export interface EnergyHourlySegment {
   source: string;
