@@ -335,6 +335,40 @@ secret / variable で、1Passwordは「人が管理する唯一の正」とし�
 `ssh ... bash -s <<` を `cat <<` へ差し替えて実行すれば、展開後のスクリプトがそのまま出る。
 `bash -n` に通せば構文も確認できる。
 
+## 本番デプロイが起動しないとき
+
+**mainへマージしたのに「Deploy to Production」が1件も作られないことがある。** 実測で
+`deploy.yml`導入後のmainへのマージ55件中1件（#315のv4.8.0）。原因はGitHub側のイベント
+取りこぼしで、**このリポジトリの設定では直せない**（設定で決められるのは「届いたイベントに
+どう反応するか」だけで、今回はイベント自体が届いていない）。
+
+- **見分け方はマージコミットのcheck-suiteが0件かどうか。** 正常時はマージの2〜5秒後に2件
+  作られる。0件なら、そのpushに対してGitHubがワークフローを1つも作っていない。**`push`
+  だけが落ちるのではなく、`issue-labels.yml`の`pull_request(closed)`も同時に落ちる**ので、
+  トリガーを書き足しても救えない
+
+  ```bash
+  gh api repos/guchi-apps/myroom/commits/<マージコミット>/check-suites --jq .total_count
+  ```
+
+- **`.github/workflows/deploy-watchdog.yml`が拾って起動し直す。** mainのHEADの**tree**と
+  `deploy.yml`直近成功実行のtreeを比べ、一致するものが無ければ`deploy.yml`を`--ref main`で
+  起動する。**`schedule`だけには頼れない**——このリポジトリの`*/15`は実測で1日5〜8回しか
+  起動していない（期待96回）。そのため`workflow_run`（`CI`・`Issue Progress`の完了）にも
+  相乗りさせている
+- **手で起動するときは必ず`--ref main`にする。** リリースブランチのref（例:
+  `release-main/v4.8.0`）から起動すると`deploy.yml`の`tag`ジョブが`v<version>`をmain上に
+  無いコミットへ付けてしまい、**以後mainから起動したデプロイはタグ検証で必ず失敗する**
+  （`Tag v4.8.0 already exists on ...`で`tag`がexit 1し、`deploy`はskipされる。#315で実際に
+  起きた。次のバージョンへ上がるまで解消しない）
+
+  ```bash
+  gh workflow run deploy.yml --repo guchi-apps/myroom --ref main
+  ```
+
+- `deploy-retry.yml`は**起動したデプロイが失敗したとき**に1回だけ再実行する仕組みで、
+  **そもそも起動しなかったとき**には何もしない。役割が違うので混同しない
+
 ## マルチエージェント運用（GitHub Actions 無人実行）
 
 `@claude` コメントを起点に、計画提示〜実装〜develop向けPR作成までを GitHub Actions 上で無人実行する。
