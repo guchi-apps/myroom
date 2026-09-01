@@ -263,6 +263,17 @@ export function shiftEnergyDate(date: string, days: number): string {
   return parsed.toISOString().slice(0, 10);
 }
 
+// ------------------------------------------------------------ KEPCO「その他」（#302）
+//
+// KEPCO CSV実測（家全体）とエアコン・スマートプラグ実測の差分。`backend/energy.py` の
+// `build_hourly` が算出する疑似 source で、`breakdown.sources`（機器の一覧）には
+// 含まれない。ラベル・色をここで固定し、`buildEnergyHourlyColumns` の汎用フォールバックに
+// 頼らないようにする（フォールバックのグレーとたまたま同じ色だが、意味づけが違うため別定数にする）。
+
+export const KEPCO_OTHER_SOURCE = "kepco_other";
+export const KEPCO_OTHER_LABEL = "その他";
+export const KEPCO_OTHER_COLOR = "#95a5a6";
+
 export interface EnergyHourlySegment {
   source: string;
   label: string;
@@ -305,10 +316,11 @@ export function buildEnergyHourlyColumns(
             .filter(([, kwh]) => kwh > 0)
             .map(([source, kwh]) => ({
               source,
-              label: labels.get(source) ?? source,
+              label:
+                source === KEPCO_OTHER_SOURCE ? KEPCO_OTHER_LABEL : labels.get(source) ?? source,
               kwh,
               share: total > 0 ? kwh / total : 0,
-              color: colors[source] ?? "#95a5a6",
+              color: source === KEPCO_OTHER_SOURCE ? KEPCO_OTHER_COLOR : colors[source] ?? "#95a5a6",
             }));
 
     return {

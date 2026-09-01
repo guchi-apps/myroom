@@ -361,6 +361,31 @@ describe("時間ごと（#300）", () => {
   it("hourly が無ければ空配列", () => {
     expect(buildEnergyHourlyColumns(null, [], {})).toEqual([]);
   });
+
+  it("KEPCOの「その他」は breakdown.sources に無くても専用のラベル・色になる（#302）", () => {
+    const hours = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      kwh: null as number | null,
+      cost_yen: null as number | null,
+      by_source: {} as Record<string, number>,
+    }));
+    hours[20] = {
+      hour: 20,
+      kwh: 0.9,
+      cost_yen: 28,
+      by_source: { aircon: 0.5, kepco_other: 0.4 },
+    };
+    const breakdown = buildBreakdown();
+    const columns = buildEnergyHourlyColumns(
+      buildHourly({ sources: ["aircon", "kepco_other"], hours }),
+      breakdown.sources,
+      buildEnergySourceColors(breakdown.sources)
+    );
+
+    const other = columns[20].segments.find((segment) => segment.source === "kepco_other");
+    expect(other?.label).toBe("その他");
+    expect(other?.color).toBe("#95a5a6");
+  });
 });
 
 describe("収集が止まっているかの判定", () => {

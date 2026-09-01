@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -1578,6 +1578,35 @@ def get_energy_hourly(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     return energy.get_hourly(db, parsed_date)
+
+
+@app.post("/api/energy/kepco/import")
+async def import_kepco_hourly_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """KEPCO「みるでん」からダウンロードした、時間ごとの電力量CSVを取り込む（#302）。
+
+    `kepco_hourly_usage` へ `(date, hour)` で upsert するため、期間が重なる
+    CSVを何度取り込んでも二重計上しない。消費電力カードの時間ごとタブは、
+    ここで取り込んだ値とエアコン・スマートプラグの実測との差分を「その他」として出す。
+    """
+    raw = await file.read()
+    try:
+        records = kepco_import.parse_csv(raw)
+    except kepco_import.KepcoCsvError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if database.DB_MOCK:
+        return {"status": "mock_ok", **kepco_import.summarize(records)}
+
+    try:
+        result = kepco_import.upsert_kepco_hourly(db, records, now=get_now_jst())
+        return {"status": "ok", **result}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/bills")

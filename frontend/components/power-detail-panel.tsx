@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { fetchEnergyHourly, fetchEnergySummary, updateUiSettings } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Upload, X } from "lucide-react";
+import { fetchEnergyHourly, fetchEnergySummary, importKepcoCsv, updateUiSettings } from "@/lib/api";
 import { PowerSourceDetail } from "@/components/power-source-detail";
 import {
+  KEPCO_OTHER_COLOR,
+  KEPCO_OTHER_LABEL,
+  KEPCO_OTHER_SOURCE,
   buildEnergyDailyRows,
   buildEnergyHourlyColumns,
   buildEnergySourceColors,
@@ -20,6 +23,7 @@ import {
 import type {
   EnergyBreakdown,
   EnergyHourly,
+  EnergyKepcoImportResult,
   EnergySourceSummary,
   EnergyTotal,
 } from "@/lib/types";
@@ -97,6 +101,33 @@ export function PowerDetailPanel({
       cancelled = true;
     };
   }, [tab, hourlyDate]);
+
+  // KEPCO「みるでん」の時間ごとCSVの取り込み（#302）
+  const kepcoFileInputRef = useRef<HTMLInputElement>(null);
+  const [kepcoUploading, setKepcoUploading] = useState(false);
+  const [kepcoError, setKepcoError] = useState<string | null>(null);
+  const [kepcoResult, setKepcoResult] = useState<EnergyKepcoImportResult | null>(null);
+
+  const handleKepcoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 同じファイルを続けて選び直せるようにする
+    if (!file) return;
+    setKepcoUploading(true);
+    setKepcoError(null);
+    setKepcoResult(null);
+    try {
+      const result = await importKepcoCsv(file);
+      setKepcoResult(result);
+      if (hourlyDate) {
+        const refreshed = await fetchEnergyHourly(hourlyDate);
+        setHourly(refreshed);
+      }
+    } catch (err) {
+      setKepcoError(err instanceof Error ? err.message : "CSVを取り込めませんでした");
+    } finally {
+      setKepcoUploading(false);
+    }
+  };
 
   // デバイスをクリックしたときに開く、そのデバイス単体の推移
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
@@ -256,6 +287,34 @@ export function PowerDetailPanel({
 
             {tab === "hourly" && hourlyDate && (
               <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1">
+                  <input
+                    ref={kepcoFileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={(e) => void handleKepcoFileChange(e)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => kepcoFileInputRef.current?.click()}
+                    disabled={kepcoUploading}
+                    className="flex items-center gap-1.5 rounded-xl border border-dashed border-[var(--energy-color)] bg-[var(--energy-surface)] px-3 py-2 text-left text-[11.5px] font-bold text-[var(--energy-color)] disabled:opacity-60"
+                  >
+                    <Upload className="size-3.5 shrink-0" />
+                    {kepcoUploading ? "取り込み中..." : "KEPCOの明細（CSV）を取り込む"}
+                  </button>
+                  {kepcoResult && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {kepcoResult.imported_days}日分・{kepcoResult.imported_rows}件を取り込みました
+                      {kepcoResult.period_start && kepcoResult.period_end
+                        ? `（${formatEnergyDate(kepcoResult.period_start)}〜${formatEnergyDate(kepcoResult.period_end)}）`
+                        : ""}
+                    </p>
+                  )}
+                  {kepcoError && <p className="text-[11px] text-destructive">{kepcoError}</p>}
+                </div>
+
                 <div className="flex items-center justify-between text-[13px] font-bold">
                   <button
                     type="button"
@@ -365,6 +424,17 @@ export function PowerDetailPanel({
                         ))
                       )}
                     </div>
+
+                    {hourly?.sources.includes(KEPCO_OTHER_SOURCE) && (
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        <span
+                          className="mr-1 inline-block size-2 rounded-[2px] align-middle"
+                          style={{ backgroundColor: KEPCO_OTHER_COLOR }}
+                          aria-hidden
+                        />
+                        {KEPCO_OTHER_LABEL} = KEPCO実測（家全体）− エアコン・スマートプラグ実測
+                      </p>
+                    )}
                   </>
                 )}
               </div>

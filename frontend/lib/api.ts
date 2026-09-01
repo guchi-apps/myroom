@@ -15,6 +15,7 @@ import {
   type DeviceInfo,
   type EnergyBreakdown,
   type EnergyHourly,
+  type EnergyKepcoImportResult,
   type EnergySourceSummary,
   type HistoryPoint,
   type LatestData,
@@ -671,6 +672,21 @@ export async function fetchEnergySummary(
 ): Promise<EnergySourceSummary> {
   const params = new URLSearchParams({ source, days: String(days) });
   return fetchJson<EnergySourceSummary>(`/api/energy/summary?${params.toString()}`);
+}
+
+/** KEPCO「みるでん」の時間ごとCSVを取り込む。「その他」（#302）の元データになる */
+export async function importKepcoCsv(file: File): Promise<EnergyKepcoImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchWithAuth("/api/energy/kepco/import", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<EnergyKepcoImportResult>;
 }
 
 /** 電気・ガス料金カード用。はぴeみる電のメール由来の月次請求を取る */
