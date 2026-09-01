@@ -96,4 +96,75 @@ describe("PowerSourceDetail", () => {
     );
     expect(failed).toContain("使用量の推移を読み込めませんでした");
   });
+
+  it("読み込み中は実データと同じ骨格を出す（#329）", () => {
+    const loading = render(
+      <PowerSourceDetail
+        label="冷蔵庫"
+        color="#e67e22"
+        summary={null}
+        loading
+        error={false}
+        placeholderRows={12}
+      />
+    );
+    // 遅らせて出すためのクラスと、タイル・棒グラフ・一覧の枠が揃っていること
+    expect(loading).toContain("skeleton-delayed");
+    expect(loading).toContain("h-[88px]");
+    expect(loading).toContain("h-[110px]");
+    expect(loading.split("h-[19px]").length - 1).toBe(12);
+  });
+
+  it("読み込み表示の行数は上下限に収める（#329）", () => {
+    const few = render(
+      <PowerSourceDetail
+        label="冷蔵庫"
+        color="#e67e22"
+        summary={null}
+        loading
+        error={false}
+        placeholderRows={0}
+      />
+    );
+    expect(few.split("h-[19px]").length - 1).toBe(4);
+
+    const many = render(
+      <PowerSourceDetail
+        label="冷蔵庫"
+        color="#e67e22"
+        summary={null}
+        loading
+        error={false}
+        placeholderRows={200}
+      />
+    );
+    expect(many.split("h-[19px]").length - 1).toBe(30);
+  });
+
+  it("取り直しに失敗しても、取れている内容は出し続ける（#329）", () => {
+    const html = render(
+      <PowerSourceDetail
+        label="冷蔵庫"
+        color="#e67e22"
+        summary={summary}
+        loading={false}
+        error
+      />
+    );
+    expect(html).toContain("¥694");
+    expect(html).not.toContain("使用量の推移を読み込めませんでした");
+  });
+
+  it("失敗し、かつ内容が無ければ案内を出す", () => {
+    const failed = render(
+      <PowerSourceDetail
+        label="冷蔵庫"
+        color="#e67e22"
+        summary={null}
+        loading={false}
+        error
+      />
+    );
+    expect(failed).toContain("使用量の推移を読み込めませんでした");
+  });
 });
