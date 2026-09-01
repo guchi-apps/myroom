@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.8.0",
+    date: "2026-09-01",
+    changes: [
+      "プッシュ通知でゴミの日や室温・湿度の異常を受け取れるようになりました。屋外の地点を複数登録して、地点ごとの今の天気を切り替えて確認できるようになりました。消費電力の時間ごと表示では、KEPCOの検針明細CSVを取り込んで、エアコン・スマートプラグの実測との差分を「その他」として確認できるようになりました。",
+    ],
+  },
+  {
     version: "4.7.0",
     date: "2026-09-01",
     changes: [
