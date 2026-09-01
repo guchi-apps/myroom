@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Upload, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Upload,
+  X,
+} from "lucide-react";
 import { fetchEnergyHourly, fetchEnergySummary, importKepcoCsv, updateUiSettings } from "@/lib/api";
+import { EnergyDateCalendar } from "@/components/energy-date-calendar";
 import { PowerSourceDetail } from "@/components/power-source-detail";
 import {
   EnergyBarChartSkeleton,
@@ -105,6 +114,8 @@ export function PowerDetailPanel({
   const [hourly, setHourly] = useState<EnergyHourly | null>(null);
   const [hourlyLoading, setHourlyLoading] = useState(false);
   const [hourlyError, setHourlyError] = useState<string | null>(null);
+  // 日付を押すと開くカレンダー（#330）。離れた日へ矢印で何度も送らずに済ませるため
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   useEffect(() => {
     if (tab !== "hourly" || !hourlyDate) return;
@@ -378,7 +389,15 @@ export function PowerDetailPanel({
                     <ChevronLeft className="size-4" />
                   </button>
                   <span className="flex items-center gap-1.5">
-                    {formatEnergyDateWithWeekday(hourlyDate)}
+                    <button
+                      type="button"
+                      onClick={() => setCalendarOpen(true)}
+                      aria-label={`日付を選ぶ（いまは${formatEnergyDateWithWeekday(hourlyDate)}）`}
+                      className="flex items-center gap-1.5 rounded-full border bg-muted py-1 pl-2.5 pr-3 tabular-nums hover:bg-accent"
+                    >
+                      <CalendarDays className="size-3.5 shrink-0" />
+                      {formatEnergyDateWithWeekday(hourlyDate)}
+                    </button>
                     {todayIso === hourlyDate && (
                       <span className="rounded-full bg-[var(--energy-surface)] px-1.5 py-px text-[10px] font-bold text-[var(--energy-color)]">
                         今日
@@ -618,6 +637,20 @@ export function PowerDetailPanel({
           )}
         </div>
       </div>
+
+      {/* 開いているあいだだけ描く。表示する月は value から作られるため（#330） */}
+      {calendarOpen && hourlyDate && (
+        <EnergyDateCalendar
+          key={hourlyDate}
+          value={hourlyDate}
+          today={todayIso}
+          onSelect={(date) => {
+            setHourlyDate(date);
+            setCalendarOpen(false);
+          }}
+          onClose={() => setCalendarOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -364,3 +364,48 @@ export function buildEnergyHourlyColumns(
 export function formatEnergyHour(hour: number): string {
   return `${hour}時`;
 }
+
+// ------------------------------------------------ 日付のカレンダー選択（#330）
+
+/** `2026-09-02` → `2026-09` */
+export function energyMonthOf(date: string): string {
+  return date.slice(0, 7);
+}
+
+/** `2026-09` → `2026年9月` */
+export function formatEnergyMonthLabel(month: string): string {
+  const [year, m] = month.split("-").map(Number);
+  if (!year || !m) return month;
+  return `${year}年${m}月`;
+}
+
+/**
+ * `month`（`2026-09`）を `delta` か月ずらす。
+ * 日付と同じくUTC正午を基準にして、タイムゾーンによる月またぎのずれを避ける。
+ */
+export function shiftEnergyMonth(month: string, delta: number): string {
+  const [year, m] = month.split("-").map(Number);
+  if (!year || !m) return month;
+  // 日を1に固定してからずらす。月末（8/31→9/31）で翌々月へ飛ぶのを避けるため
+  const parsed = new Date(Date.UTC(year, m - 1 + delta, 1, 12));
+  return parsed.toISOString().slice(0, 7);
+}
+
+/**
+ * カレンダーに並べる1か月ぶんのマス。日曜始まりの7列に整え、
+ * その月に無いマスは `null`（前後の月の日付は出さない）。
+ */
+export function buildEnergyCalendarWeeks(month: string): (string | null)[][] {
+  const [year, m] = month.split("-").map(Number);
+  if (!year || !m) return [];
+  const first = new Date(Date.UTC(year, m - 1, 1, 12));
+  const daysInMonth = new Date(Date.UTC(year, m, 0, 12)).getUTCDate();
+  const cells: (string | null)[] = Array.from({ length: first.getUTCDay() }, () => null);
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    cells.push(`${month}-${String(day).padStart(2, "0")}`);
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (string | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
