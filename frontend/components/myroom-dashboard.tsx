@@ -636,7 +636,10 @@ export function MyRoomDashboard() {
     };
   }, [reloadUiSettings]);
 
-  /** 単価を変えたあとの再集計。金額はサーバー側で単価を掛けているため取り直す */
+  /**
+   * 日別の集計を取り直す。単価を変えたとき（金額はサーバー側で掛けている）と、
+   * KEPCOのCSVを取り込んだとき（日別の「その他」が変わる・#319）に呼ぶ。
+   */
   const refreshEnergyBreakdown = useCallback(async () => {
     try {
       const breakdown = await fetchEnergyBreakdown();
@@ -1485,6 +1488,9 @@ export function MyRoomDashboard() {
           breakdown={energyBreakdown}
           onClose={() => setEnergyPanelOpen(false)}
           onUnitPriceSaved={() => {
+            void refreshEnergyBreakdown();
+          }}
+          onKepcoImported={() => {
             void refreshEnergyBreakdown();
           }}
         />
