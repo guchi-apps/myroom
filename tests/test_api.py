@@ -342,6 +342,25 @@ def test_outdoor_location_weather_by_id(authed_client):
     assert data["weather_label"] == "晴れ"
 
 
+def test_outdoor_locations_weather_returns_every_location(authed_client):
+    """ダッシュボードは地点ごとにカードを出すため、まとめて取れる必要がある（#321）"""
+    authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    )
+
+    response = authed_client.get("/api/outdoor-locations/weather")
+    assert response.status_code == 200
+    locations = response.json()["locations"]
+
+    listed = authed_client.get("/api/outdoor-locations").json()["locations"]
+    assert [item["id"] for item in locations] == [item["id"] for item in listed]
+    assert {item["name"] for item in locations} >= {"実家"}
+    for item in locations:
+        assert item["temperature"] == 25.0
+        assert item["weather_label"] == "晴れ"
+
+
 def test_outdoor_location_weather_missing_returns_404(authed_client):
     response = authed_client.get("/api/outdoor-locations/does-not-exist/weather")
     assert response.status_code == 404
@@ -467,6 +486,25 @@ def test_aircon_daily_stats_returns_mock_data(authed_client):
     assert "temp_min" in data[0]
     assert "temp_max" in data[0]
     assert "humid_min" not in data[0]
+
+
+def test_ui_settings_keeps_per_location_outdoor_keys(authed_client):
+    """屋外の並び・非表示は地点ごとのキーになる（#321）。DDLも正規化の追加も不要"""
+    created = authed_client.post(
+        "/api/outdoor-locations",
+        json={"name": "実家", "latitude": 35.6895, "longitude": 139.6917},
+    ).json()
+    key = f"outdoor:{created['id']}"
+
+    response = authed_client.put(
+        "/api/ui-settings",
+        json={"display_order": ["device:1", key, "aircon"], "hidden_devices": [key]},
+    )
+    assert response.status_code == 200
+
+    data = authed_client.get("/api/ui-settings").json()
+    assert key in data["display_order"]
+    assert data["hidden_devices"] == [key]
 
 
 def test_ui_settings_get_and_update(authed_client):

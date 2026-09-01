@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   formatOutdoorApiLabel,
+  outdoorLocationWeatherFromLatest,
   pickOutdoorLatestSource,
   resolveOutdoorBatchLoadStatus,
+  resolveOutdoorLocationLoadStatus,
   type LatestData,
+  type OutdoorLocationEntry,
 } from "@/lib/types";
 
 describe("formatOutdoorApiLabel", () => {
@@ -46,5 +49,56 @@ describe("outdoor latest helpers", () => {
     expect(
       resolveOutdoorBatchLoadStatus(latestByDevice, { 2: "ok" })
     ).toBe("empty");
+  });
+});
+
+describe("地点ごとの屋外カード（#321）", () => {
+  const tokyo: OutdoorLocationEntry = {
+    id: "tokyo",
+    name: "東京",
+    latitude: 35.6895,
+    longitude: 139.6917,
+    is_primary: true,
+  };
+
+  it("基準地点は /api/latest の値からカード用の天気を組み立てられる", () => {
+    const weather = outdoorLocationWeatherFromLatest(tokyo, {
+      device_id: 1,
+      outdoor_temperature: 29.8,
+      outdoor_humidity: 62,
+      outdoor_weather_label: "晴れ",
+      outdoor_weather_icon: "sun",
+    });
+
+    expect(weather?.id).toBe("tokyo");
+    expect(weather?.temperature).toBe(29.8);
+    expect(weather?.weather_label).toBe("晴れ");
+  });
+
+  it("屋外の値が無ければ組み立てない", () => {
+    expect(
+      outdoorLocationWeatherFromLatest(tokyo, { device_id: 1, temperature: 24 })
+    ).toBeNull();
+  });
+
+  it("取得に失敗したときだけエラー、値が無いだけなら空として扱う", () => {
+    expect(resolveOutdoorLocationLoadStatus(null, false)).toBe("empty");
+    expect(resolveOutdoorLocationLoadStatus(null, true)).toBe("error");
+    expect(
+      resolveOutdoorLocationLoadStatus(
+        {
+          id: "osaka",
+          name: "大阪",
+          temperature: 31.2,
+          humidity: null,
+          pressure: null,
+          weather_code: null,
+          weather_label: null,
+          weather_icon: null,
+          observed_at: null,
+        },
+        true
+      )
+    ).toBe("ok");
   });
 });

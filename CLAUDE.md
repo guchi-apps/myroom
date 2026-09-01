@@ -223,6 +223,30 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
 今の天気・推移グラフだけが差し替わる（`weather.get_coords()`が`location_id`省略時に基準地点へ
 フォールバックする形にしてある）。
 
+**カードも地点ごとに1枚並べるようにしたのが#321。** 並び順（`display_order`）と非表示
+（`hidden_devices`）のキーを`outdoor`から**`outdoor:<地点ID>`**へ広げた。移行はフロントの
+読み込み時に行い、DDLもデータの書き換えもしていない。
+
+- **旧`outdoor`のキーは「基準地点」として読み替える**（`lib/display-order.ts`の
+  `resolveOutdoorOrderItem()`・`lib/visible-devices.ts`の`normalizeHiddenDeviceKeys()`）。
+  **`backend/ui_settings.py`は1行も変えていない**——`_normalize_display_order()`は任意の文字列を
+  素通しするため、`outdoor:<id>`はそのまま往復する。`DEFAULT_DISPLAY_ORDER`に残る`"outdoor"`は
+  保存のたび末尾へ足されるが、読み込み時に基準地点へ読み替えられて重複として落ちる
+- **推移グラフの屋外ラインとグラフ色は基準地点の1本のまま**（#308の判断を引き継ぐ）。
+  `applyHiddenDevicesToLineVisibility()`には**基準地点のキー**を第4引数で渡す。
+  ここを地点ごとに増やすと`/api/history`のレスポンス形・凡例・色設定まで波及する
+- 地点の数だけ`/api/outdoor-locations/{id}/weather`を叩かずに済むよう
+  `GET /api/outdoor-locations/weather`（全地点ぶん）を足した。`weather.get_outdoor_weather()`の
+  座標ごとのキャッシュ（5分）に乗るので、外部APIの呼び出し回数は増えない
+- **`normalizeDisplayOrder()`はダッシュボードのレンダー時にも通す。** 地点を足した直後は
+  保存済みの並びにその地点が無く、設定を取り直さないとカードが出ないため
+
+**シートの下書きはeffectで詰め直さない。** 開いた地点の値をフォームへ入れるのに
+`useEffect(() => setForm(...), [open, location])`と書くと`react-hooks/set-state-in-effect`の
+**error**が1件増える。呼び出し側が「開いているあいだだけ描く＋`key`に地点IDを渡す」形にして、
+`useState`の初期値で作れば増えない（`components/outdoor-location-sheet.tsx`と
+`device-visibility-page.tsx`の呼び出し）。
+
 ## 収集スクリプトの再送信を時系列データのポーリングに使う（電気代・時間ごと表示）
 
 **「時間ごと」のような、より細かい粒度の表示が要るとき、収集スクリプト自体を変更しなくてよい
@@ -244,6 +268,25 @@ POST し直している（`daily_energy` は同じ `(date, source)` を上書き
 - 同じ考え方が使える場面: 取得元がすでに周期実行されていて、かつ「今の値」だけでなく
   「時間の推移」を新しく見せたいとき。逆に、取得元の実行頻度が要求粒度より粗い場合
   （例: 1日1回しか叩けない外部APIから時間ごとを作りたい場合）は使えない
+
+## 保存していない「疑似 source」を集計のたびに組み立てる（消費電力の「その他」）
+
+**消費電力の「その他」（KEPCO実測 − 機器の実測）は、どのテーブルにも保存していない。**
+`kepco_hourly_usage`（時間ごとの実測）だけを持ち、差分は `backend/energy.py` の
+`build_hourly`（時間ごと・#302）と `build_breakdown`（日別・#319）が算出のたびに組み立てる。
+**日別のために日別テーブルを足す必要はない**——`_fetch_kepco_daily()` が同じ器を
+`SUM(kwh) GROUP BY date` で引くだけで済む（マイグレーションが1行も要らない）。
+
+- **フロントで「その一覧に無い取得元」が落ちないかを確かめる。** 積み上げの組み立ては
+  `buildEnergyStackSegments`（日別）と `buildEnergyHourlyColumns`（時間ごと）の2か所にあり、
+  **`breakdown.sources`（機器の一覧）を起点に回すと疑似 source は黙って消える。**
+  `by_source` のキーを起点にし、`sources` に無いものを後ろへ回す形にすること（#319）
+- **疑似 source を `sources` へ足さないこと。** あの一覧は押すと `/api/energy/summary?source=…`
+  で機器ごとの推移が開くボタンで、`daily_energy` に行が無い「その他」は必ず空になる。
+  代わりに一覧の下へ「その他 = …」の注記を出す（`KepcoOtherNote`）
+- **期間合計（今月・先月）には混ぜない。** KEPCOのCSVは直近1か月強しか落とせないため、
+  混ぜると取り込んだ範囲によって「先月」の金額が動く。**タイルの合計と日別行の合計は
+  一致しない**が、これは意図した状態
 
 ## 掃除記録の「掃除した日」と「登録した日時」
 

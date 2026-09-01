@@ -5,9 +5,12 @@ import {
 } from "@/lib/chart-colors";
 import {
   buildDefaultDisplayOrder,
+  EMPTY_OUTDOOR_ORDER_CONTEXT,
   normalizeDisplayOrder,
   orderItemKey,
+  parseOrderItem,
   type DisplayOrderItem,
+  type OutdoorOrderContext,
 } from "@/lib/display-order";
 import {
   buildDefaultLifeCardOrder,
@@ -24,16 +27,6 @@ const LEGACY_CHART_COLORS_KEY = "myroom_chart_colors";
 const LEGACY_HIDDEN_DEVICES_KEY = "myroom_hidden_devices";
 const MIGRATION_FLAG_KEY = "myroom_ui_settings_migrated";
 
-function parseOrderItem(key: string): DisplayOrderItem | null {
-  if (key === "outdoor") return { type: "outdoor" };
-  if (key === "aircon") return { type: "aircon" };
-  if (key.startsWith("device:")) {
-    const deviceId = Number(key.slice("device:".length));
-    return Number.isFinite(deviceId) ? { type: "device", deviceId } : null;
-  }
-  return null;
-}
-
 function clearLegacyStorage(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem(LEGACY_DISPLAY_ORDER_KEY);
@@ -49,7 +42,8 @@ function discardLegacyLocalStorage(): void {
 }
 
 export async function loadUiSettingsFromServer(
-  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
+  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
+  outdoor: OutdoorOrderContext = EMPTY_OUTDOOR_ORDER_CONTEXT
 ): Promise<{
   displayOrder: DisplayOrderItem[];
   lifeCardOrder: string[];
@@ -66,7 +60,8 @@ export async function loadUiSettingsFromServer(
     settings.display_order
       .map((key) => parseOrderItem(key))
       .filter((item): item is DisplayOrderItem => item != null),
-    sensorDeviceIds
+    sensorDeviceIds,
+    outdoor
   );
 
   const staleAlertExcluded = Array.isArray(settings.stale_alert_excluded_devices)
@@ -77,7 +72,11 @@ export async function loadUiSettingsFromServer(
     displayOrder,
     lifeCardOrder: normalizeLifeCardOrder(settings.life_card_order),
     chartColors: normalizeChartColors(settings.chart_colors),
-    hiddenDeviceKeys: normalizeHiddenDeviceKeys(settings.hidden_devices, sensorDeviceIds),
+    hiddenDeviceKeys: normalizeHiddenDeviceKeys(
+      settings.hidden_devices,
+      sensorDeviceIds,
+      outdoor
+    ),
     staleAlertExcludedKeys: new Set(staleAlertExcluded),
     pressureOffsets: settings.pressure_offsets ?? {},
     lightThresholds: settings.light_thresholds ?? {},
@@ -116,9 +115,12 @@ export async function saveLightThresholdsToServer(
   await updateUiSettings({ light_thresholds: thresholds });
 }
 
-export function getDefaultUiSettings(sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS) {
+export function getDefaultUiSettings(
+  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
+  outdoor: OutdoorOrderContext = EMPTY_OUTDOOR_ORDER_CONTEXT
+) {
   return {
-    displayOrder: buildDefaultDisplayOrder(sensorDeviceIds),
+    displayOrder: buildDefaultDisplayOrder(sensorDeviceIds, outdoor),
     lifeCardOrder: buildDefaultLifeCardOrder(),
     chartColors: buildDefaultChartColors(sensorDeviceIds),
     hiddenDeviceKeys: new Set<string>(),

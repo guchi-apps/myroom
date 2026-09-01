@@ -17,6 +17,7 @@ import {
   formatWatts,
   formatYen,
   hasEnergyData,
+  hasEnergyKepcoOther,
   isEnergyStale,
   shiftEnergyDate,
 } from "@/lib/energy";
@@ -223,6 +224,47 @@ describe("積み上げ", () => {
     expect(columns.map((column) => Number(column.ratio.toFixed(2)))).toEqual([
       1, 0.8, 0.61,
     ]);
+  });
+
+  it("KEPCOの「その他」は breakdown.sources に無くても機器の後ろに積む（#319）", () => {
+    const breakdown = buildBreakdown();
+    const colors = buildEnergySourceColors(breakdown.sources);
+    const segments = buildEnergyStackSegments(
+      {
+        date: "2026-08-22",
+        kwh: 4.0,
+        cost_yen: 124,
+        by_source: { aircon: 1.86, kepco_other: 1.28, "tapo:冷蔵庫": 0.86 },
+      },
+      breakdown.sources,
+      colors
+    );
+
+    expect(segments.map((segment) => segment.source)).toEqual([
+      "aircon",
+      "tapo:冷蔵庫",
+      "kepco_other",
+    ]);
+    const other = segments[2];
+    expect(other.label).toBe("その他");
+    expect(other.color).toBe("#95a5a6");
+    expect(other.share).toBeCloseTo(1.28 / 4.0);
+    expect(segments.reduce((sum, segment) => sum + segment.share, 0)).toBeCloseTo(1);
+  });
+
+  it("「その他」が1日でもあれば注記を出す（#319）", () => {
+    expect(hasEnergyKepcoOther(buildBreakdown().daily)).toBe(false);
+    expect(
+      hasEnergyKepcoOther([
+        { date: "2026-08-21", kwh: 1.0, cost_yen: 31, by_source: { aircon: 1.0 } },
+        {
+          date: "2026-08-22",
+          kwh: 2.0,
+          cost_yen: 62,
+          by_source: { aircon: 1.0, kepco_other: 1.0 },
+        },
+      ])
+    ).toBe(true);
   });
 
   it("記録の無い日は棒を作らない（0kWhとして描かない）", () => {

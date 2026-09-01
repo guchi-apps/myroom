@@ -266,6 +266,18 @@ def test_energy_breakdown_returns_mock_data(authed_client):
     assert round(sum(day["by_source"].values()), 2) == day["kwh"]
 
 
+def test_energy_breakdown_returns_kepco_other_for_imported_days(authed_client):
+    """取り込み済みの日には日別にも「その他」が乗り、直近2日（未取り込み）には乗らない（#319）。"""
+    response = authed_client.get("/api/energy/breakdown")
+    assert response.status_code == 200
+    payload = response.json()
+    with_other = [day for day in payload["daily"] if "kepco_other" in day["by_source"]]
+    assert with_other, "取り込み済みの日には「その他」が乗る"
+    assert "kepco_other" not in payload["daily"][-1]["by_source"]
+    # 機器の一覧（凡例）には出さない
+    assert all(row["source"] != "kepco_other" for row in payload["sources"])
+
+
 def test_energy_post_accepts_watts(client):
     response = client.post(
         "/api/energy",
@@ -375,6 +387,98 @@ def test_build_hourly_kepco_only_has_data_without_device_readings():
     assert hour20["cost_yen"] == round(energy.resolve_cost(0.4, None, 31.0))
     hour0 = next(row for row in result["hours"] if row["hour"] == 0)
     assert hour0["kwh"] is None
+
+
+def _kepco_daily(values):
+    """(日付文字列, kWh) の並びから `_fetch_kepco_daily` 相当の行を作る。"""
+    return [
+        {"date": datetime.date.fromisoformat(date), "kwh": kwh} for date, kwh in values
+    ]
+
+
+def test_build_breakdown_adds_kepco_other_as_the_gap():
+    """日別でも、KEPCO実測（家全体）と機器の実測の差が「その他」になる（#319）。"""
+    rows = _mixed_rows(
+        [
+            ("2026-08-22", "aircon", 1.86, None),
+            ("2026-08-22", "tapo:冷蔵庫", 0.86, 38.2),
+        ]
+    )
+    result = energy.build_breakdown(
+        rows,
+        datetime.date(2026, 8, 22),
+        31.0,
+        kepco_daily=_kepco_daily([("2026-08-22", 4.0)]),
+    )
+    day = result["daily"][0]
+    assert day["by_source"] == {"aircon": 1.86, "tapo:冷蔵庫": 0.86, "kepco_other": 1.28}
+    assert day["kwh"] == 4.0
+    # 機器ぶんの84円に「その他」1.28 kWh × 31円（39.7円）が乗る
+    assert day["cost_yen"] == 124
+
+
+def test_build_breakdown_clamps_kepco_other_to_zero_when_devices_exceed_it():
+    rows = _mixed_rows([("2026-08-22", "aircon", 3.0, None)])
+    result = energy.build_breakdown(
+        rows,
+        datetime.date(2026, 8, 22),
+        31.0,
+        kepco_daily=_kepco_daily([("2026-08-22", 2.4)]),
+    )
+    day = result["daily"][0]
+    assert "kepco_other" not in day["by_source"]
+    assert day["kwh"] == 3.0
+
+
+def test_build_breakdown_kepco_only_days_still_appear():
+    """機器の記録が1件も無い日でも、取り込んだCSVだけで1日ぶんが立つ（#319）。"""
+    result = energy.build_breakdown(
+        [],
+        datetime.date(2026, 8, 22),
+        31.0,
+        kepco_daily=_kepco_daily([("2026-08-20", 5.0)]),
+    )
+    assert result["daily"] == [
+        {
+            "date": "2026-08-20",
+            "kwh": 5.0,
+            "cost_yen": 155,
+            "by_source": {"kepco_other": 5.0},
+        }
+    ]
+    # 機器の一覧には入れない（押しても開く先が無いため）
+    assert result["sources"] == []
+
+
+def test_build_breakdown_keeps_kepco_other_out_of_period_totals():
+    """CSVは直近1か月強しか落とせないため、月合計へ混ぜると取り込み範囲で金額が動く（#319）。"""
+    rows = _mixed_rows([("2026-08-22", "aircon", 1.0, None)])
+    result = energy.build_breakdown(
+        rows,
+        datetime.date(2026, 8, 22),
+        31.0,
+        kepco_daily=_kepco_daily([("2026-08-22", 4.0)]),
+    )
+    assert result["today"]["kwh"] == 1.0
+    assert result["this_month"]["kwh"] == 1.0
+    assert result["daily"][0]["kwh"] == 4.0
+
+
+def test_build_breakdown_ignores_kepco_outside_the_history_window():
+    result = energy.build_breakdown(
+        [],
+        datetime.date(2026, 8, 22),
+        31.0,
+        history_days=7,
+        kepco_daily=_kepco_daily([("2026-08-01", 5.0), ("2026-08-20", 5.0)]),
+    )
+    assert [day["date"] for day in result["daily"]] == ["2026-08-20"]
+
+
+def test_build_breakdown_without_kepco_daily_matches_previous_behaviour():
+    rows = _mixed_rows([("2026-08-22", "aircon", 1.86, None)])
+    result = energy.build_breakdown(rows, datetime.date(2026, 8, 22), 31.0)
+    assert result["daily"][0]["by_source"] == {"aircon": 1.86}
 
 
 def test_build_hourly_without_kepco_hours_matches_previous_behaviour():

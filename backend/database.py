@@ -460,6 +460,32 @@ def generate_mock_kepco_hourly(date: datetime.date, days: int = 40) -> list:
     ]
 
 
+def generate_mock_kepco_daily(start: datetime.date, end: datetime.date) -> list:
+    """モック用のKEPCO日別実測（家全体、#319）。
+
+    実データ側と同じく `kepco_hourly_usage` を日ごとに合算した形にしたいので、
+    時間ごとのモックをそのまま足し上げる。**直近2日ぶんはわざと外す**——CSVは
+    後追いでしか落とせないため、「取り込み済みの日にだけ『その他』が乗る」状態を
+    モックでも確かめられるようにする。
+    """
+    today = _today_jst()
+    latest = min(end, today - datetime.timedelta(days=2))
+
+    rows = []
+    date = start
+    while date <= latest:
+        hours = generate_mock_kepco_hourly(date)
+        if hours:
+            rows.append(
+                {
+                    "date": date,
+                    "kwh": round(sum(hour["kwh"] for hour in hours), 3),
+                }
+            )
+        date += datetime.timedelta(days=1)
+    return rows
+
+
 #: モックの請求（電気）。(請求月からさかのぼる月数, 金額, kWh)。
 #: 実データと同じ「夏と冬が高い」形にしておかないと、グラフの見た目が確かめられない。
 MOCK_ELECTRICITY_BILLS = (

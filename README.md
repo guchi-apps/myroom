@@ -460,6 +460,33 @@ curl -X POST "https://myroom.gucchii.com/api/energy" \
 python3 migrate_db.py   # daily_energy テーブルの作成と power_w 列の追加
 ```
 
+### 時間ごとの電力使用量（KEPCO「みるでん」のCSV）
+
+消費電力カードをタップして開く詳細パネルには「日別」と「時間ごと」のタブがあります。
+「時間ごと」は、エアコン・スマートプラグの受信のたびに記録した当日累計のスナップショット
+（`energy_readings`）の差分から、その日の時間帯ごとの使用量を出します。**記録し始めた日より
+前は遡れません**（無い日は「この日の時間ごとの記録はありません」と出ます）。
+
+家全体の実測は関西電力の会員サイト「みるでん」からCSVで取り込みます。**取得先はここだけです。**
+
+| 用途 | URL |
+|------|-----|
+| 時間ごとCSVのダウンロード（関西電力「みるでん」・要ログイン） | https://kepco.jp/miruden/mypage/download |
+| API（CSVの取り込み POST・要ログイン） | https://myroom.gucchii.com/api/energy/kepco/import |
+| API（時間ごとの内訳 GET・要ログイン） | https://myroom.gucchii.com/api/energy/hourly |
+
+- **アプリからも同じURLへ飛べます。** 詳細パネルの「時間ごと」タブにある
+  「KEPCOの明細（CSV）を取り込む」ボタンの下に、ダウンロードページへのリンクがあります
+  （`frontend/lib/energy.ts` の `KEPCO_MIRUDEN_DOWNLOAD_URL`）。**リンクを増やすと片方が古くなるため、
+  貼るのはこの1か所だけにします**
+- 落としたCSVをそのままボタンから選ぶと、`kepco_hourly_usage` へ `(date, hour)` で upsert します。
+  期間が重なるCSVを何度取り込んでも二重計上にはなりません
+- **みるでんのCSVはローリングウィンドウ（直近1か月強）です。** 過去分を残したいなら定期的に
+  取り込む必要があります。CSVは年を持たず `MM/DD` だけなので、`backend/kepco_import.py` が
+  ヘッダーの「データ抽出対象期間」から年を復元します
+- 時間ごとのグラフに出る**「その他」= KEPCO実測（家全体）− エアコン・スマートプラグ実測**です。
+  取り込んだ日だけ出ます
+
 ### 消費電力の収集（Tapo スマートプラグ + サブPC）
 
 TP-Link Tapo スマートプラグ（P110 系）の消費電力を LAN 経由で読み、日別の使用量として

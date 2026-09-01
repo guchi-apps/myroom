@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import database, ui_settings
@@ -26,7 +27,9 @@ TAPO_SOURCE_PREFIX = "tapo:"
 
 #: KEPCO実測とエアコン・スマートプラグ実測の差分（#302）に使う疑似 source。
 #: 実体のある機器ではないため `daily_energy`/`energy_readings` には保存せず、
-#: 時間ごと表示（`build_hourly`）が算出のたびに組み立てる。
+#: 時間ごと表示（`build_hourly`）と日別表示（`build_breakdown`、#319）が
+#: 算出のたびに組み立てる。取り込み済みのCSVは `kepco_hourly_usage` の1つだけで、
+#: 日別はそれを日ごとに合算して使う（日別用のテーブルは作らない）。
 KEPCO_OTHER_SOURCE = "kepco_other"
 
 #: ダッシュボードのカードが使う日別データの本数（直近30日ぶん）
@@ -360,8 +363,20 @@ def build_breakdown(
     today: datetime.date,
     unit_price: float,
     history_days: int = DEFAULT_HISTORY_DAYS,
+    kepco_daily: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """カードと詳細パネルが必要とするものをまとめて作る。DBアクセスを含まない。"""
+    """カードと詳細パネルが必要とするものをまとめて作る。DBアクセスを含まない。
+
+    `kepco_daily`（KEPCO CSV由来の実測を日ごとに合算したもの、#319）を渡すと、
+    その日のエアコン・スマートプラグ実測との差分を `KEPCO_OTHER_SOURCE`（「その他」）
+    として `daily` へ積む。考え方は時間ごと（`build_hourly`）と同じで、KEPCO実測の
+    ほうが小さいときは0に丸め、マイナスにはしない。
+
+    **積むのは `daily` だけで、期間合計（`today`/`this_month`/`last_month`/
+    `last_month_to_date`）と取得元一覧（`sources`）には入れない。** CSVは直近1か月強
+    しか落とせないため、月合計へ混ぜると取り込んだ範囲によって「先月」の金額が動く。
+    `sources` は押すと機器ごとの推移が開く一覧で、「その他」には開く先が無い。
+    """
     month_start = _month_start(today)
     prev_month_start = _previous_month_start(today)
     prev_month_end = month_start - datetime.timedelta(days=1)
@@ -421,6 +436,28 @@ def build_breakdown(
         if cost is not None:
             day["cost_yen"] += cost
 
+    # KEPCO実測（家全体）との差分を「その他」として積む（#319）。
+    # 機器の記録が1件も無い日でも、KEPCOだけで1日ぶんの棒が立つ。
+    for item in kepco_daily or []:
+        date = item["date"]
+        if item.get("kwh") is None or not in_range({"date": date}, history_start, today):
+            continue
+        day = daily_map.get(date)
+        other_kwh = max(0.0, float(item["kwh"]) - (day["kwh"] if day else 0.0))
+        if other_kwh <= 0:
+            continue
+        if day is None:
+            day = daily_map.setdefault(
+                date, {"date": date, "kwh": 0.0, "cost_yen": 0.0, "by_source": {}}
+            )
+        # 内訳の丸めは機器の行（小数2桁）に揃える。時間ごとは値が小さいので3桁だが、
+        # 日別で3桁にすると「内訳を足すと合計になる」がずれて見える
+        day["by_source"][KEPCO_OTHER_SOURCE] = round(other_kwh, 2)
+        day["kwh"] += other_kwh
+        other_cost = resolve_cost(other_kwh, None, unit_price)
+        if other_cost is not None:
+            day["cost_yen"] += other_cost
+
     daily = [
         {
             "date": day["date"].isoformat(),
@@ -478,24 +515,51 @@ def build_breakdown(
     }
 
 
+def _fetch_kepco_daily(
+    db: Session, start: datetime.date, end: datetime.date
+) -> List[Dict[str, Any]]:
+    """`kepco_hourly_usage` を日ごとに合算して引く（#319）。
+
+    時間ごと（`_fetch_kepco_hours`）は1日ぶんを時間の並びで返すが、日別が要るのは
+    「その日いくら使ったか」だけなので、SQL側で合計してしまう。
+    """
+    rows = (
+        db.query(
+            database.KepcoHourlyUsageRecord.date,
+            func.sum(database.KepcoHourlyUsageRecord.kwh),
+        )
+        .filter(
+            database.KepcoHourlyUsageRecord.date >= start,
+            database.KepcoHourlyUsageRecord.date <= end,
+        )
+        .group_by(database.KepcoHourlyUsageRecord.date)
+        .order_by(database.KepcoHourlyUsageRecord.date.asc())
+        .all()
+    )
+    return [{"date": date, "kwh": float(total)} for date, total in rows if total is not None]
+
+
 def get_breakdown(
     db: Optional[Session],
     today: datetime.date,
     history_days: int = DEFAULT_HISTORY_DAYS,
 ) -> Dict[str, Any]:
     unit_price = get_unit_price(db)
+    # 「その他」を積むのは日別の一覧だけなので、KEPCO は履歴の範囲だけ引けばよい
+    history_start = today - datetime.timedelta(days=history_days - 1)
 
     if database.DB_MOCK or db is None:
         rows = database.generate_mock_energy_rows()
+        kepco_daily = database.generate_mock_kepco_daily(history_start, today)
     else:
         # 先月ぶんの集計にも足りるよう、月初より前から引く
-        start = min(
-            _previous_month_start(today),
-            today - datetime.timedelta(days=history_days - 1),
-        )
+        start = min(_previous_month_start(today), history_start)
         rows = fetch_all_rows(db, start, today)
+        kepco_daily = _fetch_kepco_daily(db, history_start, today)
 
-    return build_breakdown(rows, today, unit_price, history_days=history_days)
+    return build_breakdown(
+        rows, today, unit_price, history_days=history_days, kepco_daily=kepco_daily
+    )
 
 
 # --------------------------------------------------------------- 時間ごと（#300）

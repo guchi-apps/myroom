@@ -36,7 +36,8 @@ import {
   fetchDevices,
   fetchEnergyBreakdown,
   fetchGarbageSchedule,
-  fetchOutdoorLocation,
+  fetchOutdoorLocations,
+  fetchOutdoorLocationsWeather,
   fetchAirconUnitsResponse,
   fetchRemoteButtons,
   fetchSensorsStatus,
@@ -56,7 +57,7 @@ import { useChartHistory } from "@/lib/use-chart-history";
 import {
   buildAirconReadings,
   buildIndoorReadings,
-  buildOutdoorReadings,
+  buildOutdoorLocationReadings,
   formatReading,
   pickCardReadings,
   type MetricReading,
@@ -64,7 +65,11 @@ import {
 import {
   DISPLAY_ORDER_CHANGED_EVENT,
   buildDefaultDisplayOrder,
+  normalizeDisplayOrder,
+  orderItemKey,
+  outdoorOrderKey,
   type DisplayOrderItem,
+  type OutdoorOrderContext,
 } from "@/lib/display-order";
 import {
   buildDefaultChartColors,
@@ -139,11 +144,12 @@ import {
   buildAirconStatusPill,
   getSensorDeviceIds,
   formatOutdoorApiLabel,
+  outdoorLocationWeatherFromLatest,
   pickOutdoorLatestSource,
   PRIMARY_SENSOR_DEVICE_ID,
   resolveAirconDataLoadStatus,
   resolveLatestDataLoadStatus,
-  resolveOutdoorBatchLoadStatus,
+  resolveOutdoorLocationLoadStatus,
   type AirconControlState,
   type AirconData,
   type AirconUnitInfo,
@@ -154,7 +160,8 @@ import {
   type DeviceInfo,
   type EnergyBreakdown,
   type LatestData,
-  type OutdoorLocation,
+  type OutdoorLocationEntry,
+  type OutdoorLocationWeather,
   type SensorDeviceStatus,
   type UtilityBillSummary,
 } from "@/lib/types";
@@ -337,8 +344,15 @@ export function MyRoomDashboard() {
   const [chartMetric, setChartMetric] = useState<ChartMetric>("temperature");
   const [viewRange, setViewRange] = useState<ChartViewRange>("day");
   const [dailyLimit, setDailyLimit] = useState(7);
-  const [outdoorLocation, setOutdoorLocation] = useState<OutdoorLocation | null>(null);
+  // 屋外の地点は複数登録できる（#308）。#321でカードも地点ごとに1枚並べる
+  const [outdoorLocations, setOutdoorLocations] = useState<OutdoorLocationEntry[]>([]);
+  const [outdoorWeatherById, setOutdoorWeatherById] = useState<
+    Record<string, OutdoorLocationWeather>
+  >({});
+  const [outdoorWeatherFailed, setOutdoorWeatherFailed] = useState(false);
   const [outdoorPanelOpen, setOutdoorPanelOpen] = useState(false);
+  /** 押した屋外カードの地点。詳細パネルはこの地点を選んだ状態で開く（#321） */
+  const [outdoorPanelLocationId, setOutdoorPanelLocationId] = useState<string | null>(null);
   const [trendPanelOpen, setTrendPanelOpen] = useState(false);
   const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   const [devicePanelId, setDevicePanelId] = useState(PRIMARY_SENSOR_DEVICE_ID);
@@ -408,14 +422,29 @@ export function MyRoomDashboard() {
 
   const sensorDeviceIds = useMemo(() => getSensorDeviceIds(devices), [devices]);
 
+  const primaryOutdoorLocation = useMemo(
+    () => outdoorLocations.find((loc) => loc.is_primary) ?? outdoorLocations[0] ?? null,
+    [outdoorLocations]
+  );
+
+  // 並び順・非表示のキーを地点ごとに引くための材料（#321）
+  const outdoorOrderContext = useMemo<OutdoorOrderContext>(
+    () => ({
+      locationIds: outdoorLocations.map((loc) => loc.id),
+      primaryId: primaryOutdoorLocation?.id ?? null,
+    }),
+    [outdoorLocations, primaryOutdoorLocation]
+  );
+
   const effectiveLineVisibility = useMemo(
     () =>
       applyHiddenDevicesToLineVisibility(
         defaultLineVisibility,
         hiddenDeviceKeys,
-        sensorDeviceIds
+        sensorDeviceIds,
+        outdoorOrderKey(primaryOutdoorLocation?.id)
       ),
-    [defaultLineVisibility, hiddenDeviceKeys, sensorDeviceIds]
+    [defaultLineVisibility, hiddenDeviceKeys, sensorDeviceIds, primaryOutdoorLocation]
   );
 
   const visibleSensorDeviceIds = useMemo(
@@ -428,9 +457,16 @@ export function MyRoomDashboard() {
     [sensorDeviceIds, hiddenDeviceKeys]
   );
 
+  // 地点を足した直後は保存済みの並びにその地点が無い。設定を取り直さずに済むよう、
+  // ここで毎回いまの地点一覧に照らして整える（#321）
+  const normalizedDisplayOrder = useMemo(
+    () => normalizeDisplayOrder(displayOrder, sensorDeviceIds, outdoorOrderContext),
+    [displayOrder, sensorDeviceIds, outdoorOrderContext]
+  );
+
   const visibleDisplayOrder = useMemo(
-    () => filterDisplayOrderByVisibility(displayOrder, hiddenDeviceKeys),
-    [displayOrder, hiddenDeviceKeys]
+    () => filterDisplayOrderByVisibility(normalizedDisplayOrder, hiddenDeviceKeys),
+    [normalizedDisplayOrder, hiddenDeviceKeys]
   );
 
   // 暮らしのカードは設定した順に並べ、隠したものだけを落とす（#283）
@@ -483,7 +519,13 @@ export function MyRoomDashboard() {
     setAirconLatest(snapshot.airconLatest);
     setDevices(snapshot.devices);
     setAirconUnits(snapshot.airconUnits);
-    setOutdoorLocation(snapshot.outdoorLocation);
+    setOutdoorLocations(snapshot.outdoorLocations ?? []);
+    setOutdoorWeatherById(
+      Object.fromEntries(
+        (snapshot.outdoorWeathers ?? []).map((weather) => [weather.id, weather])
+      )
+    );
+    setOutdoorWeatherFailed(false);
     setLatestLoadStatusByDevice(
       buildLoadStatusFromLatest(snapshot.latestByDevice, sensorIds)
     );
@@ -508,7 +550,7 @@ export function MyRoomDashboard() {
 
   const reloadUiSettings = useCallback(async () => {
     try {
-      const settings = await loadUiSettingsFromServer(sensorDeviceIds);
+      const settings = await loadUiSettingsFromServer(sensorDeviceIds, outdoorOrderContext);
       setDisplayOrder(settings.displayOrder);
       setLifeCardOrder(settings.lifeCardOrder);
       setChartColors(settings.chartColors);
@@ -520,7 +562,7 @@ export function MyRoomDashboard() {
         setIsAuthenticated(false);
       }
     }
-  }, [sensorDeviceIds, setIsAuthenticated]);
+  }, [sensorDeviceIds, outdoorOrderContext, setIsAuthenticated]);
 
   const handleLifeCardOrderChange = useCallback(
     (order: string[]) => {
@@ -570,33 +612,39 @@ export function MyRoomDashboard() {
 
     async function bootstrap() {
       try {
-        const [deviceList, airconUnitsResponse, outdoorLoc] = await Promise.all([
+        const [deviceList, airconUnitsResponse, outdoorList] = await Promise.all([
           fetchDevices().catch(() => [] as DeviceInfo[]),
           fetchAirconUnitsResponse().catch(() => ({
             units: [] as AirconUnitInfo[],
             control_enabled: false,
           })),
-          fetchOutdoorLocation().catch(() => null),
+          fetchOutdoorLocations().catch(() => [] as OutdoorLocationEntry[]),
         ]);
         if (cancelled) return;
 
         const sensorIds = getSensorDeviceIds(deviceList);
+        // 並び順・非表示のキーは地点ごとなので、地点の一覧が揃ってから設定を読む（#321）
+        const outdoorContext: OutdoorOrderContext = {
+          locationIds: outdoorList.map((loc) => loc.id),
+          primaryId:
+            (outdoorList.find((loc) => loc.is_primary) ?? outdoorList[0])?.id ?? null,
+        };
         let settings;
         try {
-          settings = await loadUiSettingsFromServer(sensorIds);
+          settings = await loadUiSettingsFromServer(sensorIds, outdoorContext);
         } catch (err) {
           if (err instanceof AuthError) {
             setIsAuthenticated(false);
             return;
           }
-          settings = getDefaultUiSettings(sensorIds);
+          settings = getDefaultUiSettings(sensorIds, outdoorContext);
         }
         if (cancelled) return;
 
         setDevices(deviceList);
         setAirconUnits(airconUnitsResponse.units);
         setAirconControlEnabled(airconUnitsResponse.control_enabled);
-        setOutdoorLocation(outdoorLoc);
+        setOutdoorLocations(outdoorList);
         setDisplayOrder(settings.displayOrder);
         setLifeCardOrder(settings.lifeCardOrder);
         setChartColors(settings.chartColors);
@@ -636,7 +684,10 @@ export function MyRoomDashboard() {
     };
   }, [reloadUiSettings]);
 
-  /** 単価を変えたあとの再集計。金額はサーバー側で単価を掛けているため取り直す */
+  /**
+   * 日別の集計を取り直す。単価を変えたとき（金額はサーバー側で掛けている）と、
+   * KEPCOのCSVを取り込んだとき（日別の「その他」が変わる・#319）に呼ぶ。
+   */
   const refreshEnergyBreakdown = useCallback(async () => {
     try {
       const breakdown = await fetchEnergyBreakdown();
@@ -722,16 +773,27 @@ export function MyRoomDashboard() {
           }
         }
 
-        const [data, sensorsStatus, garbage, energy, remote, bills, cleaning] =
-          await Promise.all([
-            fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
-            fetchSensorsStatus().catch(() => null),
-            fetchGarbageSchedule().catch(() => null),
-            fetchEnergyBreakdown().catch(() => null),
-            fetchRemoteButtons().catch(() => null),
-            fetchBillsSummary().catch(() => null),
-            fetchCleaningSchedule().catch(() => null),
-          ]);
+        const [
+          data,
+          sensorsStatus,
+          garbage,
+          energy,
+          remote,
+          bills,
+          cleaning,
+          outdoorList,
+          outdoorWeathers,
+        ] = await Promise.all([
+          fetchDashboardData(airconLatest?.ac_id ?? 1, visibleSensorDeviceIds, devices),
+          fetchSensorsStatus().catch(() => null),
+          fetchGarbageSchedule().catch(() => null),
+          fetchEnergyBreakdown().catch(() => null),
+          fetchRemoteButtons().catch(() => null),
+          fetchBillsSummary().catch(() => null),
+          fetchCleaningSchedule().catch(() => null),
+          fetchOutdoorLocations().catch(() => null),
+          fetchOutdoorLocationsWeather().catch(() => null),
+        ]);
         setIsOfflineMode(false);
         setOfflineSnapshot(null);
         setLatestByDevice(data.latestByDevice);
@@ -755,6 +817,14 @@ export function MyRoomDashboard() {
         setBillError(bills == null);
         if (cleaning) setCleaningSchedule(cleaning);
         setCleaningError(cleaning == null);
+        // 地点そのものは `/devices` からしか変わらないので、取れなかったときは前回を残す
+        if (outdoorList) setOutdoorLocations(outdoorList);
+        if (outdoorWeathers) {
+          setOutdoorWeatherById(
+            Object.fromEntries(outdoorWeathers.map((weather) => [weather.id, weather]))
+          );
+        }
+        setOutdoorWeatherFailed(outdoorWeathers == null);
         if (reloadHistory) {
           await resetAndLoad();
         }
@@ -806,7 +876,9 @@ export function MyRoomDashboard() {
       historyData,
       devices,
       airconUnits,
-      outdoorLocation,
+      outdoorLocation: primaryOutdoorLocation,
+      outdoorLocations,
+      outdoorWeathers: Object.values(outdoorWeatherById),
     });
 
     if (!snapshot) return;
@@ -822,7 +894,9 @@ export function MyRoomDashboard() {
     historyData,
     devices,
     airconUnits,
-    outdoorLocation,
+    primaryOutdoorLocation,
+    outdoorLocations,
+    outdoorWeatherById,
   ]);
 
   useEffect(() => {
@@ -985,7 +1059,17 @@ export function MyRoomDashboard() {
     };
 
   const outdoorLatest = pickOutdoorLatestSource(latestByDevice);
-  const outdoorReadings = buildOutdoorReadings(outdoorLatest);
+  /**
+   * カードに出す地点ごとの天気（#321）。一括取得がまだ終わっていない・オフラインの
+   * ときだけ、基準地点は `/api/latest` に混ざっている値で埋める。
+   */
+  const resolveOutdoorWeather = (
+    location: OutdoorLocationEntry
+  ): OutdoorLocationWeather | null =>
+    outdoorWeatherById[location.id] ??
+    (location.id === primaryOutdoorLocation?.id
+      ? outdoorLocationWeatherFromLatest(location, outdoorLatest)
+      : null);
   const airconTitle = airconChartTitle;
   /**
    * 「電気の操作」カードからも同じ操作パネルを開けるようにする（#268）。
@@ -1151,18 +1235,22 @@ export function MyRoomDashboard() {
                   );
                 }
 
+                // 屋外は登録した地点のぶんだけカードが並ぶ（#321）。
+                // 地点を持たない項目は、まだ一覧を読めていない場面の基準地点1枚ぶん
                 if (item.type === "outdoor") {
-                  const outdoorLoadStatus = resolveOutdoorBatchLoadStatus(
-                    latestByDevice,
-                    latestLoadStatusByDevice
-                  );
+                  const locationId = item.locationId ?? primaryOutdoorLocation?.id ?? null;
+                  const location =
+                    outdoorLocations.find((loc) => loc.id === locationId) ??
+                    primaryOutdoorLocation;
+                  const outdoorWeather = location ? resolveOutdoorWeather(location) : null;
+                  const outdoorReadings = buildOutdoorLocationReadings(outdoorWeather);
                   return (
                     <DeviceCard
-                      key="outdoor"
-                      title={formatOutdoorApiLabel(outdoorLocation?.name)}
+                      key={orderItemKey(item)}
+                      title={formatOutdoorApiLabel(location?.name)}
                       titleIcon={
                         <WeatherIcon
-                          icon={outdoorLatest?.outdoor_weather_icon}
+                          icon={outdoorWeather?.weather_icon}
                           className="size-4 shrink-0 text-muted-foreground"
                           strokeWidth={1.75}
                         />
@@ -1170,13 +1258,16 @@ export function MyRoomDashboard() {
                       readings={pickCardReadings(outdoorReadings)}
                       metricsState={resolveMetricsDisplayState(
                         outdoorReadings,
-                        outdoorLoadStatus,
+                        resolveOutdoorLocationLoadStatus(
+                          outdoorWeather,
+                          outdoorWeatherFailed
+                        ),
                         dashboardDataLoaded
                       )}
                       badge={
-                        outdoorLatest?.outdoor_weather_label ? (
+                        outdoorWeather?.weather_label ? (
                           <span className="inline-flex w-fit items-center rounded-full bg-muted px-2.5 py-0.5 text-[11.5px] font-bold text-muted-foreground">
-                            {outdoorLatest.outdoor_weather_label}
+                            {outdoorWeather.weather_label}
                           </span>
                         ) : undefined
                       }
@@ -1186,7 +1277,10 @@ export function MyRoomDashboard() {
                           strokeWidth={1.75}
                         />
                       }
-                      onClick={() => setOutdoorPanelOpen(true)}
+                      onClick={() => {
+                        setOutdoorPanelLocationId(location?.id ?? null);
+                        setOutdoorPanelOpen(true);
+                      }}
                     />
                   );
                 }
@@ -1433,7 +1527,7 @@ export function MyRoomDashboard() {
         noMoreOlderData={noMoreOlderData}
         onVisibleDomainChange={ensureVisibleRangeLoaded}
         airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
-        outdoorLocationName={outdoorLocation?.name}
+        outdoorLocationName={primaryOutdoorLocation?.name}
         legendOrder={visibleDisplayOrder}
         chartColors={chartColors}
         lineVisibility={effectiveLineVisibility}
@@ -1467,7 +1561,11 @@ export function MyRoomDashboard() {
       {outdoorPanelOpen && (
         <OutdoorDetailPanel
           open={outdoorPanelOpen}
-          locationName={outdoorLocation?.name}
+          initialLocationId={outdoorPanelLocationId}
+          locationName={
+            outdoorLocations.find((loc) => loc.id === outdoorPanelLocationId)?.name ??
+            primaryOutdoorLocation?.name
+          }
           latest={outdoorLatest}
           chartColors={chartColors}
           lineVisibility={defaultLineVisibility}
@@ -1485,6 +1583,9 @@ export function MyRoomDashboard() {
           breakdown={energyBreakdown}
           onClose={() => setEnergyPanelOpen(false)}
           onUnitPriceSaved={() => {
+            void refreshEnergyBreakdown();
+          }}
+          onKepcoImported={() => {
             void refreshEnergyBreakdown();
           }}
         />
