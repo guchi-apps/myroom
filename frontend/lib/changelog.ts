@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.10.0",
+    date: "2026-09-02",
+    changes: [
+      "消費電力の「時間ごと」表示で、見たい日付をカレンダーから選べるようになりました。あわせて、機器ごとの使用量を見るときの読み込み表示のちらつきを解消しました。",
+    ],
+  },
+  {
     version: "4.9.0",
     date: "2026-09-01",
     changes: [
