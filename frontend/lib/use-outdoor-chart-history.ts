@@ -18,6 +18,8 @@ export interface UseOutdoorChartHistoryOptions {
   offlineHistory?: HistoryPoint[] | null;
   offlineCacheKey?: string | null;
   offlineMode?: boolean;
+  /** 表示する地点のID。省略すると基準地点（#308） */
+  locationId?: string | null;
 }
 
 function filterOutdoorHistory(points: HistoryPoint[]): HistoryPoint[] {
@@ -37,6 +39,7 @@ export function useOutdoorChartHistory(
   const offlineHistory = options?.offlineHistory ?? null;
   const offlineCacheKey = options?.offlineCacheKey ?? null;
   const offlineMode = options?.offlineMode ?? false;
+  const locationId = options?.locationId ?? null;
   const offlineHistoryRef = useRef<HistoryPoint[] | null>(null);
   offlineHistoryRef.current = offlineHistory;
 
@@ -57,8 +60,9 @@ export function useOutdoorChartHistory(
   historyDataRef.current = historyData;
 
   const fetchWindow = useCallback(
-    async (start: Date, end: Date) => fetchOutdoorHistoryWindow(start, end, viewRange),
-    [viewRange]
+    async (start: Date, end: Date) =>
+      fetchOutdoorHistoryWindow(start, end, viewRange, locationId),
+    [viewRange, locationId]
   );
 
   const resetAndLoad = useCallback(async () => {
