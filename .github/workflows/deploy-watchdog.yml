@@ -1,0 +1,139 @@
+name: Deploy Watchdog
+
+# `main`の中身が本番へ出ていない状態を検知し、`deploy.yml`を起動し直す見張り。
+#
+# **これは「デプロイが失敗したとき」の仕組みではない**（それは`deploy-retry.yml`）。
+# こちらが相手にするのは**デプロイが1度も起動しなかったとき**で、原因はGitHub側の
+# イベント取りこぼしにある（#315）。v4.8.0のリリースPR #312 をmainへマージした際、
+# マージコミット`db53cd2`に対してcheck-suiteが**1件も作られず**、`push`も
+# `issue-labels.yml`の`pull_request(closed)`も起動しなかった。
+# **トリガーの書き方では直せない。** 設定が決められるのは「届いたイベントにどう反応するか」
+# だけで、今回はイベント自体が届いていない。実測の頻度は`deploy.yml`導入後のmainへの
+# マージ55件中1件（約2%）。
+#
+# トリガーを3つ持つのは、**mainへのpushという1本の経路に依存しないため**。
+# - workflow_run: このリポジトリで日常的に走るワークフローの完了に相乗りする。
+#   pushとは別の配送経路なので、片方が落ちても次のリポジトリ活動で拾い直せる。
+#   **`workflows:`の値はそれぞれの`name:`と一致していること**（違う名前なら発火しない）。
+#   なお workflow_run はデフォルトブランチ（`develop`）上のファイルでのみ発火する。
+# - schedule: 誰も何もしていない時間帯の保険。**これだけには頼れない。**
+#   このリポジトリの`*/15`は実測で1日5〜8回しか起動していない（期待96回・約6%）。
+# - workflow_dispatch: 手で確かめたいとき用。
+on:
+  workflow_run:
+    workflows:
+      - "CI"
+      - "Issue Progress"
+    types:
+      - completed
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+# 同時に複数走らせても意味が無い（同じ判定を繰り返すだけ）。
+# **cancel-in-progressにはしない。** 判定の途中で消えると起動漏れが残る。
+concurrency:
+  group: deploy-watchdog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # deploy.yml を workflow_dispatch で起動するために必要。
+  # GITHUB_TOKEN が起こしたイベントは通常ワークフローを起動しないが、
+  # workflow_dispatch と repository_dispatch だけは例外として起動する。
+  actions: write
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check whether main is deployed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # mainへのマージ直後は正規のデプロイが起動する時間を待つ。
+          # 正常時は5秒程度で起動するため、10分あれば十分に余裕がある。
+          GRACE_SECONDS: "600"
+        run: |
+          set -euo pipefail
+
+          # ---- mainの現在地 ----------------------------------------------
+          # 比較にはコミットのSHAではなく**tree（中身）のSHA**を使う。
+          # 手動デプロイをリリースブランチのref（例: release-main/v4.8.0）から起動すると
+          # 実行のhead_shaはマージコミットと別物になるが、中身は同じなので
+          # tree同士なら一致する（#315で実際にこの形になった）。
+          MAIN_JSON=$(gh api "repos/${REPO}/commits/main")
+          MAIN_SHA=$(jq -r '.sha' <<<"$MAIN_JSON")
+          MAIN_TREE=$(jq -r '.commit.tree.sha' <<<"$MAIN_JSON")
+          MAIN_DATE=$(jq -r '.commit.committer.date' <<<"$MAIN_JSON")
+          MAIN_EPOCH=$(date -u -d "$MAIN_DATE" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          AGE=$((NOW_EPOCH - MAIN_EPOCH))
+
+          echo "main = ${MAIN_SHA} (tree ${MAIN_TREE}, ${MAIN_DATE}, ${AGE}秒前)"
+
+          if [ "$AGE" -lt "$GRACE_SECONDS" ]; then
+            echo "mainのHEADがまだ新しい（${AGE}秒 < ${GRACE_SECONDS}秒）。正規のデプロイを待つ。"
+            exit 0
+          fi
+
+          # ---- deploy.ymlの直近の実行 ------------------------------------
+          RUNS=$(gh api "repos/${REPO}/actions/workflows/deploy.yml/runs?per_page=20")
+
+          # 実行中・待機中があれば何もしない。
+          # deploy.ymlは concurrency: cancel-in-progress: true なので、
+          # ここで起動すると**動いているデプロイを巻き添えで打ち切ってしまう。**
+          RUNNING=$(jq -r '[.workflow_runs[] | select(.status != "completed")] | length' <<<"$RUNS")
+          if [ "$RUNNING" -gt 0 ]; then
+            echo "実行中・待機中のデプロイが ${RUNNING} 件ある。何もしない。"
+            exit 0
+          fi
+
+          # mainのHEADそのもので成功した実行があれば、それ以上調べる必要は無い。
+          if [ "$(jq -r --arg sha "$MAIN_SHA" \
+                '[.workflow_runs[] | select(.conclusion == "success" and .head_sha == $sha)] | length' \
+                <<<"$RUNS")" -gt 0 ]; then
+            echo "mainのHEAD (${MAIN_SHA}) は本番へ出ている。"
+            exit 0
+          fi
+
+          # SHAが違っても中身が同じなら出ている。**mainのHEADより後に始まった実行だけ**を
+          # 見る（古いtreeへ巻き戻したときに「昔デプロイ済み」と誤判定しないため）。
+          DEPLOYED=""
+          while read -r sha; do
+            [ -n "$sha" ] || continue
+            TREE=$(gh api "repos/${REPO}/commits/${sha}" --jq '.commit.tree.sha' 2>/dev/null || true)
+            echo "  比較: 実行 ${sha} の tree=${TREE:-取得できず}"
+            if [ -n "$TREE" ] && [ "$TREE" = "$MAIN_TREE" ]; then
+              DEPLOYED="$sha"
+              break
+            fi
+          done < <(jq -r --arg since "$MAIN_DATE" \
+            '.workflow_runs[]
+             | select(.conclusion == "success" and .created_at > $since)
+             | .head_sha' <<<"$RUNS" | head -5)
+
+          if [ -n "$DEPLOYED" ]; then
+            echo "mainと同じ中身が ${DEPLOYED} として本番へ出ている。"
+            exit 0
+          fi
+
+          # ---- 取りこぼしていた。起動し直す ------------------------------
+          echo "::warning::mainのHEAD (${MAIN_SHA}) に対応するデプロイが無い。deploy.ymlを起動する。"
+          gh workflow run deploy.yml --repo "${REPO}" --ref main
+
+          {
+            echo "## デプロイの取りこぼしを検知した"
+            echo
+            echo "- main: \`${MAIN_SHA}\`（${MAIN_DATE}・${AGE}秒前）"
+            echo "- このコミットに対応する \`deploy.yml\` の成功実行が見つからなかった"
+            echo "- \`deploy.yml\` を \`--ref main\` で起動した"
+            echo
+            echo "GitHubがmainへのpushイベントを取りこぼした可能性が高い（#315）。"
+            echo "マージコミットの check-suite が0件なら、その裏付けになる。"
+            echo
+            echo "\`\`\`"
+            echo "gh api repos/${REPO}/commits/${MAIN_SHA}/check-suites --jq .total_count"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
