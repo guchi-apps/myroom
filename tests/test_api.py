@@ -890,3 +890,29 @@ def test_cleaning_delete_reports_an_unknown_record(authed_client):
 
     response = authed_client.delete("/api/cleaning/tasks/sink/done/2026-08-25")
     assert response.status_code == 404
+
+
+def test_energy_source_names_reach_the_breakdown_label(authed_client):
+    """画面から付けた別名が、そのまま消費電力の取得元のラベルになる（#335）"""
+    before = authed_client.get("/api/energy/breakdown").json()
+    plug = next(row for row in before["sources"] if row["source"].startswith("tapo:"))
+    assert plug["label"] == plug["default_label"]
+
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={"energy_source_names": {plug["source"]: "キッチンの冷蔵庫"}},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["energy_source_names"] == {plug["source"]: "キッチンの冷蔵庫"}
+
+    after = authed_client.get("/api/energy/breakdown").json()
+    renamed = next(row for row in after["sources"] if row["source"] == plug["source"])
+    assert renamed["label"] == "キッチンの冷蔵庫"
+    # 別名を付けても source と既定の名前は変えない（過去の使用量と切らないため）
+    assert renamed["default_label"] == plug["default_label"]
+
+    # 空にすると既定へ戻る
+    authed_client.put("/api/ui-settings", json={"energy_source_names": {}})
+    restored = authed_client.get("/api/energy/breakdown").json()
+    back = next(row for row in restored["sources"] if row["source"] == plug["source"])
+    assert back["label"] == plug["default_label"]

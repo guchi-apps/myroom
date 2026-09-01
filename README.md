@@ -908,17 +908,25 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
-| `vapid-private-key` | PWAプッシュ通知（Web Push）用のVAPID秘密鍵 PEM（`VAPID_PRIVATE_KEY` として同期） |
-| `vapid-public-key` | PWAプッシュ通知用のVAPID公開鍵（`VAPID_PUBLIC_KEY` として同期。`scripts/generate_vapid_keys.py` の `VAPID_PUBLIC_KEY` 行） |
+| `vapid-private-key` | PWAプッシュ通知（Web Push）用のVAPID秘密鍵（`VAPID_PRIVATE_KEY` として同期）。**PEM ではなく URL-safe base64 の 1 行（43 文字）** |
+| `vapid-public-key` | PWAプッシュ通知用のVAPID公開鍵（`VAPID_PUBLIC_KEY` として同期。URL-safe base64 の 1 行・87 文字） |
 | `vapid-subject` | PWAプッシュ通知用のVAPID subject（`VAPID_SUBJECT` として同期。例: `mailto:you@example.com`） |
 
-**VAPID 鍵の初回登録**（PWA プッシュ通知用・1 回だけ。#293）:
+**VAPID 鍵の初回登録**（PWA プッシュ通知用・1 回だけ。#293・#337）:
 
 ```bash
-./venv/bin/python scripts/generate_vapid_keys.py
+./venv/bin/python scripts/generate_vapid_keys.py --out ~/.cache/myroom-vapid
 ```
 
-出力の `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` を、上記フィールド `vapid-private-key` / `vapid-public-key` / `vapid-subject` にそれぞれ保存してください。秘密鍵は **PEM 形式のまま**（`-----BEGIN PRIVATE KEY-----` から改行付きで）貼り付けます。未設定でもデプロイは失敗せず、プッシュ通知機能だけが無効のままになります。
+`--out` を付けると値を画面に出さず、`vapid-private-key` / `vapid-public-key` の 2 ファイル（パーミッション 600）へ書き出します。`--out` なしで実行すると値をそのまま表示します。書き出した値の 1Password への登録と GitHub secret への同期は `provision-secret.sh` に任せます（手順は Issue #331 を作り直した手作業 Issue にあります）。
+
+```bash
+cd ~/apps/issue-deck && scripts/provision-secret.sh --repo guchi-apps/myroom --key VAPID_PRIVATE_KEY --from-stdin --no-deploy < ~/.cache/myroom-vapid/vapid-private-key
+```
+
+**秘密鍵は PEM 形式では動きません。** `backend/push_notify.py` は環境変数の値をそのまま `pywebpush.webpush(vapid_private_key=...)` へ渡し、pywebpush は `py_vapid.Vapid01.from_string()` で読みます。`from_string()` は改行を落として base64 デコードするだけなので、`-----BEGIN PRIVATE KEY-----` を含む PEM は `Could not deserialize key data` で落ちます。加えて `deploy.yml` の `sync_env_var` は値を `KEY=値` の 1 行として `.env` へ書くため、複数行の PEM は `.env` の書式自体を壊します（python-dotenv が 2 行目以降を別のキーとして読む）。**1Password には必ず 1 行の URL-safe base64 を入れてください。**
+
+未設定でもデプロイは失敗せず、プッシュ通知機能だけが無効のままになります。
 
 **アイテム `Notify`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
 

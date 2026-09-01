@@ -216,3 +216,40 @@ def test_saving_other_settings_keeps_notification_settings(data_dir):
     loaded = ui_settings.get_settings()
     assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED] is False
     assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] == "07:30"
+
+
+def test_energy_source_names_default_is_empty(data_dir):
+    assert ui_settings.get_settings()[ui_settings.SETTING_ENERGY_SOURCE_NAMES] == {}
+
+
+def test_energy_source_names_save_and_load(data_dir):
+    saved = ui_settings.save_settings(
+        {
+            ui_settings.SETTING_ENERGY_SOURCE_NAMES: {
+                "tapo:冷蔵庫": "キッチンの冷蔵庫",
+                # 空文字は「上書きなし」。キーごと落とす
+                "tapo:テレビ": "  ",
+                # 長すぎる名前は入り口で切る
+                "tapo:デスク": "あ" * 30,
+            }
+        }
+    )
+    names = saved[ui_settings.SETTING_ENERGY_SOURCE_NAMES]
+    assert names["tapo:冷蔵庫"] == "キッチンの冷蔵庫"
+    assert "tapo:テレビ" not in names
+    assert names["tapo:デスク"] == "あ" * ui_settings.MAX_ENERGY_SOURCE_NAME_LENGTH
+
+    loaded = ui_settings.get_settings()
+    assert loaded[ui_settings.SETTING_ENERGY_SOURCE_NAMES]["tapo:冷蔵庫"] == "キッチンの冷蔵庫"
+
+
+def test_saving_other_settings_keeps_energy_source_names(data_dir):
+    """save_settings の merged に並べたキーだけが引き継がれる（#258と同種の抜け対策・#335）"""
+    ui_settings.save_settings(
+        {ui_settings.SETTING_ENERGY_SOURCE_NAMES: {"tapo:冷蔵庫": "キッチンの冷蔵庫"}}
+    )
+    saved = ui_settings.save_settings({ui_settings.SETTING_HIDDEN_DEVICES: ["device:2"]})
+    assert saved[ui_settings.SETTING_ENERGY_SOURCE_NAMES] == {"tapo:冷蔵庫": "キッチンの冷蔵庫"}
+
+    loaded = ui_settings.get_settings()
+    assert loaded[ui_settings.SETTING_ENERGY_SOURCE_NAMES] == {"tapo:冷蔵庫": "キッチンの冷蔵庫"}

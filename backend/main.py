@@ -213,6 +213,8 @@ class UiSettingsUpdate(BaseModel):
     #: デバイスID -> 照明の点灯とみなす照度（lx）。入っていないデバイスは判定しない
     light_thresholds: Optional[Dict[str, float]] = None
     energy_unit_price: Optional[float] = None
+    #: 消費電力の取得元（`tapo:冷蔵庫` など） -> 画面に出す別名。空文字を送ると既定へ戻る
+    energy_source_names: Optional[Dict[str, str]] = None
     #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
     #: ゴミの日のPush通知を送るか

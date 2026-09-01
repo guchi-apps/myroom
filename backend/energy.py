@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -37,10 +37,14 @@ DEFAULT_HISTORY_DAYS = 30
 
 
 def source_label(source: str) -> str:
-    """`source` を画面に出す名前へ。
+    """`source` を画面に出す既定の名前へ。
 
     `aircon` → `エアコン`、`tapo:冷蔵庫` → `冷蔵庫`。知らない取得元はそのまま返す
     （取得元が増えたときに、名前が出ないより生の値が出るほうが原因を追える）。
+
+    スマートプラグの名前はTapoアプリで付けたものが収集スクリプト経由で `source` に
+    入っている（`collectors/tapo_to_myroom.py` の `device.alias`）。画面から別名を
+    付けた場合は `resolve_source_label()` がそちらを優先する。
     """
     if source == DEFAULT_SOURCE:
         return "エアコン"
@@ -49,6 +53,26 @@ def source_label(source: str) -> str:
     if source.startswith(TAPO_SOURCE_PREFIX):
         return source[len(TAPO_SOURCE_PREFIX) :] or source
     return source
+
+
+def resolve_source_label(source: str, overrides: Optional[Mapping[str, str]] = None) -> str:
+    """画面に出す名前。画面から付けた別名があればそれを、無ければ既定を返す（#335）。
+
+    **別名を付けても `source` は変えない。** `daily_energy` の主キーは
+    `(date, source)` なので、`source` を書き換えると過去の使用量と切れる。
+    """
+    if overrides:
+        name = overrides.get(source)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return source_label(source)
+
+
+def get_source_names(db: Optional[Session] = None) -> Dict[str, str]:
+    """取得元に付けた別名。保存していなければ空の辞書。"""
+    settings = ui_settings.get_settings(db)
+    names = settings.get(ui_settings.SETTING_ENERGY_SOURCE_NAMES) or {}
+    return dict(names) if isinstance(names, dict) else {}
 
 
 def get_unit_price(db: Optional[Session] = None) -> float:
@@ -364,8 +388,13 @@ def build_breakdown(
     unit_price: float,
     history_days: int = DEFAULT_HISTORY_DAYS,
     kepco_daily: Optional[Sequence[Dict[str, Any]]] = None,
+    source_names: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """カードと詳細パネルが必要とするものをまとめて作る。DBアクセスを含まない。
+
+    `source_names` は画面から付けた別名（#335）。渡すと `label` がそちらになる。
+    `default_label` には別名を当てる前の名前を入れて返すので、設定画面は
+    「Tapoの名前」を出せるし、上書き中かどうかも2つを見比べれば分かる。
 
     `kepco_daily`（KEPCO CSV由来の実測を日ごとに合算したもの、#319）を渡すと、
     その日のエアコン・スマートプラグ実測との差分を `KEPCO_OTHER_SOURCE`（「その他」）
@@ -393,7 +422,8 @@ def build_breakdown(
             row["source"],
             {
                 "source": row["source"],
-                "label": source_label(row["source"]),
+                "label": resolve_source_label(row["source"], source_names),
+                "default_label": source_label(row["source"]),
                 "today_kwh": None,
                 "today_cost_yen": None,
                 "power_w": None,
@@ -558,7 +588,12 @@ def get_breakdown(
         kepco_daily = _fetch_kepco_daily(db, history_start, today)
 
     return build_breakdown(
-        rows, today, unit_price, history_days=history_days, kepco_daily=kepco_daily
+        rows,
+        today,
+        unit_price,
+        history_days=history_days,
+        kepco_daily=kepco_daily,
+        source_names=get_source_names(db),
     )
 
 
