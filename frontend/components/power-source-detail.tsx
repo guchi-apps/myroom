@@ -2,6 +2,12 @@
 
 import { Tile } from "@/components/power-detail-panel";
 import {
+  EnergyBarChartSkeleton,
+  EnergyListSkeleton,
+  EnergySkeletonFrame,
+  EnergyTilesSkeleton,
+} from "@/components/power-skeleton";
+import {
   buildEnergyDailyRows,
   buildEnergySingleColumns,
   energyRowRatio,
@@ -18,6 +24,11 @@ interface PowerSourceDetailProps {
   summary: EnergySourceSummary | null;
   loading: boolean;
   error: boolean;
+  /**
+   * 読み込み表示で並べる日別行の数（#329）。
+   * 取得前は日数が分からないので、親が持っている日別の件数を借りて高さを合わせる。
+   */
+  placeholderRows?: number;
 }
 
 /**
@@ -32,18 +43,22 @@ export function PowerSourceDetail({
   summary,
   loading,
   error,
+  placeholderRows,
 }: PowerSourceDetailProps) {
   if (loading && !summary) {
+    // 実データと同じ骨格を出して、シートの高さを動かさない（#329）
+    const skeletonRows = Math.min(30, Math.max(4, placeholderRows ?? 10));
     return (
-      <div className="flex flex-col gap-2.5">
-        <div className="h-[52px] animate-pulse rounded-2xl bg-muted" />
-        <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
-        <div className="h-3 w-3/5 animate-pulse rounded bg-muted" />
-      </div>
+      <EnergySkeletonFrame>
+        <EnergyTilesSkeleton />
+        <EnergyBarChartSkeleton />
+        <EnergyListSkeleton rows={skeletonRows} />
+      </EnergySkeletonFrame>
     );
   }
 
-  if (error) {
+  // 取り直しに失敗しても、前に取れている内容があればそれを出し続ける
+  if (error && !summary) {
     return (
       <p className="text-sm text-destructive">使用量の推移を読み込めませんでした</p>
     );

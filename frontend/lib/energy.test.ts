@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AIRCON_ENERGY_COLOR,
+  buildEnergyCalendarWeeks,
   buildEnergyComparison,
   buildEnergyDailyRows,
   buildEnergyHourlyColumns,
@@ -8,11 +9,13 @@ import {
   buildEnergySourceColors,
   buildEnergyStackColumns,
   buildEnergyStackSegments,
+  energyMonthOf,
   energyRowRatio,
   energySourceRatio,
   formatEnergyDate,
   formatEnergyDateWithWeekday,
   formatEnergyHour,
+  formatEnergyMonthLabel,
   formatKwh,
   formatWatts,
   formatYen,
@@ -20,6 +23,7 @@ import {
   hasEnergyKepcoOther,
   isEnergyStale,
   shiftEnergyDate,
+  shiftEnergyMonth,
 } from "@/lib/energy";
 import type { EnergyBreakdown, EnergyHourly, EnergySourceRow } from "@/lib/types";
 
@@ -455,5 +459,39 @@ describe("収集が止まっているかの判定", () => {
     );
     expect(hasEnergyData(buildBreakdown({ daily: [] }))).toBe(false);
     expect(hasEnergyData(null)).toBe(false);
+  });
+});
+
+describe("日付のカレンダー（#330）", () => {
+  it("日曜始まりで並び、月初の前は空きマスになる", () => {
+    // 2026-09-01 は火曜。日・月の2マスが空く
+    const weeks = buildEnergyCalendarWeeks("2026-09");
+    expect(weeks[0].slice(0, 3)).toEqual([null, null, "2026-09-01"]);
+    expect(weeks).toHaveLength(5);
+    expect(weeks.every((week) => week.length === 7)).toBe(true);
+  });
+
+  it("月末までを出し、翌月の日付は混ぜない", () => {
+    const days = buildEnergyCalendarWeeks("2026-09").flat().filter(Boolean);
+    expect(days).toHaveLength(30);
+    expect(days[days.length - 1]).toBe("2026-09-30");
+    // 2月は28日（2026年はうるう年ではない）
+    expect(buildEnergyCalendarWeeks("2026-02").flat().filter(Boolean)).toHaveLength(28);
+    expect(buildEnergyCalendarWeeks("2024-02").flat().filter(Boolean)).toHaveLength(29);
+  });
+
+  it("月をずらしても、月末の日数につられて飛ばない", () => {
+    expect(shiftEnergyMonth("2026-08", 1)).toBe("2026-09");
+    expect(shiftEnergyMonth("2026-01", -1)).toBe("2025-12");
+    expect(shiftEnergyMonth("2026-12", 1)).toBe("2027-01");
+    // 31日まである月から、30日までの月・28日までの月へ送っても1か月だけ動く
+    expect(shiftEnergyMonth("2026-03", -1)).toBe("2026-02");
+  });
+
+  it("日付から月を取り出し、年月の見出しにできる", () => {
+    expect(energyMonthOf("2026-09-02")).toBe("2026-09");
+    expect(formatEnergyMonthLabel("2026-09")).toBe("2026年9月");
+    // 「今日の月かどうか」は文字列の大小で判定できる
+    expect(energyMonthOf("2026-09-02") < energyMonthOf("2026-10-01")).toBe(true);
   });
 });

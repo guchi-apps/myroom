@@ -186,3 +186,27 @@
     transform: none;
   }
 }
+
+/*
+ * 読み込み表示（スケルトン）を少し遅らせて薄く出す（#329）。
+ * 取得がすぐ終わるときは何も見せないほうがちらつかないので、
+ * 枠だけ先に置いて（高さは確保したまま）、150ms後に本体を現す。
+ */
+@keyframes skeleton-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.skeleton-delayed {
+  animation: skeleton-fade-in 180ms ease-out 150ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-delayed {
+    animation: none;
+  }
+}

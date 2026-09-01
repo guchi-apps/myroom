@@ -1,9 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Upload, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Upload,
+  X,
+} from "lucide-react";
 import { fetchEnergyHourly, fetchEnergySummary, importKepcoCsv, updateUiSettings } from "@/lib/api";
+import { EnergyDateCalendar } from "@/components/energy-date-calendar";
 import { PowerSourceDetail } from "@/components/power-source-detail";
+import {
+  EnergyBarChartSkeleton,
+  EnergyListSkeleton,
+  EnergySkeletonFrame,
+} from "@/components/power-skeleton";
 import {
   KEPCO_MIRUDEN_DOWNLOAD_URL,
   KEPCO_OTHER_COLOR,
@@ -100,6 +114,8 @@ export function PowerDetailPanel({
   const [hourly, setHourly] = useState<EnergyHourly | null>(null);
   const [hourlyLoading, setHourlyLoading] = useState(false);
   const [hourlyError, setHourlyError] = useState<string | null>(null);
+  // 日付を押すと開くカレンダー（#330）。離れた日へ矢印で何度も送らずに済ませるため
+  const [calendarOpen, setCalendarOpen] = useState(false);
 
   useEffect(() => {
     if (tab !== "hourly" || !hourlyDate) return;
@@ -158,15 +174,25 @@ export function PowerDetailPanel({
   const [sourceSummary, setSourceSummary] = useState<EnergySourceSummary | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState(false);
+  /**
+   * 一度取れたデバイスの推移を、シートを開いているあいだ覚えておく（#329）。
+   * 別のデバイスを見てから戻ったときに読み込み表示を挟まないためだけのもので、
+   * 裏では毎回取り直す（表示は取れた時点で差し替わる）。
+   */
+  const sourceSummaryCache = useRef(new Map<string, EnergySourceSummary>());
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!selectedSource) return;
     let cancelled = false;
-    setSourceSummary(null);
+    // 一覧の途中までスクロールした状態から押されるので、先頭へ戻してから出す
+    scrollRef.current?.scrollTo({ top: 0 });
+    setSourceSummary(sourceSummaryCache.current.get(selectedSource) ?? null);
     setSourceLoading(true);
     setSourceError(false);
     fetchEnergySummary(selectedSource, 30)
       .then((data) => {
+        sourceSummaryCache.current.set(selectedSource, data);
         if (!cancelled) setSourceSummary(data);
       })
       .catch(() => {
@@ -263,7 +289,10 @@ export function PowerDetailPanel({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 [-webkit-overflow-scrolling:touch]">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 [-webkit-overflow-scrolling:touch]"
+        >
           {selectedSource ? (
             <PowerSourceDetail
               label={selectedRow?.label ?? selectedSource}
@@ -271,6 +300,7 @@ export function PowerDetailPanel({
               summary={sourceSummary}
               loading={sourceLoading}
               error={sourceError}
+              placeholderRows={breakdown?.daily.length}
             />
           ) : (
             <div className="flex flex-col gap-4">
@@ -359,7 +389,15 @@ export function PowerDetailPanel({
                     <ChevronLeft className="size-4" />
                   </button>
                   <span className="flex items-center gap-1.5">
-                    {formatEnergyDateWithWeekday(hourlyDate)}
+                    <button
+                      type="button"
+                      onClick={() => setCalendarOpen(true)}
+                      aria-label={`日付を選ぶ（いまは${formatEnergyDateWithWeekday(hourlyDate)}）`}
+                      className="flex items-center gap-1.5 rounded-full border bg-muted py-1 pl-2.5 pr-3 tabular-nums hover:bg-accent"
+                    >
+                      <CalendarDays className="size-3.5 shrink-0" />
+                      {formatEnergyDateWithWeekday(hourlyDate)}
+                    </button>
                     {todayIso === hourlyDate && (
                       <span className="rounded-full bg-[var(--energy-surface)] px-1.5 py-px text-[10px] font-bold text-[var(--energy-color)]">
                         今日
@@ -378,9 +416,12 @@ export function PowerDetailPanel({
                 </div>
 
                 {hourlyLoading ? (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    読み込み中...
-                  </p>
+                  // 日を切り替えるたびに文字1行まで縮むと同じちらつきになるため、
+                  // 実データと同じ骨格を出して高さを保つ（#329）
+                  <EnergySkeletonFrame className="gap-2">
+                    <EnergyBarChartSkeleton bars={24} />
+                    <EnergyListSkeleton rows={10} labelWidth="w-11" trailing={false} />
+                  </EnergySkeletonFrame>
                 ) : hourlyError ? (
                   <p className="py-6 text-center text-sm text-destructive">{hourlyError}</p>
                 ) : !hourly?.has_data ? (
@@ -596,6 +637,20 @@ export function PowerDetailPanel({
           )}
         </div>
       </div>
+
+      {/* 開いているあいだだけ描く。表示する月は value から作られるため（#330） */}
+      {calendarOpen && hourlyDate && (
+        <EnergyDateCalendar
+          key={hourlyDate}
+          value={hourlyDate}
+          today={todayIso}
+          onSelect={(date) => {
+            setHourlyDate(date);
+            setCalendarOpen(false);
+          }}
+          onClose={() => setCalendarOpen(false)}
+        />
+      )}
     </div>
   );
 }
