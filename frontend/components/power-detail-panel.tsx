@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, Upload, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Upload, X } from "lucide-react";
 import { fetchEnergyHourly, fetchEnergySummary, importKepcoCsv, updateUiSettings } from "@/lib/api";
 import { PowerSourceDetail } from "@/components/power-source-detail";
 import {
+  KEPCO_MIRUDEN_DOWNLOAD_URL,
   KEPCO_OTHER_COLOR,
   KEPCO_OTHER_LABEL,
   KEPCO_OTHER_SOURCE,
@@ -326,6 +327,15 @@ export function PowerDetailPanel({
                 <Upload className="size-3.5 shrink-0" />
                 {kepcoUploading ? "取り込み中..." : "KEPCOの明細（CSV）を取り込む"}
               </button>
+              <a
+                href={KEPCO_MIRUDEN_DOWNLOAD_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="flex w-fit items-center gap-1 text-[11px] font-bold text-muted-foreground underline underline-offset-2"
+              >
+                <ExternalLink className="size-3 shrink-0" />
+                KEPCO「みるでん」でCSVをダウンロード
+              </a>
               {kepcoResult && (
                 <p className="text-[11px] text-muted-foreground">
                   {kepcoResult.imported_days}日分・{kepcoResult.imported_rows}件を取り込みました
