@@ -15,8 +15,51 @@ describe("display-order", () => {
     expect(buildDefaultDisplayOrder([1, 2])).toEqual([
       { type: "device", deviceId: 1 },
       { type: "device", deviceId: 2 },
-      { type: "outdoor" },
+      { type: "outdoor", locationId: null },
       { type: "aircon" },
+    ]);
+  });
+
+  it("builds one outdoor item per location", () => {
+    expect(
+      buildDefaultDisplayOrder([1], {
+        locationIds: ["tokyo", "osaka"],
+        primaryId: "tokyo",
+      }).map(orderItemKey)
+    ).toEqual(["device:1", "outdoor:tokyo", "outdoor:osaka", "aircon"]);
+  });
+
+  it("reads the legacy outdoor key as the primary location", () => {
+    const normalized = normalizeDisplayOrder(
+      [{ type: "outdoor" }, { type: "device", deviceId: 1 }, { type: "aircon" }],
+      [1],
+      { locationIds: ["tokyo", "osaka"], primaryId: "tokyo" }
+    );
+
+    expect(normalized.map(orderItemKey)).toEqual([
+      "outdoor:tokyo",
+      "device:1",
+      "aircon",
+      "outdoor:osaka",
+    ]);
+  });
+
+  it("drops outdoor items whose location was deleted", () => {
+    const normalized = normalizeDisplayOrder(
+      [
+        { type: "outdoor", locationId: "gone" },
+        { type: "outdoor", locationId: "tokyo" },
+        { type: "device", deviceId: 1 },
+        { type: "aircon" },
+      ],
+      [1],
+      { locationIds: ["tokyo"], primaryId: "tokyo" }
+    );
+
+    expect(normalized.map(orderItemKey)).toEqual([
+      "outdoor:tokyo",
+      "device:1",
+      "aircon",
     ]);
   });
 

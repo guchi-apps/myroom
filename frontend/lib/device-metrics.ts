@@ -2,6 +2,7 @@ import {
   METRIC_LABELS,
   type ChartMetric,
   type LatestData,
+  type OutdoorLocationWeather,
 } from "@/lib/types";
 
 /**
@@ -102,6 +103,18 @@ export function buildOutdoorReadings(
     temperature: data.outdoor_temperature,
     humidity: data.outdoor_humidity,
     pressure: data.outdoor_pressure,
+  });
+}
+
+/** 地点ごとの「いまの天気」からカードの計測値を作る（#321） */
+export function buildOutdoorLocationReadings(
+  data: OutdoorLocationWeather | null | undefined
+): MetricReading[] {
+  if (!data) return [];
+  return buildReadings({
+    temperature: data.temperature,
+    humidity: data.humidity,
+    pressure: data.pressure,
   });
 }
 

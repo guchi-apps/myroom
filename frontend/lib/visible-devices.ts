@@ -1,6 +1,10 @@
 import {
+  EMPTY_OUTDOOR_ORDER_CONTEXT,
+  LEGACY_OUTDOOR_ORDER_KEY,
   orderItemKey,
+  outdoorOrderKey,
   type DisplayOrderItem,
+  type OutdoorOrderContext,
 } from "@/lib/display-order";
 import {
   AIRCON_TARGET_VISIBILITY_KEY,
@@ -30,14 +34,18 @@ function getStorage(): Pick<Storage, "getItem" | "setItem"> | null {
 }
 
 export function buildAllDashboardTargetKeys(
-  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
+  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
+  outdoorLocationIds: readonly string[] = []
 ): Set<string> {
   const keys = new Set<string>();
   for (const deviceId of sensorDeviceIds) {
     keys.add(orderItemKey({ type: "device", deviceId }));
     keys.add(deviceDht11VisibilityKey(deviceId));
   }
-  keys.add("outdoor");
+  keys.add(LEGACY_OUTDOOR_ORDER_KEY);
+  for (const locationId of outdoorLocationIds) {
+    keys.add(outdoorOrderKey(locationId));
+  }
   keys.add(AIRCON_ROOM_HIDDEN_KEY);
   keys.add(AIRCON_TARGET_VISIBILITY_KEY);
   // 暮らしセクションのカード（display_order には混ぜず、表示・非表示だけ共通で持つ）
@@ -99,9 +107,10 @@ export function setHiddenKeyVisible(
 
 export function normalizeHiddenDeviceKeys(
   saved: readonly string[] | null,
-  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
+  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
+  outdoor: OutdoorOrderContext = EMPTY_OUTDOOR_ORDER_CONTEXT
 ): Set<string> {
-  const validKeys = buildAllDashboardTargetKeys(sensorDeviceIds);
+  const validKeys = buildAllDashboardTargetKeys(sensorDeviceIds, outdoor.locationIds);
   if (!saved?.length) return new Set();
 
   const normalized = new Set<string>();
@@ -109,6 +118,11 @@ export function normalizeHiddenDeviceKeys(
     if (key === "aircon") {
       normalized.add(AIRCON_ROOM_HIDDEN_KEY);
       normalized.add(AIRCON_TARGET_VISIBILITY_KEY);
+      continue;
+    }
+    // 地点を持たない屋外は基準地点を隠していたもの（#308以前）として読み替える
+    if (key === LEGACY_OUTDOOR_ORDER_KEY && outdoor.primaryId) {
+      normalized.add(outdoorOrderKey(outdoor.primaryId));
       continue;
     }
     if (validKeys.has(key)) {
@@ -214,10 +228,15 @@ export function getVisibleChartDeviceIds(
   return ids;
 }
 
+/**
+ * 推移グラフの屋外ラインは基準地点の1本だけ（#321）。カードは地点ごとに増えるが、
+ * ラインを消すのは基準地点のカードを隠したときに限る。
+ */
 export function applyHiddenDevicesToLineVisibility<T extends Record<string, boolean>>(
   lineVisibility: T,
   hiddenKeys: Set<string>,
-  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS
+  sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
+  outdoorPrimaryKey: string = OUTDOOR_VISIBILITY_KEY
 ): T {
   const merged = { ...lineVisibility };
   for (const deviceId of sensorDeviceIds) {
@@ -234,7 +253,7 @@ export function applyHiddenDevicesToLineVisibility<T extends Record<string, bool
       }
     }
   }
-  if (hiddenKeys.has(OUTDOOR_VISIBILITY_KEY)) {
+  if (hiddenKeys.has(outdoorPrimaryKey)) {
     for (const metric of CHART_METRICS) {
       merged[outdoorMetricVisibilityKey(metric) as keyof T] = false as T[keyof T];
     }

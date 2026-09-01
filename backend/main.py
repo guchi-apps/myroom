@@ -1041,6 +1041,38 @@ def list_outdoor_locations(
     return {"locations": outdoor_config.list_locations(db)}
 
 
+def _outdoor_location_weather_payload(loc: dict, db: Session) -> dict:
+    data = weather.get_outdoor_weather(db, location_id=loc["id"])
+    return {
+        "id": loc["id"],
+        "name": loc["name"],
+        "temperature": data["temperature"] if data else None,
+        "humidity": data["humidity"] if data else None,
+        "pressure": data["pressure"] if data else None,
+        "weather_code": data["weather_code"] if data else None,
+        "weather_label": data["weather_label"] if data else None,
+        "weather_icon": data["weather_icon"] if data else None,
+        "observed_at": data["observed_at"] if data else None,
+    }
+
+
+@app.get("/api/outdoor-locations/weather")
+def list_outdoor_locations_weather(
+    db: Session = Depends(database.get_db), _: dict = Depends(get_current_user)
+):
+    """全地点の「いまの天気」をまとめて返す（#321）。
+
+    ダッシュボードは地点ごとに1枚のカードを出すため、地点の数だけ
+    `/api/outdoor-locations/{id}/weather` を叩くと往復が増える。取得そのものは
+    `weather.get_outdoor_weather()` の座標ごとのキャッシュ（5分）に乗るので、
+    まとめて返すだけで外部APIの呼び出しは増えない。
+    """
+    locations = outdoor_config.list_locations(db)
+    return {
+        "locations": [_outdoor_location_weather_payload(loc, db) for loc in locations]
+    }
+
+
 @app.post("/api/outdoor-locations")
 def create_outdoor_location(
     location: OutdoorLocationInput,
@@ -1106,18 +1138,7 @@ def get_outdoor_location_weather(
     loc = outdoor_config.get_location_by_id(location_id, db)
     if loc is None:
         raise HTTPException(status_code=404, detail="location not found")
-    data = weather.get_outdoor_weather(db, location_id=location_id)
-    return {
-        "id": loc["id"],
-        "name": loc["name"],
-        "temperature": data["temperature"] if data else None,
-        "humidity": data["humidity"] if data else None,
-        "pressure": data["pressure"] if data else None,
-        "weather_code": data["weather_code"] if data else None,
-        "weather_label": data["weather_label"] if data else None,
-        "weather_icon": data["weather_icon"] if data else None,
-        "observed_at": data["observed_at"] if data else None,
-    }
+    return _outdoor_location_weather_payload(loc, db)
 
 
 @app.get("/api/outdoor-history")

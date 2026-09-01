@@ -6,6 +6,8 @@ import type {
   HistoryPoint,
   LatestData,
   OutdoorLocation,
+  OutdoorLocationEntry,
+  OutdoorLocationWeather,
 } from "@/lib/types";
 
 export const OFFLINE_CACHE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -25,7 +27,12 @@ export interface DashboardOfflineSnapshot {
   historyData: HistoryPoint[];
   devices: DeviceInfo[];
   airconUnits: AirconUnitInfo[];
+  /** 基準地点。#321より前に保存されたスナップショットにはこれしか無い */
   outdoorLocation: OutdoorLocation | null;
+  /** 登録済みの屋外地点。オフラインでも地点ごとのカードを並べるために持つ（#321） */
+  outdoorLocations?: OutdoorLocationEntry[];
+  /** 地点ごとの「いまの天気」（#321） */
+  outdoorWeathers?: OutdoorLocationWeather[];
 }
 
 export interface BuildDashboardOfflineSnapshotInput {
@@ -38,6 +45,8 @@ export interface BuildDashboardOfflineSnapshotInput {
   devices: DeviceInfo[];
   airconUnits: AirconUnitInfo[];
   outdoorLocation: OutdoorLocation | null;
+  outdoorLocations?: OutdoorLocationEntry[];
+  outdoorWeathers?: OutdoorLocationWeather[];
   windowMs?: number;
 }
 
@@ -170,6 +179,8 @@ export function buildDashboardOfflineSnapshot(
     devices: input.devices,
     airconUnits: input.airconUnits,
     outdoorLocation: input.outdoorLocation,
+    outdoorLocations: input.outdoorLocations ?? [],
+    outdoorWeathers: input.outdoorWeathers ?? [],
   };
 }
 

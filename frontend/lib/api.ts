@@ -449,6 +449,14 @@ export async function fetchOutdoorLocationWeather(
   return fetchJson<OutdoorLocationWeather>(`/api/outdoor-locations/${id}/weather`);
 }
 
+/** 全地点の「いまの天気」。ダッシュボードは地点ごとにカードを出す（#321） */
+export async function fetchOutdoorLocationsWeather(): Promise<OutdoorLocationWeather[]> {
+  const data = await fetchJson<{ locations: OutdoorLocationWeather[] }>(
+    "/api/outdoor-locations/weather"
+  );
+  return data.locations;
+}
+
 export async function fetchSensorRecords(
   deviceId: number,
   offset = 0,
