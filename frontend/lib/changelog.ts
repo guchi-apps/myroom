@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.11.0",
+    date: "2026-09-02",
+    changes: [
+      "消費電力の一覧に表示されるスマートプラグの名前を、アプリの画面から自由に変更できるようになりました。これまでの使用量の記録もそのまま引き継がれます。",
+    ],
+  },
+  {
     version: "4.10.0",
     date: "2026-09-02",
     changes: [
