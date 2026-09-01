@@ -32,6 +32,8 @@ const EMPTY_DEVICE_NAMES: Record<number, string> = {};
 interface OutdoorDetailPanelProps {
   open: boolean;
   locationName?: string;
+  /** 最初に選んでおく地点。ダッシュボードで押した屋外カードの地点が入る（#321） */
+  initialLocationId?: string | null;
   /** カードから外した気圧を「いまの値」として出すための最新データ（#226）。基準地点のもの */
   latest?: LatestData | null;
   chartColors: ChartColorSettings;
@@ -46,6 +48,7 @@ interface OutdoorDetailPanelProps {
 export function OutdoorDetailPanel({
   open,
   locationName,
+  initialLocationId = null,
   latest = null,
   chartColors,
   lineVisibility: lineVisibilityProp,
@@ -66,7 +69,7 @@ export function OutdoorDetailPanel({
     if (!open) return;
     setChartMetric("temperature");
     setViewRange("day");
-    setSelectedLocationId(null);
+    setSelectedLocationId(initialLocationId);
     setSelectedWeather(null);
     if (isOfflineMode) {
       setLocations(null);
@@ -77,8 +80,12 @@ export function OutdoorDetailPanel({
       .then((list) => {
         if (cancelled) return;
         setLocations(list);
+        // 押したカードの地点を選ぶ。消えていたら基準地点へ戻す
+        const requested = initialLocationId
+          ? list.find((loc) => loc.id === initialLocationId)
+          : null;
         const primary = list.find((loc) => loc.is_primary) ?? list[0] ?? null;
-        setSelectedLocationId(primary?.id ?? null);
+        setSelectedLocationId((requested ?? primary)?.id ?? null);
       })
       .catch(() => {
         if (!cancelled) setLocations(null);
@@ -86,7 +93,7 @@ export function OutdoorDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, isOfflineMode]);
+  }, [open, isOfflineMode, initialLocationId]);
 
   const primaryLocationId = useMemo(
     () => locations?.find((loc) => loc.is_primary)?.id ?? null,

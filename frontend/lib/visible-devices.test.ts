@@ -184,6 +184,44 @@ describe("visible-devices", () => {
     expect(isHiddenKeyVisible(hidden, COMING_SOON_SECTION_KEY)).toBe(false);
   });
 
+  it("屋外は地点ごとに表示・非表示を持ち、旧`outdoor`は基準地点として読む", () => {
+    const outdoor = { locationIds: ["tokyo", "osaka"], primaryId: "tokyo" };
+    expect(buildAllDashboardTargetKeys([1], ["tokyo", "osaka"]).has("outdoor:osaka")).toBe(
+      true
+    );
+
+    const legacy = normalizeHiddenDeviceKeys(["outdoor"], [1], outdoor);
+    expect(isTargetVisible(legacy, { type: "outdoor", locationId: "tokyo" })).toBe(false);
+    expect(isTargetVisible(legacy, { type: "outdoor", locationId: "osaka" })).toBe(true);
+
+    const perLocation = normalizeHiddenDeviceKeys(["outdoor:osaka"], [1], outdoor);
+    expect(isTargetVisible(perLocation, { type: "outdoor", locationId: "tokyo" })).toBe(
+      true
+    );
+    expect(isTargetVisible(perLocation, { type: "outdoor", locationId: "osaka" })).toBe(
+      false
+    );
+  });
+
+  it("推移グラフの屋外ラインが消えるのは基準地点を隠したときだけ", () => {
+    const outdoor = { locationIds: ["tokyo", "osaka"], primaryId: "tokyo" };
+    const base = { "outdoor:temperature": true };
+
+    const osakaHidden = normalizeHiddenDeviceKeys(["outdoor:osaka"], [1], outdoor);
+    expect(
+      applyHiddenDevicesToLineVisibility(base, osakaHidden, [1], "outdoor:tokyo")[
+        "outdoor:temperature"
+      ]
+    ).toBe(true);
+
+    const tokyoHidden = normalizeHiddenDeviceKeys(["outdoor:tokyo"], [1], outdoor);
+    expect(
+      applyHiddenDevicesToLineVisibility(base, tokyoHidden, [1], "outdoor:tokyo")[
+        "outdoor:temperature"
+      ]
+    ).toBe(false);
+  });
+
   it("暮らしセクションのカードの非表示設定は保存から復元される", () => {
     const hidden = normalizeHiddenDeviceKeys([GARBAGE_CARD_KEY], [1, 2]);
     expect(isHiddenKeyVisible(hidden, GARBAGE_CARD_KEY)).toBe(false);

@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   CloudSun,
   LayoutGrid,
+  Plus,
   Snowflake,
   Thermometer,
 } from "lucide-react";
@@ -14,7 +15,7 @@ import type { LucideIcon } from "lucide-react";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
 import { LoginScreen } from "@/components/login-screen";
 import { DeviceEditSheet } from "@/components/device-edit-sheet";
-import { OutdoorLocationsSheet } from "@/components/outdoor-locations-sheet";
+import { OutdoorLocationSheet } from "@/components/outdoor-location-sheet";
 import {
   DeviceListItem,
   type DeviceListItemTrack,
@@ -24,7 +25,7 @@ import { Label } from "@/components/ui/label";
 import {
   fetchAirconUnits,
   fetchDevices,
-  fetchOutdoorLocation,
+  fetchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
 } from "@/lib/api";
@@ -46,6 +47,7 @@ import {
   normalizeDisplayOrder,
   orderItemKey,
   type DisplayOrderItem,
+  type OutdoorOrderContext,
 } from "@/lib/display-order";
 import {
   AIRCON_CHART_DEVICE_ID,
@@ -53,7 +55,7 @@ import {
   getSensorDeviceIds,
   type AirconUnitInfo,
   type DeviceInfo,
-  type OutdoorLocation,
+  type OutdoorLocationEntry,
 } from "@/lib/types";
 import {
   findLeafDeviceId,
@@ -100,7 +102,7 @@ type EditableTarget =
 function draftKeyForItem(item: DisplayOrderItem, acId = 1): string {
   if (item.type === "device") return `device:${item.deviceId}`;
   if (item.type === "aircon") return `aircon:${acId}`;
-  return "outdoor";
+  return orderItemKey(item);
 }
 
 function getItemIcon(item: DisplayOrderItem): LucideIcon {
@@ -129,6 +131,11 @@ function getItemSubtitle(
   return "Open-Meteo API";
 }
 
+/** 屋外の行の説明。基準地点（推移グラフに出る地点）だけ印を足す（#321） */
+function getOutdoorSubtitle(isPrimary: boolean): string {
+  return isPrimary ? "Open-Meteo API · 基準（推移グラフに表示）" : "Open-Meteo API";
+}
+
 function getAirconListTracks(
   hiddenKeys: Set<string>,
   chartColors: ChartColorSettings
@@ -154,7 +161,7 @@ export function DeviceVisibilityPage() {
   const { isAuthenticated, setIsAuthenticated } = useAuthState();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [airconUnits, setAirconUnits] = useState<AirconUnitInfo[]>([]);
-  const [outdoorLocation, setOutdoorLocation] = useState<OutdoorLocation | null>(null);
+  const [outdoorLocations, setOutdoorLocations] = useState<OutdoorLocationEntry[]>([]);
   const [displayOrder, setDisplayOrder] = useState<DisplayOrderItem[]>([]);
   const [chartColors, setChartColors] = useState<ChartColorSettings>(() =>
     buildDefaultChartColors()
@@ -174,7 +181,11 @@ export function DeviceVisibilityPage() {
   const [editingTarget, setEditingTarget] = useState<EditableTarget | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [outdoorLocationsSheetOpen, setOutdoorLocationsSheetOpen] = useState(false);
+  // 屋外の地点を1件ぶんだけ扱うシート。`location` が null なら新規登録（#321）
+  const [outdoorSheet, setOutdoorSheet] = useState<{
+    open: boolean;
+    location: OutdoorLocationEntry | null;
+  }>({ open: false, location: null });
 
   const sensorDeviceIds = useMemo(() => getSensorDeviceIds(devices), [devices]);
   const sensorDeviceIdsKey = sensorDeviceIds.join(",");
@@ -191,9 +202,29 @@ export function DeviceVisibilityPage() {
   const airconName =
     airconUnits.find((unit) => unit.ac_id === primaryAirconId)?.name ?? "エアコン";
 
+  const primaryOutdoorLocation = useMemo(
+    () => outdoorLocations.find((loc) => loc.is_primary) ?? outdoorLocations[0] ?? null,
+    [outdoorLocations]
+  );
+
+  // 並び順・非表示のキーは地点ごと（#321）
+  const outdoorOrderContext = useMemo<OutdoorOrderContext>(
+    () => ({
+      locationIds: outdoorLocations.map((loc) => loc.id),
+      primaryId: primaryOutdoorLocation?.id ?? null,
+    }),
+    [outdoorLocations, primaryOutdoorLocation]
+  );
+
+  const outdoorNameById = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const loc of outdoorLocations) names[loc.id] = loc.name;
+    return names;
+  }, [outdoorLocations]);
+
   const orderedTargets = useMemo(
-    () => normalizeDisplayOrder(displayOrder, sensorDeviceIds),
-    [displayOrder, sensorDeviceIds]
+    () => normalizeDisplayOrder(displayOrder, sensorDeviceIds, outdoorOrderContext),
+    [displayOrder, sensorDeviceIds, outdoorOrderContext]
   );
 
   const displayedTargets = useMemo(
@@ -203,7 +234,7 @@ export function DeviceVisibilityPage() {
 
   const reloadSettings = useCallback(async () => {
     try {
-      const settings = await loadUiSettingsFromServer(sensorDeviceIds);
+      const settings = await loadUiSettingsFromServer(sensorDeviceIds, outdoorOrderContext);
       setDisplayOrder(settings.displayOrder);
       setHiddenKeys(settings.hiddenDeviceKeys);
       setChartColors(settings.chartColors);
@@ -215,7 +246,7 @@ export function DeviceVisibilityPage() {
         setIsAuthenticated(false);
       }
     }
-  }, [sensorDeviceIds, setIsAuthenticated]);
+  }, [sensorDeviceIds, outdoorOrderContext, setIsAuthenticated]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -223,15 +254,15 @@ export function DeviceVisibilityPage() {
       const [deviceList, units, outdoor] = await Promise.all([
         fetchDevices(),
         fetchAirconUnits(),
-        fetchOutdoorLocation().catch(() => null),
+        fetchOutdoorLocations().catch(() => [] as OutdoorLocationEntry[]),
       ]);
       setDevices(deviceList);
       setAirconUnits(units);
-      setOutdoorLocation(outdoor);
+      setOutdoorLocations(outdoor);
     } catch {
       setDevices([]);
       setAirconUnits([]);
-      setOutdoorLocation(null);
+      setOutdoorLocations([]);
     } finally {
       setLoading(false);
     }
@@ -263,14 +294,11 @@ export function DeviceVisibilityPage() {
     for (const unit of airconUnits) {
       drafts[`aircon:${unit.ac_id}`] = unit.name;
     }
-    if (outdoorLocation) {
-      drafts.outdoor = outdoorLocation.name;
-    }
     setNameDrafts(drafts);
     setInheritsDrafts(inheritDrafts);
     setPressureOffsetDrafts(offsetDrafts);
     setLightThresholdDrafts(lightDrafts);
-  }, [devices, airconUnits, outdoorLocation, pressureOffsets, lightThresholds]);
+  }, [devices, airconUnits, pressureOffsets, lightThresholds]);
 
   const persistDisplayOrder = useCallback((order: DisplayOrderItem[]) => {
     setDisplayOrder(order);
@@ -292,7 +320,11 @@ export function DeviceVisibilityPage() {
     setHiddenKeys(next);
 
     if (!visible && item && !isTargetVisible(next, item)) {
-      const normalized = normalizeDisplayOrder(displayOrder, sensorDeviceIds);
+      const normalized = normalizeDisplayOrder(
+        displayOrder,
+        sensorDeviceIds,
+        outdoorOrderContext
+      );
       const itemKey = orderItemKey(item);
       const target = normalized.find((entry) => orderItemKey(entry) === itemKey);
       const rest = normalized.filter((entry) => orderItemKey(entry) !== itemKey);
@@ -315,7 +347,11 @@ export function DeviceVisibilityPage() {
     setHiddenKeys(next);
 
     if (!visible) {
-      const normalized = normalizeDisplayOrder(displayOrder, sensorDeviceIds);
+      const normalized = normalizeDisplayOrder(
+        displayOrder,
+        sensorDeviceIds,
+        outdoorOrderContext
+      );
       const key = orderItemKey(item);
       const target = normalized.find((entry) => orderItemKey(entry) === key);
       const rest = normalized.filter((entry) => orderItemKey(entry) !== key);
@@ -516,7 +552,8 @@ export function DeviceVisibilityPage() {
 
   const getListTitle = (item: DisplayOrderItem) => {
     if (item.type === "outdoor") {
-      return formatOutdoorApiLabel(outdoorLocation?.name);
+      if (item.locationId) return formatOutdoorApiLabel(outdoorNameById[item.locationId]);
+      return formatOutdoorApiLabel(primaryOutdoorLocation?.name);
     }
     if (item.type === "device") {
       const deviceName =
@@ -529,8 +566,9 @@ export function DeviceVisibilityPage() {
     return getDisplayOrderLabel(
       item,
       deviceNames,
-      outdoorLocation?.name,
-      airconName
+      primaryOutdoorLocation?.name,
+      airconName,
+      outdoorNameById
     );
   };
 
@@ -771,7 +809,14 @@ export function DeviceVisibilityPage() {
                     icon={getItemIcon(item)}
                     accentColor={getAccentColor(item)}
                     title={getListTitle(item)}
-                    subtitle={getItemSubtitle(item, primaryAirconId, devices, deviceNames)}
+                    subtitle={
+                      item.type === "outdoor"
+                        ? getOutdoorSubtitle(
+                            (item.locationId ?? primaryOutdoorLocation?.id) ===
+                              primaryOutdoorLocation?.id
+                          )
+                        : getItemSubtitle(item, primaryAirconId, devices, deviceNames)
+                    }
                     visible={isTargetVisible(hiddenKeys, item)}
                     tracks={
                       item.type === "aircon"
@@ -782,7 +827,12 @@ export function DeviceVisibilityPage() {
                       if (item.type === "device") {
                         setEditingTarget({ kind: "device", item });
                       } else if (item.type === "outdoor") {
-                        setOutdoorLocationsSheetOpen(true);
+                        const locationId = item.locationId ?? primaryOutdoorLocation?.id;
+                        setOutdoorSheet({
+                          open: true,
+                          location:
+                            outdoorLocations.find((loc) => loc.id === locationId) ?? null,
+                        });
                       } else {
                         setEditingTarget({ kind: "aircon", item });
                       }
@@ -804,6 +854,18 @@ export function DeviceVisibilityPage() {
                 登録済みのデバイスがありません
               </p>
             )}
+            {/*
+              Open-Meteo の地点はここから足す（#321）。カードは地点ごとに1枚並ぶので、
+              登録の入口も一覧の並びと同じ場所に置く
+            */}
+            <button
+              type="button"
+              onClick={() => setOutdoorSheet({ open: true, location: null })}
+              className="flex w-full items-center justify-center gap-1.5 rounded-[18px] border border-dashed py-3 text-sm font-semibold text-foreground transition-colors hover:bg-accent"
+            >
+              <Plus className="size-4" strokeWidth={1.75} />
+              地点を追加
+            </button>
           </section>
         )}
 
@@ -831,17 +893,37 @@ export function DeviceVisibilityPage() {
       </div>
 
       {renderEditSheet()}
-      <OutdoorLocationsSheet
-        open={outdoorLocationsSheetOpen}
-        onClose={() => setOutdoorLocationsSheetOpen(false)}
-        onChanged={() => void loadData()}
-        chartColor={getOutdoorChartColor(chartColors)}
-        onChartColorChange={(color) => handleColorChange("outdoor", color)}
-        dashboardVisible={isTargetVisible(hiddenKeys, { type: "outdoor" })}
-        onDashboardVisibleChange={(visible) =>
-          handleVisibilityChange({ type: "outdoor" }, visible)
-        }
-      />
+      {/* 下書きを `useState` の初期値で作るため、開いているあいだだけ描く（#321） */}
+      {outdoorSheet.open ? (
+        <OutdoorLocationSheet
+          key={outdoorSheet.location?.id ?? "new"}
+          location={outdoorSheet.location}
+          onClose={() => setOutdoorSheet({ open: false, location: null })}
+          onChanged={() => {
+            void loadData();
+            void reloadSettings();
+          }}
+          chartColor={getOutdoorChartColor(chartColors)}
+          onChartColorChange={(color) => handleColorChange("outdoor", color)}
+          dashboardVisible={
+            outdoorSheet.location
+              ? isTargetVisible(hiddenKeys, {
+                  type: "outdoor",
+                  locationId: outdoorSheet.location.id,
+                })
+              : undefined
+          }
+          onDashboardVisibleChange={
+            outdoorSheet.location
+              ? (visible) =>
+                  handleVisibilityChange(
+                    { type: "outdoor", locationId: outdoorSheet.location!.id },
+                    visible
+                  )
+              : undefined
+          }
+        />
+      ) : null}
     </div>
   );
 }

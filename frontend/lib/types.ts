@@ -591,6 +591,52 @@ export function resolveLatestDataLoadStatus(
   return "empty";
 }
 
+/** 地点ごとの「いまの天気」に値が入っているか（#321） */
+export function hasOutdoorLocationValues(
+  data: OutdoorLocationWeather | null | undefined
+): boolean {
+  if (!data) return false;
+  return (
+    data.temperature != null || data.humidity != null || data.pressure != null
+  );
+}
+
+/**
+ * 地点ごとの屋外カードの読み込み状態（#321）。
+ * `fetchFailed` は全地点ぶんの取得に失敗したかどうか。
+ */
+export function resolveOutdoorLocationLoadStatus(
+  data: OutdoorLocationWeather | null | undefined,
+  fetchFailed: boolean
+): DeviceDataLoadStatus {
+  if (hasOutdoorLocationValues(data)) return "ok";
+  if (fetchFailed) return "error";
+  return "empty";
+}
+
+/**
+ * `/api/latest` に混ざっている基準地点の天気を、地点ごとの形へ詰め替える（#321）。
+ * 一括取得がまだ終わっていないときとオフラインのときに、基準地点のカードだけは
+ * これまでどおりの値を出せる。
+ */
+export function outdoorLocationWeatherFromLatest(
+  location: OutdoorLocationEntry,
+  latest: LatestData | null | undefined
+): OutdoorLocationWeather | null {
+  if (!hasOutdoorValues(latest)) return null;
+  return {
+    id: location.id,
+    name: location.name,
+    temperature: latest?.outdoor_temperature ?? null,
+    humidity: latest?.outdoor_humidity ?? null,
+    pressure: latest?.outdoor_pressure ?? null,
+    weather_code: latest?.outdoor_weather_code ?? null,
+    weather_label: latest?.outdoor_weather_label ?? null,
+    weather_icon: latest?.outdoor_weather_icon ?? null,
+    observed_at: latest?.datetime ?? null,
+  };
+}
+
 export function resolveOutdoorDataLoadStatus(
   data: LatestData | null | undefined,
   sourceFetchFailed: boolean
