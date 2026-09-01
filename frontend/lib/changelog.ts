@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.9.0",
+    date: "2026-09-01",
+    changes: [
+      "屋外の気温・天気を複数の地点で登録できるようになり、ダッシュボードにそれぞれの地点のカードが並んで表示されるようになりました。また、電力の日別グラフでも「その他」の消費電力（KEPCOの実測から機器の実測を差し引いた分）が表示されるようになりました。",
+    ],
+  },
+  {
     version: "4.8.1",
     date: "2026-09-01",
     changes: [
