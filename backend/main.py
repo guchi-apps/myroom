@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, login_notify, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -172,6 +172,12 @@ class OutdoorLocation(BaseModel):
     longitude: float
     name: str
 
+
+class OutdoorLocationInput(BaseModel):
+    name: str
+    latitude: float
+    longitude: float
+
 class DeviceNameUpdate(BaseModel):
     name: str
     inherits_from: Optional[int] = None
@@ -209,6 +215,31 @@ class UiSettingsUpdate(BaseModel):
     energy_unit_price: Optional[float] = None
     #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
+    #: ゴミの日のPush通知を送るか
+    garbage_notify_enabled: Optional[bool] = None
+    #: ゴミの日の通知時刻（"HH:MM"）。null を送ると「未設定」に戻す
+    garbage_notify_time: Optional[str] = None
+    #: 室温・湿度の異常をPush通知するか
+    room_anomaly_notify_enabled: Optional[bool] = None
+    #: 指標ごとの上限・下限。{"temperature": {"min": ..., "max": ...}, "humidity": {...}}
+    room_anomaly_thresholds: Optional[Dict[str, Dict[str, float]]] = None
+    #: 同じ異常が続く間の再通知間隔（分）
+    room_anomaly_reminder_minutes: Optional[int] = None
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionBody(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+    expirationTime: Optional[int] = None
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
 
 
 class CleaningTaskUpdate(BaseModel):
@@ -476,11 +507,13 @@ def _build_outdoor_map(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
     db: Optional[Session],
+    location_id: Optional[str] = None,
 ) -> Dict[datetime.datetime, Dict[str, Any]]:
     outdoor_hist = weather.get_outdoor_history(
         start_time.strftime("%Y-%m-%d"),
         end_time.strftime("%Y-%m-%d"),
         db,
+        location_id=location_id,
     )
     outdoor_map: Dict[datetime.datetime, Dict[str, Any]] = {}
     if not outdoor_hist:
@@ -504,8 +537,9 @@ def _build_outdoor_history_records(
     end_time: datetime.datetime,
     effective_range: Optional[str],
     db: Optional[Session],
+    location_id: Optional[str] = None,
 ) -> List[dict]:
-    outdoor_map = _build_outdoor_map(start_time, end_time, db)
+    outdoor_map = _build_outdoor_map(start_time, end_time, db, location_id)
     if effective_range == "year":
         return _outdoor_only_year_records(outdoor_map, start_time, end_time)
     return _outdoor_only_day_records(outdoor_map, start_time, end_time)
@@ -523,6 +557,9 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
             "outdoor_temperature": outdoor["temperature"] if outdoor else None,
             "outdoor_humidity": outdoor["humidity"] if outdoor else None,
             "outdoor_pressure": outdoor["pressure"] if outdoor else None,
+            "outdoor_weather_code": outdoor["weather_code"] if outdoor else None,
+            "outdoor_weather_label": outdoor["weather_label"] if outdoor else None,
+            "outdoor_weather_icon": outdoor["weather_icon"] if outdoor else None,
         }
         if device == 1:
             payload["pressure"] = round(
@@ -546,6 +583,9 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
             "outdoor_temperature": outdoor["temperature"] if outdoor else None,
             "outdoor_humidity": outdoor["humidity"] if outdoor else None,
             "outdoor_pressure": outdoor["pressure"] if outdoor else None,
+            "outdoor_weather_code": outdoor["weather_code"] if outdoor else None,
+            "outdoor_weather_label": outdoor["weather_label"] if outdoor else None,
+            "outdoor_weather_icon": outdoor["weather_icon"] if outdoor else None,
         }
 
     return {
@@ -560,6 +600,9 @@ def _build_latest_payload(device: int, db: Optional[Session]) -> dict:
         "outdoor_temperature": outdoor["temperature"] if outdoor else None,
         "outdoor_humidity": outdoor["humidity"] if outdoor else None,
         "outdoor_pressure": outdoor["pressure"] if outdoor else None,
+        "outdoor_weather_code": outdoor["weather_code"] if outdoor else None,
+        "outdoor_weather_label": outdoor["weather_label"] if outdoor else None,
+        "outdoor_weather_icon": outdoor["weather_icon"] if outdoor else None,
     }
 
 def _fetch_latest_aircon_record_for_unit(
@@ -715,6 +758,55 @@ def get_internal_room_state(
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
     return garbage.build_payload()
+
+
+@app.get("/api/push/vapid-public-key")
+def get_push_vapid_public_key(_: dict = Depends(get_current_user)):
+    """PWA Pushの購読に使う公開鍵。秘密鍵はサーバーの外へは一切返さない。"""
+    public_key = push_notify.get_vapid_public_key()
+    if not public_key:
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    return {"publicKey": public_key, "configured": push_notify.is_configured()}
+
+
+@app.post("/api/push/subscribe")
+def subscribe_push(
+    body: PushSubscriptionBody,
+    request: Request,
+    _: dict = Depends(get_current_user),
+):
+    """この端末のブラウザ購読を保存する。ログイン済みの操作でのみ受け付ける。"""
+    if not push_notify.is_configured():
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    try:
+        saved = push_subscriptions.upsert_subscription(
+            body.model_dump(exclude={"expirationTime"}),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "endpoint": saved["endpoint"]}
+
+
+@app.delete("/api/push/subscribe")
+def unsubscribe_push(
+    body: PushUnsubscribeRequest,
+    _: dict = Depends(get_current_user),
+):
+    """この端末の購読を削除する。以後この端末へは配信しない。"""
+    removed = push_subscriptions.remove_subscription(body.endpoint)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    return {"status": "ok"}
+
+
+@app.post("/api/push/test")
+def send_test_push(_: dict = Depends(get_current_user)):
+    """いま保存されている購読すべてへテスト通知を送る。"""
+    if not push_notify.is_configured():
+        raise HTTPException(status_code=503, detail="Web Push is not configured")
+    result = push_notify.send_test_push()
+    return {"status": "ok", **result}
 
 
 @app.get("/api/cleaning")
@@ -942,17 +1034,104 @@ def search_outdoor_locations(
     return {"results": weather.search_locations(q, count=limit)}
 
 
+@app.get("/api/outdoor-locations")
+def list_outdoor_locations(
+    db: Session = Depends(database.get_db), _: dict = Depends(get_current_user)
+):
+    return {"locations": outdoor_config.list_locations(db)}
+
+
+@app.post("/api/outdoor-locations")
+def create_outdoor_location(
+    location: OutdoorLocationInput,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    try:
+        return outdoor_config.add_location(
+            location.name, location.latitude, location.longitude, db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.put("/api/outdoor-locations/{location_id}")
+def update_outdoor_location_by_id(
+    location_id: str,
+    location: OutdoorLocationInput,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    try:
+        return outdoor_config.update_location(
+            location_id, location.name, location.latitude, location.longitude, db
+        )
+    except ValueError as e:
+        status_code = 404 if str(e) == "location not found" else 400
+        raise HTTPException(status_code=status_code, detail=str(e)) from e
+
+
+@app.delete("/api/outdoor-locations/{location_id}")
+def delete_outdoor_location(
+    location_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    try:
+        outdoor_config.delete_location(location_id, db)
+    except ValueError as e:
+        status_code = 404 if str(e) == "location not found" else 400
+        raise HTTPException(status_code=status_code, detail=str(e)) from e
+    return {"ok": True}
+
+
+@app.put("/api/outdoor-locations/{location_id}/primary")
+def set_primary_outdoor_location(
+    location_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    try:
+        return outdoor_config.set_primary_location(location_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.get("/api/outdoor-locations/{location_id}/weather")
+def get_outdoor_location_weather(
+    location_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    loc = outdoor_config.get_location_by_id(location_id, db)
+    if loc is None:
+        raise HTTPException(status_code=404, detail="location not found")
+    data = weather.get_outdoor_weather(db, location_id=location_id)
+    return {
+        "id": loc["id"],
+        "name": loc["name"],
+        "temperature": data["temperature"] if data else None,
+        "humidity": data["humidity"] if data else None,
+        "pressure": data["pressure"] if data else None,
+        "weather_code": data["weather_code"] if data else None,
+        "weather_label": data["weather_label"] if data else None,
+        "weather_icon": data["weather_icon"] if data else None,
+        "observed_at": data["observed_at"] if data else None,
+    }
+
+
 @app.get("/api/outdoor-history")
 def get_outdoor_history(
     date: Optional[str] = None,
     range: Optional[str] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    location_id: Optional[str] = None,
     db: Session = Depends(database.get_db),
     _: dict = Depends(get_current_user),
 ):
     start_time, end_time, effective_range = _resolve_history_window(date, range, start, end)
-    return _build_outdoor_history_records(start_time, end_time, effective_range, db)
+    return _build_outdoor_history_records(start_time, end_time, effective_range, db, location_id)
 
 
 @app.get("/api/devices")

@@ -78,3 +78,54 @@ def test_outdoor_config_rejects_invalid_latitude(data_dir):
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "latitude" in str(exc)
+
+
+def test_outdoor_config_reads_old_single_object_format(data_dir):
+    """#308より前の保存形式（単一オブジェクト）を配列＋基準IDへ読み替える。"""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    outdoor_config.CONFIG_PATH.write_text(
+        '{"latitude": 34.6937, "longitude": 135.5023, "name": "大阪"}',
+        encoding="utf-8",
+    )
+
+    locations = outdoor_config.list_locations()
+    assert len(locations) == 1
+    assert locations[0]["name"] == "大阪"
+    assert locations[0]["is_primary"] is True
+
+    primary = outdoor_config.get_location()
+    assert primary["name"] == "大阪"
+
+
+def test_outdoor_config_add_update_delete_and_primary(data_dir):
+    added = outdoor_config.add_location("実家", 35.6895, 139.6917)
+    assert added["is_primary"] is False
+
+    locations = outdoor_config.list_locations()
+    assert len(locations) == 2
+
+    updated = outdoor_config.update_location(added["id"], "実家（改名）", 35.7, 139.7)
+    assert updated["name"] == "実家（改名）"
+
+    # 基準地点は削除できない
+    primary_id = next(loc["id"] for loc in outdoor_config.list_locations() if loc["is_primary"])
+    try:
+        outdoor_config.delete_location(primary_id)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "primary" in str(exc)
+
+    switched = outdoor_config.set_primary_location(added["id"])
+    assert switched["id"] == added["id"]
+
+    # 基準地点が入れ替わったので、元の基準地点は削除できる
+    outdoor_config.delete_location(primary_id)
+    assert len(outdoor_config.list_locations()) == 1
+
+
+def test_outdoor_config_delete_missing_raises(data_dir):
+    try:
+        outdoor_config.delete_location("does-not-exist")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "not found" in str(exc)

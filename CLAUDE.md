@@ -67,6 +67,14 @@ CI（`.github/workflows/ci.yml`）は `backend`（Python 3.11）と `frontend`�
 （`use-chart-history.ts`・`device-detail-panel.tsx`・`outdoor-detail-panel.tsx` など）で十数件出るが、
 **これは develop 時点からある。** 自分の変更が原因とは限らないので、件数を増やしていないかだけ見ればよい。
 
+**アイコンをデータに応じて動的に選ぶ実装は`react-hooks/refs`系の`error`（"Cannot create components
+during render"）を新たに踏みやすい。** `const Icon = pickIcon(...)`のように選んだコンポーネントを
+変数へ入れてから`<Icon .../>`とJSXタグにする書き方は、"レンダー中にコンポーネントを生成している"と
+静的解析され`error`になる（#308の天気アイコン選択で発生）。**`switch`で各アイコンを`<Sun .../>`の
+ように直接JSXとして返す形にすれば起きない**（変数を経由しないため）。同じ理由で、この変換元の
+関数（`pickIcon`自体）はコンポーネントではなく素の値を返す関数として残し、JSXを返す側だけ分ける
+とよい（`frontend/lib/weather-icon.tsx`の`getWeatherIcon()`と`WeatherIcon`の分け方）。
+
 `npm run dev` は `frontend/` で `next dev --port 5173`。**worktree ごとのポートは
 envファイルに入っていない。** 別ポートで立てるなら
 `cd frontend && npx next dev --port <ポート>` のようにその場で渡す
@@ -203,6 +211,17 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
 `backend/cleaning.py` の `_normalize_history()` が文字列の要素も受けて足りない項目を補う形にした。
 **移行スクリプトを書いて既存の行を書き換える形にはしないこと**（本番と手元で実行のタイミングが
 揃わず、片方だけ新しい形になる）。テストは「古い形を読める」ことを1件、独立して残す。
+
+**単一オブジェクトを複数件の配列へ広げるときも同じ考え方が使える。** 屋外の地点データを
+1件から複数件へ広げたとき（#308）、`outdoor_location`キーの値を`{"latitude", "longitude", "name"}`から
+`{"locations": [...], "primary_id": "..."}`へ変えた。`backend/outdoor_config.py`の`_parse_state()`は
+「`locations`配列を持つ新形式」「`latitude`を直接持つ旧形式（1件だけの配列＋そのIDを基準地点として
+扱う）」の両方を読み、どちらの場合も既存データを失わない。**複数地点を扱うAPI・地点選択のUIを
+足す一方で、推移グラフ・表示順序・チャート色設定は「屋外は1件」という前提のまま変えなかった**
+（display-order.ts・chart-colors.tsを地点ごとに複数持たせる形にすると改修範囲が全面改修になるため）。
+グラフに出すのは常に基準地点で、他の地点は屋外詳細パネル内の切り替えタブから選ぶと、その地点の
+今の天気・推移グラフだけが差し替わる（`weather.get_coords()`が`location_id`省略時に基準地点へ
+フォールバックする形にしてある）。
 
 ## 収集スクリプトの再送信を時系列データのポーリングに使う（電気代・時間ごと表示）
 

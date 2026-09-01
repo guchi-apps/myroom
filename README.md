@@ -881,6 +881,17 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
+| `vapid-private-key` | PWAプッシュ通知（Web Push）用のVAPID秘密鍵 PEM（`VAPID_PRIVATE_KEY` として同期） |
+| `vapid-public-key` | PWAプッシュ通知用のVAPID公開鍵（`VAPID_PUBLIC_KEY` として同期。`scripts/generate_vapid_keys.py` の `VAPID_PUBLIC_KEY` 行） |
+| `vapid-subject` | PWAプッシュ通知用のVAPID subject（`VAPID_SUBJECT` として同期。例: `mailto:you@example.com`） |
+
+**VAPID 鍵の初回登録**（PWA プッシュ通知用・1 回だけ。#293）:
+
+```bash
+./venv/bin/python scripts/generate_vapid_keys.py
+```
+
+出力の `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` を、上記フィールド `vapid-private-key` / `vapid-public-key` / `vapid-subject` にそれぞれ保存してください。秘密鍵は **PEM 形式のまま**（`-----BEGIN PRIVATE KEY-----` から改行付きで）貼り付けます。未設定でもデプロイは失敗せず、プッシュ通知機能だけが無効のままになります。
 
 **アイテム `Notify`**（セキュアノート等・organization 共通。このリポジトリからは同期しない）
 
