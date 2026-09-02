@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  categoryHasTiming,
   commitReminderDraft,
   commitThresholdDraft,
   parseNumberDraft,
   thresholdDraftKey,
+  toggleCategoryTiming,
 } from "@/components/notification-settings-sheet";
 
 const thresholds = {
@@ -96,5 +98,57 @@ describe("thresholdDraftKey", () => {
   it("指標と境界の組み合わせごとに別のキーになる", () => {
     expect(thresholdDraftKey("temperature", "min")).toBe("temperature.min");
     expect(thresholdDraftKey("humidity", "max")).toBe("humidity.max");
+  });
+});
+
+describe("categoryHasTiming", () => {
+  it("未指定の品目は前日のみ（既定動作を維持）", () => {
+    expect(categoryHasTiming({}, "burnable", "before")).toBe(true);
+    expect(categoryHasTiming({}, "burnable", "same_day")).toBe(false);
+  });
+
+  it("前日・当日の両方を選んでいる品目は両方 true", () => {
+    const timing = { bulky: ["before", "same_day"] as ("before" | "same_day")[] };
+    expect(categoryHasTiming(timing, "bulky", "before")).toBe(true);
+    expect(categoryHasTiming(timing, "bulky", "same_day")).toBe(true);
+  });
+
+  it("両方外している品目はどちらも false", () => {
+    const timing = { incombustible: [] as ("before" | "same_day")[] };
+    expect(categoryHasTiming(timing, "incombustible", "before")).toBe(false);
+    expect(categoryHasTiming(timing, "incombustible", "same_day")).toBe(false);
+  });
+});
+
+describe("toggleCategoryTiming", () => {
+  it("未指定（前日のみ）の品目に当日をONにすると、前日・当日の両方が残る", () => {
+    const result = toggleCategoryTiming({}, "bulky", "same_day", true);
+    expect(result.bulky).toEqual(["before", "same_day"]);
+  });
+
+  it("両方ONの品目から前日をOFFにすると、当日だけが残る", () => {
+    const result = toggleCategoryTiming(
+      { bulky: ["before", "same_day"] },
+      "bulky",
+      "before",
+      false
+    );
+    expect(result.bulky).toEqual(["same_day"]);
+  });
+
+  it("前日のみの品目から前日をOFFにすると、空配列になる（通知しない）", () => {
+    const result = toggleCategoryTiming({}, "burnable", "before", false);
+    expect(result.burnable).toEqual([]);
+  });
+
+  it("他の品目の設定は変えない", () => {
+    const result = toggleCategoryTiming(
+      { recyclable: ["same_day"] },
+      "burnable",
+      "same_day",
+      true
+    );
+    expect(result.recyclable).toEqual(["same_day"]);
+    expect(result.burnable).toEqual(["before", "same_day"]);
   });
 });

@@ -152,8 +152,17 @@ export interface UiSettings {
   remote_buttons: Record<string, RemoteButtonSetting>;
   /** ゴミの日のPush通知を送るか（#293） */
   garbage_notify_enabled: boolean;
-  /** ゴミの日の通知時刻（"HH:MM"）。null は未設定（data/garbage.json の既定を使う） */
+  /** ゴミの日の前日通知の時刻（"HH:MM"）。null は未設定（data/garbage.json の既定を使う） */
   garbage_notify_time: string | null;
+  /** ゴミの日の当日通知を送るか（#347）。前日通知とは独立に設定できる */
+  garbage_notify_same_day_enabled: boolean;
+  /** ゴミの日の当日通知の時刻（"HH:MM"）。null は未設定（既定7:00） */
+  garbage_notify_same_day_time: string | null;
+  /**
+   * 品目ごとの通知タイミング。{category_id: ["before" | "same_day", ...]}。
+   * 前日・当日は排他ではなく両方を含められる。キーが無い品目は ["before"]（前日通知のみ）
+   */
+  garbage_notify_category_timing: Record<string, ("before" | "same_day")[]>;
   /** 室温・湿度の異常をPush通知するか */
   room_anomaly_notify_enabled: boolean;
   /** 指標ごとの上限・下限 */

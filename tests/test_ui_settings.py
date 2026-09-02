@@ -218,6 +218,84 @@ def test_saving_other_settings_keeps_notification_settings(data_dir):
     assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_TIME] == "07:30"
 
 
+# --- ゴミの日の前日/当日・品目ごとのタイミング（#347） ----------------------------
+
+
+def test_garbage_notify_same_day_defaults(data_dir):
+    settings = ui_settings.get_settings()
+    assert settings[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED] is False
+    assert settings[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME] is None
+    assert settings[ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING] == {}
+
+
+def test_garbage_notify_same_day_time_is_normalized(data_dir):
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: "7:5"}
+    )
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME] == "07:05"
+
+    saved = ui_settings.save_settings(
+        {ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: "not-a-time"}
+    )
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME] is None
+
+
+def test_garbage_notify_category_timing_normalizes(data_dir):
+    saved = ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {
+                # 既定（前日のみ）と同じ内容は「未指定」と区別が付かないので保存されない
+                "burnable": ["before"],
+                # 前日・当日の両方を選べる
+                "bulky": ["before", "same_day"],
+                # 当日だけ
+                "recyclable": ["same_day"],
+                # 前日・当日どちらも外す（通知しない）は既定と異なるので保存される
+                "incombustible": [],
+                # 不正なタイミング文字列だけの配列は、無効な値を取り除いた結果として空配列になる
+                # （＝そのまま「どちらも通知しない」扱い。実害はないが正しく直感的な結果になる）
+                "broken": ["invalid"],
+                # キー・値の型が違うものは捨てる
+                123: ["before"],
+                "not-a-list": "same_day",
+            }
+        }
+    )
+    timing = saved[ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING]
+    assert "burnable" not in timing
+    assert timing["bulky"] == ["before", "same_day"]
+    assert timing["recyclable"] == ["same_day"]
+    assert timing["incombustible"] == []
+    assert timing["broken"] == []
+    assert 123 not in timing
+    assert "not-a-list" not in timing
+
+
+def test_saving_other_settings_keeps_garbage_same_day_settings(data_dir):
+    """save_settings の merged に並べたキーだけが引き継がれるため、別の設定の保存で確かめる（#258と同種の抜け対策）"""
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: "07:00",
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {
+                "bulky": ["before", "same_day"]
+            },
+        }
+    )
+    saved = ui_settings.save_settings({ui_settings.SETTING_HIDDEN_DEVICES: ["device:2"]})
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED] is True
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME] == "07:00"
+    assert saved[ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING] == {
+        "bulky": ["before", "same_day"]
+    }
+
+    loaded = ui_settings.get_settings()
+    assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED] is True
+    assert loaded[ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING] == {
+        "bulky": ["before", "same_day"]
+    }
+
+
 def test_energy_source_names_default_is_empty(data_dir):
     assert ui_settings.get_settings()[ui_settings.SETTING_ENERGY_SOURCE_NAMES] == {}
 
