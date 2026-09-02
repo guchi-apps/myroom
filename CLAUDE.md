@@ -403,6 +403,13 @@ secret / variable で、1Passwordは「人が管理する唯一の正」とし�
   `.env`へ書くため、改行を含む値（PEM・秘密鍵・JSON）を入れると`.env`の書式そのものが壊れ、
   python-dotenvが2行目以降を**別のキー**として読む（#337でVAPID秘密鍵に実際に該当した）。
   複数行になる値は、base64などの1行の表現に直してから1Passwordへ入れること
+- **`provision-secret.sh --from-stdin` へ値をパイプで渡さない。** 必ずファイルへ書いて
+  `< ファイル` でリダイレクトする（#343）。スクリプトは値を読んだあともstdinをそのまま
+  引き継ぎ、`op item edit` / `op item create` は**stdinがパイプだと中身をJSONのアイテム
+  テンプレートとして読む**ため、空になったパイプで`op: [ERROR] invalid JSON provided`と
+  なって落ちる。**このときスクリプトは「トークンに write_items があるかを疑ってください」と
+  出すが、権限とは無関係**（`op whoami`は通る）。通常ファイル・端末・`/dev/null`がstdinなら
+  opはこの解釈をしない。手順は`README.md`の「VAPID 鍵の初回登録」を参照
 
 ## デプロイ後のヘルスチェック
 

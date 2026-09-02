@@ -922,7 +922,17 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 
 ```bash
 cd ~/apps/issue-deck && scripts/provision-secret.sh --repo guchi-apps/myroom --key VAPID_PRIVATE_KEY --from-stdin --no-deploy < ~/.cache/myroom-vapid/vapid-private-key
+cd ~/apps/issue-deck && scripts/provision-secret.sh --repo guchi-apps/myroom --key VAPID_PUBLIC_KEY  --from-stdin --no-deploy < ~/.cache/myroom-vapid/vapid-public-key
 ```
+
+`vapid-subject` は生成スクリプトが作らないので、自分でファイルに書いてから同じ形で渡します（`mailto:` に続けて連絡先のメールアドレス）。
+
+```bash
+printf 'mailto:you@example.com' > ~/.cache/myroom-vapid/vapid-subject && chmod 600 ~/.cache/myroom-vapid/vapid-subject
+cd ~/apps/issue-deck && scripts/provision-secret.sh --repo guchi-apps/myroom --key VAPID_SUBJECT --from-stdin --field-type text --no-deploy < ~/.cache/myroom-vapid/vapid-subject
+```
+
+**値をパイプで渡さないでください**（`printf 'mailto:…' | scripts/provision-secret.sh … --from-stdin` の形）。**必ず一度ファイルへ書き、`<` でリダイレクトします。** `provision-secret.sh` は `cat` で値を読んだあともスクリプトのstdinをそのまま引き継ぎ、その先の `op item edit` / `op item create` は**stdinがパイプだと中身をJSONのアイテムテンプレートとして読もうとします**。読み終わって空になったパイプがそのまま渡るため、opは `[ERROR] invalid JSON provided` で落ちます。stdinが通常ファイル（または端末・`/dev/null`）ならopはこの解釈をしないので、ファイルへ書いて渡せば通ります。**このときスクリプトは「トークンに write_items があるかを疑ってください」と案内しますが、原因は権限ではありません**（`op whoami` は成功します。#343）。
 
 **秘密鍵は PEM 形式では動きません。** `backend/push_notify.py` は環境変数の値をそのまま `pywebpush.webpush(vapid_private_key=...)` へ渡し、pywebpush は `py_vapid.Vapid01.from_string()` で読みます。`from_string()` は改行を落として base64 デコードするだけなので、`-----BEGIN PRIVATE KEY-----` を含む PEM は `Could not deserialize key data` で落ちます。加えて `deploy.yml` の `sync_env_var` は値を `KEY=値` の 1 行として `.env` へ書くため、複数行の PEM は `.env` の書式自体を壊します（python-dotenv が 2 行目以降を別のキーとして読む）。**1Password には必ず 1 行の URL-safe base64 を入れてください。**
 
