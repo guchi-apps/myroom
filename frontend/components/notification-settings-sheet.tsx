@@ -29,6 +29,98 @@ interface NotificationSettingsSheetProps {
 //: 実際の既定（未設定時の挙動）は backend/garbage.py の DEFAULT_NOTIFY_HOUR = 20 と揃える
 const DEFAULT_GARBAGE_NOTIFY_TIME = "20:00";
 
+//: 再通知間隔の下限・上限。backend/ui_settings.py の
+//: MIN_ROOM_ANOMALY_REMINDER_MINUTES / MAX_ROOM_ANOMALY_REMINDER_MINUTES と揃える
+const MIN_REMINDER_MINUTES = 5;
+const MAX_REMINDER_MINUTES = 1440;
+
+type RoomAnomalyThresholds = UiSettings["room_anomaly_thresholds"];
+type ThresholdMetric = keyof RoomAnomalyThresholds;
+type ThresholdBound = "min" | "max";
+
+const METRIC_LABELS: Record<ThresholdMetric, string> = {
+  temperature: "室温",
+  humidity: "湿度",
+};
+
+const THRESHOLD_FIELDS: {
+  metric: ThresholdMetric;
+  bound: ThresholdBound;
+  label: string;
+  step: number;
+}[] = [
+  { metric: "temperature", bound: "min", label: "室温の下限（℃）", step: 0.5 },
+  { metric: "temperature", bound: "max", label: "室温の上限（℃）", step: 0.5 },
+  { metric: "humidity", bound: "min", label: "湿度の下限（%）", step: 1 },
+  { metric: "humidity", bound: "max", label: "湿度の上限（%）", step: 1 },
+];
+
+const REMINDER_DRAFT_KEY = "reminder_minutes";
+
+export function thresholdDraftKey(metric: ThresholdMetric, bound: ThresholdBound): string {
+  return `${metric}.${bound}`;
+}
+
+/**
+ * 入力欄の文字列を数値にする。空欄・数字でない文字列・入力途中の "-" や "1e" は null を返し、
+ * 呼び出し側は「確定しない（元の値へ戻す）」を選ぶ。
+ */
+export function parseNumberDraft(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+export type DraftCommit<T> =
+  | { status: "unchanged" }
+  | { status: "invalid"; message: string }
+  | { status: "ok"; value: T };
+
+/**
+ * 閾値1つぶんの入力を確定する。
+ *
+ * 入力のたびに保存すると「20」の途中の「2」で保存されてしまい、バックエンドの
+ * `_normalize_room_anomaly_thresholds` が min >= max を既定値へ落とすため入力欄の値が飛ぶ。
+ * 確定は入力欄から離れたときだけに寄せ、min >= max はここで弾いて保存に出さない。
+ */
+export function commitThresholdDraft(
+  thresholds: RoomAnomalyThresholds,
+  metric: ThresholdMetric,
+  bound: ThresholdBound,
+  raw: string
+): DraftCommit<RoomAnomalyThresholds> {
+  const parsed = parseNumberDraft(raw);
+  if (parsed === null) return { status: "unchanged" };
+
+  // バックエンドが round(value, 1) で保存するため、入り口でも小数第1位へ丸める
+  const value = Math.round(parsed * 10) / 10;
+  const current = thresholds[metric];
+  if (current[bound] === value) return { status: "unchanged" };
+
+  const next = { ...current, [bound]: value };
+  if (next.min >= next.max) {
+    return {
+      status: "invalid",
+      message: `${METRIC_LABELS[metric]}の下限は上限より小さい値にしてください。`,
+    };
+  }
+  return { status: "ok", value: { ...thresholds, [metric]: next } };
+}
+
+/** 再通知間隔の入力を確定する。範囲外はバックエンドと同じ範囲へ丸める。 */
+export function commitReminderDraft(current: number, raw: string): DraftCommit<number> {
+  const parsed = parseNumberDraft(raw);
+  if (parsed === null) return { status: "unchanged" };
+
+  const minutes = Math.min(
+    MAX_REMINDER_MINUTES,
+    Math.max(MIN_REMINDER_MINUTES, Math.round(parsed))
+  );
+  if (minutes === current) return { status: "unchanged" };
+  return { status: "ok", value: minutes };
+}
+
 function isIosNotInstalledPwa(): boolean {
   if (typeof window === "undefined") return false;
   const isIos = /iPad|iPhone|iPod/.test(window.navigator.userAgent);
@@ -82,11 +174,15 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
   const [vapidConfigured, setVapidConfigured] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  //: 数値入力の下書き。入力中はこちらを表示し、入力欄から離れたときだけ保存する。
+  //: キーが無い欄は保存済みの値をそのまま出す（effect で詰め直さないための持ち方）
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     setInfo("");
+    setDrafts({});
     try {
       const [uiSettings, existingSubscription] = await Promise.all([
         fetchUiSettings(),
@@ -129,6 +225,44 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
     } finally {
       setSaving(false);
     }
+  };
+
+  const setDraft = (key: string, value: string) => {
+    setDrafts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const takeDraft = (key: string): string | undefined => {
+    const raw = drafts[key];
+    if (raw !== undefined) {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+    return raw;
+  };
+
+  const commitThreshold = (metric: ThresholdMetric, bound: ThresholdBound) => {
+    const raw = takeDraft(thresholdDraftKey(metric, bound));
+    if (raw === undefined || !settings) return;
+    const result = commitThresholdDraft(settings.room_anomaly_thresholds, metric, bound, raw);
+    if (result.status === "invalid") {
+      setError(result.message);
+      return;
+    }
+    if (result.status === "unchanged") return;
+    setError("");
+    void saveSettings({ room_anomaly_thresholds: result.value });
+  };
+
+  const commitReminder = () => {
+    const raw = takeDraft(REMINDER_DRAFT_KEY);
+    if (raw === undefined || !settings) return;
+    const result = commitReminderDraft(settings.room_anomaly_reminder_minutes, raw);
+    if (result.status !== "ok") return;
+    setError("");
+    void saveSettings({ room_anomaly_reminder_minutes: result.value });
   };
 
   const handleEnablePush = async () => {
@@ -323,90 +457,27 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
                 {settings.room_anomaly_notify_enabled && (
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="text-[11px] text-muted-foreground">室温の下限（℃）</span>
-                        <input
-                          type="number"
-                          step={0.5}
-                          disabled={saving}
-                          value={settings.room_anomaly_thresholds.temperature.min}
-                          onChange={(event) =>
-                            void saveSettings({
-                              room_anomaly_thresholds: {
-                                ...settings.room_anomaly_thresholds,
-                                temperature: {
-                                  ...settings.room_anomaly_thresholds.temperature,
-                                  min: Number(event.target.value),
-                                },
-                              },
-                            })
-                          }
-                          className="mt-1 w-full rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13.5px] font-bold tabular-nums"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-[11px] text-muted-foreground">室温の上限（℃）</span>
-                        <input
-                          type="number"
-                          step={0.5}
-                          disabled={saving}
-                          value={settings.room_anomaly_thresholds.temperature.max}
-                          onChange={(event) =>
-                            void saveSettings({
-                              room_anomaly_thresholds: {
-                                ...settings.room_anomaly_thresholds,
-                                temperature: {
-                                  ...settings.room_anomaly_thresholds.temperature,
-                                  max: Number(event.target.value),
-                                },
-                              },
-                            })
-                          }
-                          className="mt-1 w-full rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13.5px] font-bold tabular-nums"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-[11px] text-muted-foreground">湿度の下限（%）</span>
-                        <input
-                          type="number"
-                          step={1}
-                          disabled={saving}
-                          value={settings.room_anomaly_thresholds.humidity.min}
-                          onChange={(event) =>
-                            void saveSettings({
-                              room_anomaly_thresholds: {
-                                ...settings.room_anomaly_thresholds,
-                                humidity: {
-                                  ...settings.room_anomaly_thresholds.humidity,
-                                  min: Number(event.target.value),
-                                },
-                              },
-                            })
-                          }
-                          className="mt-1 w-full rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13.5px] font-bold tabular-nums"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-[11px] text-muted-foreground">湿度の上限（%）</span>
-                        <input
-                          type="number"
-                          step={1}
-                          disabled={saving}
-                          value={settings.room_anomaly_thresholds.humidity.max}
-                          onChange={(event) =>
-                            void saveSettings({
-                              room_anomaly_thresholds: {
-                                ...settings.room_anomaly_thresholds,
-                                humidity: {
-                                  ...settings.room_anomaly_thresholds.humidity,
-                                  max: Number(event.target.value),
-                                },
-                              },
-                            })
-                          }
-                          className="mt-1 w-full rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13.5px] font-bold tabular-nums"
-                        />
-                      </label>
+                      {THRESHOLD_FIELDS.map((field) => {
+                        const key = thresholdDraftKey(field.metric, field.bound);
+                        const stored = settings.room_anomaly_thresholds[field.metric][field.bound];
+                        return (
+                          <label key={key} className="block">
+                            <span className="text-[11px] text-muted-foreground">{field.label}</span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step={field.step}
+                              value={drafts[key] ?? String(stored)}
+                              onChange={(event) => setDraft(key, event.target.value)}
+                              onBlur={() => commitThreshold(field.metric, field.bound)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") event.currentTarget.blur();
+                              }}
+                              className="mt-1 w-full rounded-lg bg-muted/40 px-2.5 py-1.5 text-[13.5px] font-bold tabular-nums"
+                            />
+                          </label>
+                        );
+                      })}
                     </div>
 
                     <div className="flex items-center justify-between gap-3">
@@ -417,15 +488,18 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
                         <input
                           id="room-anomaly-reminder"
                           type="number"
-                          min={5}
-                          max={1440}
-                          disabled={saving}
-                          value={settings.room_anomaly_reminder_minutes}
-                          onChange={(event) =>
-                            void saveSettings({
-                              room_anomaly_reminder_minutes: Number(event.target.value),
-                            })
+                          inputMode="numeric"
+                          min={MIN_REMINDER_MINUTES}
+                          max={MAX_REMINDER_MINUTES}
+                          value={
+                            drafts[REMINDER_DRAFT_KEY] ??
+                            String(settings.room_anomaly_reminder_minutes)
                           }
+                          onChange={(event) => setDraft(REMINDER_DRAFT_KEY, event.target.value)}
+                          onBlur={commitReminder}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
                           className="w-20 rounded-full bg-muted/40 px-3 py-1.5 text-right text-[13.5px] font-bold tabular-nums"
                         />
                         <span className="text-[13px] text-muted-foreground">分</span>
