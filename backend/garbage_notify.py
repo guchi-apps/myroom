@@ -54,6 +54,9 @@ _GROUPS: List[Dict[str, Any]] = [
         "dedupe_prefix": "garbage",
         "title_fmt": "明日は{label}の日です",
         "body_fmt": "{label}を準備してください（{date_label}収集）",
+        # 前日通知は #293 からの既存挙動どおり「時」だけを見る（分は無視する）。
+        # 既存ユーザーの挙動を変えないため、当日通知（下）とは判定方法を変えていない
+        "minute_precision": False,
     },
     {
         "timing": "same_day",
@@ -65,6 +68,10 @@ _GROUPS: List[Dict[str, Any]] = [
         "dedupe_prefix": "garbage-same-day",
         "title_fmt": "今日は{label}の日です",
         "body_fmt": "{label}を忘れずに出してください（{date_label}収集）",
+        # 当日通知は収集時刻の直前に送りたい用途を想定し、分まで見る（#347のレビュー指摘）。
+        # 「対象時刻を過ぎていて、その日まだ送っていない」で判定するため、5分間隔のループでも
+        # 目的の分ちょうどを取りこぼさない
+        "minute_precision": True,
     },
 ]
 
@@ -103,6 +110,23 @@ def _resolve_notify_hour(configured_time: Optional[str], default_hour: int) -> i
     return default_hour
 
 
+def _resolve_notify_time(configured_time: Optional[str], default_hour: int) -> datetime.time:
+    """通知時刻（時分）。画面で設定していればそちらを優先する。"""
+    if configured_time:
+        hour, minute = (int(part) for part in configured_time.split(":")[:2])
+        return datetime.time(hour, minute)
+    return datetime.time(default_hour, 0)
+
+
+def _passes_time_gate(
+    group: Dict[str, Any], configured_time: Optional[str], default_hour: int, now: datetime.datetime
+) -> bool:
+    if group["minute_precision"]:
+        target = _resolve_notify_time(configured_time, default_hour)
+        return now.time() >= target
+    return now.hour == _resolve_notify_hour(configured_time, default_hour)
+
+
 def _notify_for_group(
     group: Dict[str, Any],
     *,
@@ -120,8 +144,8 @@ def _notify_for_group(
     default_hour = (
         config["notify_hour"] if group["timing"] == "before" else DEFAULT_SAME_DAY_NOTIFY_HOUR
     )
-    notify_hour = _resolve_notify_hour(settings.get(group["time_key"]), default_hour)
-    if now.hour != notify_hour:
+    configured_time = settings.get(group["time_key"])
+    if not _passes_time_gate(group, configured_time, default_hour, now):
         return None
 
     day = today + datetime.timedelta(days=group["day_offset"])
@@ -151,6 +175,7 @@ def _notify_for_group(
             date_label=date_label,
             category_names=category_names,
             notes=entry["notes"],
+            timing=group["timing"],
         )
         notify_events.dispatch_push_event(
             notify_events.NotificationEvent(
