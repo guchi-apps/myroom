@@ -1,15 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AirVent, ChevronRight, X } from "lucide-react";
 import { EnvironmentChart } from "@/components/environment-chart";
 import type { ChartColorSettings } from "@/lib/chart-colors";
-import type { ChartLineVisibilitySettings } from "@/lib/chart-line-visibility";
+import {
+  AIRCON_TARGET_VISIBILITY_KEY,
+  deviceMetricVisibilityKey,
+  type ChartLineVisibilitySettings,
+} from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import { useChartHistory } from "@/lib/use-chart-history";
 import {
   AIRCON_CHART_DEVICE_ID,
   buildAirconStatusPill,
+  CHART_METRICS,
   type AirconData,
   type ChartMetric,
   type ChartViewRange,
@@ -29,6 +34,7 @@ interface AirconDetailPanelProps {
   /** 操作パネルを開けるか（ログイン情報なし・オフラインでは false）。false のときはボタンごと出さない */
   controllable: boolean;
   chartColors: ChartColorSettings;
+  /** グローバル設定（推移グラフの凡例など）。パネル内で表示中デバイスのラインだけ上書きする */
   lineVisibility: ChartLineVisibilitySettings;
   isOfflineMode?: boolean;
   offlineHistory?: HistoryPoint[] | null;
@@ -54,7 +60,7 @@ export function AirconDetailPanel({
   latest,
   controllable,
   chartColors,
-  lineVisibility,
+  lineVisibility: lineVisibilityProp,
   isOfflineMode = false,
   offlineHistory = null,
   offlineCacheKey = null,
@@ -64,6 +70,18 @@ export function AirconDetailPanel({
 }: AirconDetailPanelProps) {
   const [chartMetric, setChartMetric] = useState<ChartMetric>("temperature");
   const [viewRange, setViewRange] = useState<ChartViewRange>("day");
+
+  // カードを開いた本人がこのエアコンを選んでいるので、室温や凡例をどこかで
+  // 非表示にしていても、このパネルの中でだけは必ずラインを出す（他部屋の
+  // 詳細パネルでも同じ考え方。`OutdoorDetailPanel` の outdoor ライン上書きと対）
+  const lineVisibility = useMemo(() => {
+    const next = { ...lineVisibilityProp };
+    for (const metric of CHART_METRICS) {
+      next[deviceMetricVisibilityKey(AIRCON_CHART_DEVICE_ID, metric)] = true;
+    }
+    next[AIRCON_TARGET_VISIBILITY_KEY] = true;
+    return next;
+  }, [lineVisibilityProp]);
 
   const {
     historyData,

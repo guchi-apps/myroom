@@ -1632,7 +1632,7 @@ export function MyRoomDashboard() {
           latest={airconLatest}
           controllable={airconControlEnabled && !isOfflineMode}
           chartColors={chartColors}
-          lineVisibility={effectiveLineVisibility}
+          lineVisibility={defaultLineVisibility}
           isOfflineMode={isOfflineMode}
           offlineHistory={offlineSnapshot?.historyData ?? null}
           offlineCacheKey={offlineSnapshot?.cachedAt ?? null}
