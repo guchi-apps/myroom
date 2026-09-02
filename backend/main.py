@@ -217,10 +217,16 @@ class UiSettingsUpdate(BaseModel):
     energy_source_names: Optional[Dict[str, str]] = None
     #: 「電気の操作」のボタンID -> {"label": 付けた名前, "hidden": 隠すか}
     remote_buttons: Optional[Dict[str, Dict[str, Any]]] = None
-    #: ゴミの日のPush通知を送るか
+    #: ゴミの日の前日通知のPush通知を送るか
     garbage_notify_enabled: Optional[bool] = None
-    #: ゴミの日の通知時刻（"HH:MM"）。null を送ると「未設定」に戻す
+    #: ゴミの日の前日通知の時刻（"HH:MM"）。null を送ると「未設定」に戻す
     garbage_notify_time: Optional[str] = None
+    #: ゴミの日の当日通知のPush通知を送るか（#347）
+    garbage_notify_same_day_enabled: Optional[bool] = None
+    #: ゴミの日の当日通知の時刻（"HH:MM"）。null を送ると「未設定」に戻す
+    garbage_notify_same_day_time: Optional[str] = None
+    #: 品目ごとの通知タイミング。{category_id: ["before"|"same_day", ...]}
+    garbage_notify_category_timing: Optional[Dict[str, List[str]]] = None
     #: 室温・湿度の異常をPush通知するか
     room_anomaly_notify_enabled: Optional[bool] = None
     #: 指標ごとの上限・下限。{"temperature": {"min": ..., "max": ...}, "humidity": {...}}

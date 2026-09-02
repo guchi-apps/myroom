@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import {
+  fetchGarbageSchedule,
   fetchPushVapidPublicKey,
   fetchUiSettings,
   sendTestPushNotification,
@@ -10,6 +11,7 @@ import {
   unsubscribePushNotifications,
   updateUiSettings,
 } from "@/lib/api";
+import type { GarbageCategoryNext } from "@/lib/garbage";
 import {
   getExistingPushSubscription,
   getNotificationPermission,
@@ -28,6 +30,40 @@ interface NotificationSettingsSheetProps {
 //: 画面から一度も設定していないときに入力欄へ出す既定値。
 //: 実際の既定（未設定時の挙動）は backend/garbage.py の DEFAULT_NOTIFY_HOUR = 20 と揃える
 const DEFAULT_GARBAGE_NOTIFY_TIME = "20:00";
+//: 当日通知の入力欄の既定値。backend/garbage_notify.py の DEFAULT_SAME_DAY_NOTIFY_HOUR = 7 と揃える
+const DEFAULT_GARBAGE_NOTIFY_SAME_DAY_TIME = "07:00";
+
+type GarbageNotifyTiming = "before" | "same_day";
+
+//: 品目ごとの通知タイミングが未指定のときの既定（前日通知のみ、#293からの既定動作を維持）
+const DEFAULT_GARBAGE_NOTIFY_CATEGORY_TIMINGS: GarbageNotifyTiming[] = ["before"];
+
+/** その品目が指定のタイミング（前日/当日）で通知される設定になっているか。 */
+export function categoryHasTiming(
+  categoryTiming: Record<string, GarbageNotifyTiming[]>,
+  categoryId: string,
+  timing: GarbageNotifyTiming
+): boolean {
+  const timings = categoryTiming[categoryId] ?? DEFAULT_GARBAGE_NOTIFY_CATEGORY_TIMINGS;
+  return timings.includes(timing);
+}
+
+/**
+ * 品目ごとの通知タイミングを1つだけ切り替える。前日・当日は排他ではないため、
+ * 片方をONにしてももう片方はそのまま（両方ONも両方OFFも作れる）。
+ */
+export function toggleCategoryTiming(
+  categoryTiming: Record<string, GarbageNotifyTiming[]>,
+  categoryId: string,
+  timing: GarbageNotifyTiming,
+  next: boolean
+): Record<string, GarbageNotifyTiming[]> {
+  const current = categoryTiming[categoryId] ?? DEFAULT_GARBAGE_NOTIFY_CATEGORY_TIMINGS;
+  const timings = next
+    ? Array.from(new Set([...current, timing]))
+    : current.filter((entry) => entry !== timing);
+  return { ...categoryTiming, [categoryId]: timings };
+}
 
 //: 再通知間隔の下限・上限。backend/ui_settings.py の
 //: MIN_ROOM_ANOMALY_REMINDER_MINUTES / MAX_ROOM_ANOMALY_REMINDER_MINUTES と揃える
@@ -174,6 +210,7 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
   const [vapidConfigured, setVapidConfigured] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const [garbageCategories, setGarbageCategories] = useState<GarbageCategoryNext[]>([]);
   //: 数値入力の下書き。入力中はこちらを表示し、入力欄から離れたときだけ保存する。
   //: キーが無い欄は保存済みの値をそのまま出す（effect で詰め直さないための持ち方）
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -198,6 +235,13 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
         setVapidConfigured(configured);
       } catch {
         setVapidConfigured(false);
+      }
+
+      try {
+        const schedule = await fetchGarbageSchedule();
+        setGarbageCategories(schedule.by_category ?? []);
+      } catch {
+        setGarbageCategories([]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "読み込みに失敗しました");
@@ -404,36 +448,141 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
                 )}
               </section>
 
-              <section className="space-y-3 border-b pb-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[15px] font-bold">ゴミの日を通知する</p>
-                    <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-                      収集予定日の前日、設定した時刻に1回通知します
-                    </p>
-                  </div>
-                  <ToggleSwitch
-                    checked={settings.garbage_notify_enabled}
-                    disabled={saving}
-                    label="ゴミの日を通知する"
-                    onChange={(next) => void saveSettings({ garbage_notify_enabled: next })}
-                  />
-                </div>
-                {settings.garbage_notify_enabled && (
+              <section className="space-y-4 border-b pb-5">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  ゴミの日を通知する
+                </p>
+
+                <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <label htmlFor="garbage-notify-time" className="text-[13px]">
-                      通知時刻
-                    </label>
-                    <input
-                      id="garbage-notify-time"
-                      type="time"
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-bold">前日に通知する</p>
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
+                        収集予定日の前日、設定した時刻に通知します
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      checked={settings.garbage_notify_enabled}
                       disabled={saving}
-                      value={settings.garbage_notify_time ?? DEFAULT_GARBAGE_NOTIFY_TIME}
-                      onChange={(event) =>
-                        void saveSettings({ garbage_notify_time: event.target.value })
-                      }
-                      className="rounded-full bg-muted/40 px-3 py-1.5 text-[13.5px] font-bold tabular-nums"
+                      label="前日に通知する"
+                      onChange={(next) => void saveSettings({ garbage_notify_enabled: next })}
                     />
+                  </div>
+                  {settings.garbage_notify_enabled && (
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="garbage-notify-time" className="text-[13px]">
+                        通知時刻
+                      </label>
+                      <input
+                        id="garbage-notify-time"
+                        type="time"
+                        disabled={saving}
+                        value={settings.garbage_notify_time ?? DEFAULT_GARBAGE_NOTIFY_TIME}
+                        onChange={(event) =>
+                          void saveSettings({ garbage_notify_time: event.target.value })
+                        }
+                        className="rounded-full bg-muted/40 px-3 py-1.5 text-[13.5px] font-bold tabular-nums"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[15px] font-bold">当日に通知する</p>
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
+                        収集当日の朝、設定した時刻に通知します
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      checked={settings.garbage_notify_same_day_enabled}
+                      disabled={saving}
+                      label="当日に通知する"
+                      onChange={(next) =>
+                        void saveSettings({ garbage_notify_same_day_enabled: next })
+                      }
+                    />
+                  </div>
+                  {settings.garbage_notify_same_day_enabled && (
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="garbage-notify-same-day-time" className="text-[13px]">
+                        通知時刻
+                      </label>
+                      <input
+                        id="garbage-notify-same-day-time"
+                        type="time"
+                        disabled={saving}
+                        value={
+                          settings.garbage_notify_same_day_time ??
+                          DEFAULT_GARBAGE_NOTIFY_SAME_DAY_TIME
+                        }
+                        onChange={(event) =>
+                          void saveSettings({ garbage_notify_same_day_time: event.target.value })
+                        }
+                        className="rounded-full bg-muted/40 px-3 py-1.5 text-[13.5px] font-bold tabular-nums"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {garbageCategories.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      ゴミの種類ごとの通知タイミング（前日・当日は独立にON/OFFでき、両方選ぶこともできます）
+                    </p>
+                    <div className="space-y-1.5">
+                      {garbageCategories.map((category) => (
+                        <div
+                          key={category.id}
+                          className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span
+                              className="size-2.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: category.color }}
+                            />
+                            <span className="truncate text-[13px] font-bold">
+                              {category.name}
+                            </span>
+                          </div>
+                          <div className="flex shrink-0 gap-1.5">
+                            {(["before", "same_day"] as const).map((timing) => {
+                              const active = categoryHasTiming(
+                                settings.garbage_notify_category_timing,
+                                category.id,
+                                timing
+                              );
+                              return (
+                                <button
+                                  key={timing}
+                                  type="button"
+                                  disabled={saving}
+                                  aria-pressed={active}
+                                  onClick={() =>
+                                    void saveSettings({
+                                      garbage_notify_category_timing: toggleCategoryTiming(
+                                        settings.garbage_notify_category_timing,
+                                        category.id,
+                                        timing,
+                                        !active
+                                      ),
+                                    })
+                                  }
+                                  className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                                    active
+                                      ? "border-foreground bg-foreground text-background"
+                                      : "border-border bg-transparent text-muted-foreground"
+                                  }`}
+                                >
+                                  {timing === "before" ? "前日" : "当日"}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </section>
