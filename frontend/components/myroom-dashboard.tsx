@@ -28,6 +28,7 @@ import { PowerDetailPanel } from "@/components/power-detail-panel";
 import { OutdoorDetailPanel } from "@/components/outdoor-detail-panel";
 import { VersionHistoryDialog } from "@/components/version-history-dialog";
 import { AirconControlPanel } from "@/components/aircon-control-panel";
+import { AirconDetailPanel } from "@/components/aircon-detail-panel";
 import {
   deleteCleaningDone,
   fetchBillsSummary,
@@ -413,6 +414,7 @@ export function MyRoomDashboard() {
   // 白くまくんのログイン情報がバックエンドに無ければ操作パネルを出さない（#213）
   const [airconControlEnabled, setAirconControlEnabled] = useState(false);
   const [airconControlOpen, setAirconControlOpen] = useState(false);
+  const [airconDetailOpen, setAirconDetailOpen] = useState(false);
 
   const activeAirconId = airconLatest?.ac_id ?? 1;
   const airconChartTitle =
@@ -1290,9 +1292,6 @@ export function MyRoomDashboard() {
                 const airconReadings = isAirconRoomVisible(hiddenDeviceKeys)
                   ? buildAirconReadings(airconLatest?.room_temperature)
                   : [];
-                // 操作できるときだけ開けるようにする。ログイン情報が無いバックエンドでは
-                // パネルを開いても何も操作できないため、入口ごと出さない（#213）
-                const airconControllable = airconControlEnabled && !isOfflineMode;
                 const airconPill = buildAirconStatusPill(airconLatest);
                 // 運転モードと設定温度はバッジ1つが受け持つため、`/devices` の
                 // 「ダッシュボードに表示（設定温度）」はバッジの出し分けで引き継ぐ（#226）
@@ -1326,18 +1325,12 @@ export function MyRoomDashboard() {
                     accentColor={getDeviceChartColor(chartColors, AIRCON_CHART_DEVICE_ID)}
                     badge={airconBadge}
                     action={
-                      airconControllable ? (
-                        <ChevronRight
-                          className="size-5 shrink-0 text-muted-foreground/60"
-                          strokeWidth={1.75}
-                        />
-                      ) : undefined
+                      <ChevronRight
+                        className="size-5 shrink-0 text-muted-foreground/60"
+                        strokeWidth={1.75}
+                      />
                     }
-                    onClick={
-                      airconControllable
-                        ? () => setAirconControlOpen(true)
-                        : undefined
-                    }
+                    onClick={() => setAirconDetailOpen(true)}
                     readings={airconReadings}
                     // 室温を非表示にしていても、運転状態のバッジが出ているなら
                     // 「データがありません」とは言わない
@@ -1627,6 +1620,27 @@ export function MyRoomDashboard() {
           onClose={() => setCleaningSettingsOpen(false)}
           onSave={(tasks) => {
             void handleSaveCleaningTasks(tasks);
+          }}
+        />
+      )}
+
+      {airconDetailOpen && (
+        <AirconDetailPanel
+          open={airconDetailOpen}
+          title={airconTitle}
+          acId={activeAirconId}
+          latest={airconLatest}
+          controllable={airconControlEnabled && !isOfflineMode}
+          chartColors={chartColors}
+          lineVisibility={effectiveLineVisibility}
+          isOfflineMode={isOfflineMode}
+          offlineHistory={offlineSnapshot?.historyData ?? null}
+          offlineCacheKey={offlineSnapshot?.cachedAt ?? null}
+          onLineVisibilityChange={handleChartLineVisibleChange}
+          onClose={() => setAirconDetailOpen(false)}
+          onOpenControl={() => {
+            setAirconDetailOpen(false);
+            setAirconControlOpen(true);
           }}
         />
       )}
