@@ -1521,6 +1521,7 @@ export function MyRoomDashboard() {
         onVisibleDomainChange={ensureVisibleRangeLoaded}
         airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
         outdoorLocationName={primaryOutdoorLocation?.name}
+        outdoorPrimaryLocationId={primaryOutdoorLocation?.id}
         legendOrder={visibleDisplayOrder}
         chartColors={chartColors}
         lineVisibility={effectiveLineVisibility}
