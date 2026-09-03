@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AIRCON_TARGET_VISIBILITY_KEY,
   buildDefaultChartLineVisibility,
+  buildPanelChartLineVisibility,
   deviceDht11VisibilityKey,
   deviceMetricVisibilityKey,
   isChartLineVisible,
@@ -15,6 +16,7 @@ import {
   saveChartLineVisibility,
   toggleChartLineVisibility,
 } from "@/lib/chart-line-visibility";
+import { AIRCON_CHART_DEVICE_ID } from "@/lib/types";
 
 describe("chart-line-visibility", () => {
   it("builds defaults with all metric keys visible per device and outdoor metrics hidden", () => {
@@ -128,5 +130,38 @@ describe("chart-line-visibility", () => {
     ).toBe(false);
     expect(isChartLineVisible(effective, tempKey)).toBe(false);
     expect(isChartLineVisible(effective, outdoorTempKey)).toBe(true);
+  });
+
+  it("詳細パネルの強制表示より、パネル内の切り替えを優先する", () => {
+    const defaults = buildDefaultChartLineVisibility([1]);
+    const airconTempKey = deviceMetricVisibilityKey(AIRCON_CHART_DEVICE_ID, "temperature");
+    // グローバルではエアコンの線も設定温度も隠している状態
+    const base = {
+      ...defaults,
+      [airconTempKey]: false,
+      [AIRCON_TARGET_VISIBILITY_KEY]: false,
+    };
+    const forcedKeys = [airconTempKey, AIRCON_TARGET_VISIBILITY_KEY];
+
+    // 開いた直後は、グローバルの非表示に関わらず両方出す（#351）
+    const opened = buildPanelChartLineVisibility(base, forcedKeys, {});
+    expect(isChartLineVisible(opened, airconTempKey)).toBe(true);
+    expect(isChartLineVisible(opened, AIRCON_TARGET_VISIBILITY_KEY)).toBe(true);
+
+    // パネル内で設定温度を消したら、強制表示に戻されない（#357）
+    const toggled = buildPanelChartLineVisibility(base, forcedKeys, {
+      [AIRCON_TARGET_VISIBILITY_KEY]: false,
+    });
+    expect(isChartLineVisible(toggled, AIRCON_TARGET_VISIBILITY_KEY)).toBe(false);
+    expect(isChartLineVisible(toggled, airconTempKey)).toBe(true);
+  });
+
+  it("詳細パネルの対象外のキーは元の設定のまま残す", () => {
+    const defaults = buildDefaultChartLineVisibility([1]);
+    const otherKey = deviceMetricVisibilityKey(1, "humidity");
+    const base = { ...defaults, [otherKey]: false };
+    const panel = buildPanelChartLineVisibility(base, [AIRCON_TARGET_VISIBILITY_KEY], {});
+
+    expect(isChartLineVisible(panel, otherKey)).toBe(false);
   });
 });

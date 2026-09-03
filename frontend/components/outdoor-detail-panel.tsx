@@ -14,6 +14,7 @@ import type { DisplayOrderItem } from "@/lib/display-order";
 import { buildOutdoorReadings } from "@/lib/device-metrics";
 import { fetchOutdoorLocations, fetchOutdoorLocationWeather } from "@/lib/api";
 import { useOutdoorChartHistory } from "@/lib/use-outdoor-chart-history";
+import { usePanelLineVisibility } from "@/lib/use-panel-line-visibility";
 import {
   CHART_METRICS,
   formatOutdoorApiLabel,
@@ -28,6 +29,10 @@ import {
 const OUTDOOR_LEGEND_ORDER: readonly DisplayOrderItem[] = [{ type: "outdoor" }];
 const EMPTY_DEVICE_IDS: readonly number[] = [];
 const EMPTY_DEVICE_NAMES: Record<number, string> = {};
+/** このパネルが開いた時点で必ず表示する線（グローバル設定より優先） */
+const OUTDOOR_PANEL_FORCED_VISIBLE_KEYS: readonly string[] = CHART_METRICS.map(
+  (metric) => outdoorMetricVisibilityKey(metric)
+);
 
 interface OutdoorDetailPanelProps {
   open: boolean;
@@ -123,14 +128,13 @@ export function OutdoorDetailPanel({
     };
   }, [open, isPrimarySelected, selectedLocationId]);
 
-  // パネルを開いた際は outdoor ラインを常に表示する(グローバル設定に関わらず)
-  const lineVisibility = useMemo(() => {
-    const next = { ...lineVisibilityProp };
-    for (const metric of CHART_METRICS) {
-      next[outdoorMetricVisibilityKey(metric)] = true;
-    }
-    return next;
-  }, [lineVisibilityProp]);
+  // パネルを開いた時点では outdoor ラインを常に表示する(グローバル設定に関わらず)。
+  // 開いたあとの凡例の目のアイコンはパネル内でだけ効く（#357）
+  const { lineVisibility, handleLineVisibilityChange } = usePanelLineVisibility(
+    lineVisibilityProp,
+    OUTDOOR_PANEL_FORCED_VISIBLE_KEYS,
+    onLineVisibilityChange
+  );
 
   const {
     historyData,
@@ -243,7 +247,7 @@ export function OutdoorDetailPanel({
               outdoorLocationName={displayName}
               chartColors={chartColors}
               lineVisibility={lineVisibility}
-              onLineVisibilityChange={onLineVisibilityChange ?? (() => {})}
+              onLineVisibilityChange={handleLineVisibilityChange}
               pinMetricTabsOnMobile={false}
             />
           </div>
