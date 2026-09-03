@@ -70,11 +70,19 @@ def send_sensor_recovered_notification(
     })
 
 
+#: 前日/当日どちらのタイミングの通知かで見出しを変える（#347）
+_GARBAGE_TITLES = {
+    "before": "🗑️ 明日はゴミの日です",
+    "same_day": "🗑️ 今日はゴミの日です",
+}
+
+
 def send_garbage_notification(
     *,
     date_label: str,
     category_names: List[str],
     notes: Optional[List[str]] = None,
+    timing: str = "before",
 ) -> None:
     if not GARBAGE_WEBHOOK_URL:
         logger.debug("GARBAGE_WEBHOOK_URL / SENSOR_WEBHOOK_URL not set; skipping Signaly notification")
@@ -88,7 +96,7 @@ def send_garbage_notification(
         fields.append({"name": "備考", "value": "\n".join(notes), "inline": False})
 
     post_notification(GARBAGE_WEBHOOK_URL, {
-        "title": "🗑️ 明日はゴミの日です",
+        "title": _GARBAGE_TITLES.get(timing, _GARBAGE_TITLES["before"]),
         "color": "#3498db",
         "fields": fields,
     })

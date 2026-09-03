@@ -315,13 +315,14 @@ def test_notify_sends_for_tomorrow(data_dir, monkeypatch):
     )
 
     # 2026-08-10（月）20時 -> 翌 8/11（火）は普通ごみ
-    entry = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
-    assert entry is not None
+    entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
+    assert len(entries) == 1
+    assert entries[0]["timing"] == "before"
     assert sent[0]["category_names"] == ["普通ごみ"]
     assert sent[0]["date_label"] == "8/11（火）"
 
     # 同じ収集日について二度目は送らない
-    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 30)) is None
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 30)) == []
     assert len(sent) == 1
 
 
@@ -335,7 +336,7 @@ def test_notify_skips_outside_notify_hour(data_dir, monkeypatch):
         lambda **kwargs: sent.append(kwargs),
     )
 
-    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 9, 0)) is None
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 9, 0)) == []
     assert sent == []
 
 
@@ -369,7 +370,7 @@ def test_notify_skips_when_no_collection_tomorrow(data_dir, monkeypatch):
     )
 
     # 2026-08-13（木）の翌日 8/14（金）は例外で中止
-    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 13, 20, 0)) is None
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 13, 20, 0)) == []
     assert sent == []
 
 
@@ -407,7 +408,7 @@ def test_notify_skipped_when_disabled_via_settings(data_dir, monkeypatch):
         lambda **kwargs: sent.append(kwargs),
     )
 
-    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) is None
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
     assert sent == []
 
 
@@ -426,10 +427,273 @@ def test_notify_time_setting_overrides_notify_hour(data_dir, monkeypatch):
     )
 
     # 20時（従来の notify_hour）ではもう送らない
-    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) is None
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
     assert sent == []
 
     # 7時（設定した時刻）に送る
-    entry = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 7, 0))
-    assert entry is not None
+    entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 7, 0))
+    assert len(entries) == 1
+    assert len(sent) == 1
+
+
+# --- 前日/当日・品目ごとのタイミング（#347） --------------------------------------
+
+
+def test_notify_same_day_disabled_by_default(data_dir, monkeypatch):
+    """新機能は既定でOFFなので、当日朝の時刻になっても何も送らない。"""
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    # 2026-08-11（火）7時 = 当日通知の既定時刻。普通ごみの収集日だが、当日通知は既定OFF
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
+    assert sent == []
+
+
+def test_notify_same_day_sends_for_today(data_dir, monkeypatch):
+    """#347: 当日通知を有効にし、品目を当日グループへ割り当てると当日朝に送られる。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
+        }
+    )
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
+    assert len(entries) == 1
+    assert entries[0]["timing"] == "same_day"
+    assert sent[0]["category_names"] == ["普通ごみ"]
+    assert sent[0]["date_label"] == "8/11（火）"
+
+    # 同じ収集日について二度目は送らない
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 30)) == []
+    assert len(sent) == 1
+
+
+def test_notify_same_day_dedupe_independent_of_before(data_dir, monkeypatch):
+    """前日分をすでに送っていても、当日分は独立して送れる（逆も）。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {
+                "burnable": ["before", "same_day"]
+            },
+        }
+    )
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None
+    )
+
+    # 前日20時分（8/10 20時 -> 8/11収集）を送る
+    before_entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
+    assert [e["timing"] for e in before_entries] == ["before"]
+
+    # 続けて当日7時分（8/11 7時）も独立して送れる
+    same_day_entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
+    assert [e["timing"] for e in same_day_entries] == ["same_day"]
+
+
+def test_notify_category_timing_splits_before_and_same_day(data_dir, monkeypatch):
+    """#347: 品目ごとに前日・当日どちらに属するかを振り分ける（両方に属することもできる）。"""
+    from backend import ui_settings
+
+    config = dict(SAMPLE_CONFIG)
+    config["categories"] = [
+        {"id": "burnable", "name": "普通ごみ", "rules": [{"type": "weekly", "weekdays": ["tue"]}]},
+        {"id": "bulky", "name": "大型可燃ごみ", "rules": [{"type": "weekly", "weekdays": ["tue"]}]},
+    ]
+    write_config(data_dir, config)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {
+                # 大型可燃ごみだけ前日・当日の両方に属する
+                "bulky": ["before", "same_day"]
+            },
+        }
+    )
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    before_entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
+    assert len(before_entries) == 1
+    assert [c["name"] for c in before_entries[0]["categories"]] == ["普通ごみ", "大型可燃ごみ"]
+
+    same_day_entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
+    assert len(same_day_entries) == 1
+    assert [c["name"] for c in same_day_entries[0]["categories"]] == ["大型可燃ごみ"]
+
+
+def test_notify_skips_group_when_no_categories_assigned(data_dir, monkeypatch):
+    """当日通知を有効にしても、当日グループへ割り当てた品目が無ければ送らない。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True})
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
+    assert sent == []
+
+
+def test_notify_reads_old_state_file_format(data_dir, monkeypatch):
+    """旧形式 {"last_notified_date": ...} を読んでも前日分の二重送信防止が効く（後方互換）。"""
+    write_config(data_dir)
+    state_path = data_dir / "garbage_notify_state.json"
+    state_path.write_text(json.dumps({"last_notified_date": "2026-08-11"}), encoding="utf-8")
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", state_path)
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
+    assert sent == []
+
+
+def test_notify_dedupe_key_differs_between_before_and_same_day(data_dir, monkeypatch):
+    """計画レビュー指摘1: 同じ収集日でも前日・当日でPush通知のdedupe_keyが衝突しない。
+
+    衝突すると、後から届く通知のtagが同じになりブラウザ側で無音上書きされてしまう
+    （renotifyを指定していないため）。
+    """
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {
+                "burnable": ["before", "same_day"]
+            },
+        }
+    )
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        garbage_notify.notify_events,
+        "dispatch_push_event",
+        lambda event: dispatched.append(event),
+    )
+
+    garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))  # 前日分
+    garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))  # 当日分
+
+    assert len(dispatched) == 2
+    keys = [event.dedupe_key for event in dispatched]
+    assert len(set(keys)) == 2, f"dedupe_keyが衝突している: {keys}"
+
+
+def test_notify_signaly_title_matches_timing(data_dir, monkeypatch):
+    """計画レビュー指摘2: Signalyの文面が当日通知でも「明日は」のまま固定にならない。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
+        }
+    )
+    calls = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
+
+    assert len(calls) == 1
+    assert calls[0]["timing"] == "same_day"
+
+
+def test_notify_same_day_respects_minute_of_configured_time(data_dir, monkeypatch):
+    """計画レビュー指摘3: 当日通知は分まで見る。5分間隔のループでも設定した分ちょうどで送れる。"""
+    from backend import ui_settings
+
+    write_config(data_dir)
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings(
+        {
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True,
+            ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: "07:15",
+            ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
+        }
+    )
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    # 7時台でも、設定した分（15分）より前は送らない
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 10)) == []
+    assert sent == []
+
+    # 設定した分ちょうど（5分間隔のループが実際に踏む時刻）で送る
+    entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 15))
+    assert len(entries) == 1
+    assert len(sent) == 1
+
+    # 同じ日はもう送らない
+    assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 20)) == []
+    assert len(sent) == 1
+
+
+def test_notify_before_group_still_ignores_minutes(data_dir, monkeypatch):
+    """前日通知は#293からの既存挙動どおり「時」だけを見る（当日通知とは判定方法が違う）。"""
+    from backend import ui_settings
+
+    write_config(data_dir)  # notify_hour = 20
+    monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
+    ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "20:30"})
+    sent = []
+    monkeypatch.setattr(
+        garbage_notify.signaly_notify,
+        "send_garbage_notification",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    # 20:00（分は20:30の指定より前）でも「時」が一致していれば送る
+    entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
+    assert len(entries) == 1
     assert len(sent) == 1

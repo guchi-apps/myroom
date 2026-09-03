@@ -30,6 +30,7 @@ import {
   buildEnergySourceColors,
   buildEnergyStackColumns,
   buildEnergyStackSegments,
+  energyRowRatio,
   formatEnergyDate,
   formatEnergyDateWithWeekday,
   formatEnergyHour,
@@ -504,16 +505,21 @@ export function PowerDetailPanel({
                               {formatEnergyHour(row.hour)}
                             </span>
                             <span className="flex h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-                              {row.segments.map((segment) => (
-                                <span
-                                  key={segment.source}
-                                  className="block h-full"
-                                  style={{
-                                    width: `${segment.share * 100}%`,
-                                    backgroundColor: segment.color,
-                                  }}
-                                />
-                              ))}
+                              <span
+                                className="flex h-full"
+                                style={{ width: `${Math.max(4, row.ratio * 100)}%` }}
+                              >
+                                {row.segments.map((segment) => (
+                                  <span
+                                    key={segment.source}
+                                    className="block h-full min-w-px"
+                                    style={{
+                                      width: `${segment.share * 100}%`,
+                                      backgroundColor: segment.color,
+                                    }}
+                                  />
+                                ))}
+                              </span>
                             </span>
                             <span className="w-[62px] shrink-0 text-right font-bold">
                               {formatKwh(row.kwh)}
@@ -633,16 +639,21 @@ export function PowerDetailPanel({
                         {formatEnergyDateWithWeekday(row.date)}
                       </span>
                       <span className="flex h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-                        {buildEnergyStackSegments(row, sources, colors).map((segment) => (
-                          <span
-                            key={segment.source}
-                            className="block h-full"
-                            style={{
-                              width: `${segment.share * 100}%`,
-                              backgroundColor: segment.color,
-                            }}
-                          />
-                        ))}
+                        <span
+                          className="flex h-full"
+                          style={{ width: `${Math.max(4, energyRowRatio(rows, row) * 100)}%` }}
+                        >
+                          {buildEnergyStackSegments(row, sources, colors).map((segment) => (
+                            <span
+                              key={segment.source}
+                              className="block h-full min-w-px"
+                              style={{
+                                width: `${segment.share * 100}%`,
+                                backgroundColor: segment.color,
+                              }}
+                            />
+                          ))}
+                        </span>
                       </span>
                       <span className="w-[62px] shrink-0 text-right font-bold">
                         {formatKwh(row.kwh)}

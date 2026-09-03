@@ -74,4 +74,13 @@ describe("PowerDetailPanel", () => {
     const html = render(WITHOUT_OTHER);
     expect(html).not.toContain("その他 = KEPCO実測");
   });
+
+  it("一覧行の棒は、その日の使用量に応じた長さになる（#350）", () => {
+    const html = render(WITHOUT_OTHER);
+    const widths = [...html.matchAll(/class="flex h-full" style="width:([\d.]+)%"/g)].map(
+      (m) => Number(m[1])
+    );
+    // 8/22（1.86kWh）がいちばん多いので全幅、8/21（1.5kWh）はそれより短い
+    expect(widths).toEqual([100, expect.closeTo((1.5 / 1.86) * 100, 5)]);
+  });
 });

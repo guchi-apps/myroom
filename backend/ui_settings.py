@@ -21,10 +21,18 @@ SETTING_ENERGY_SOURCE_NAMES = "energy_source_names"
 SETTING_REMOTE_BUTTONS = "remote_buttons"
 SETTING_REMOTE_BUTTON_DEFS = "remote_button_defs"
 SETTING_REMOTE_CATALOG = "remote_catalog"
-#: ゴミの日のPush通知を送るか（#293）
+#: ゴミの日の前日通知のPush通知を送るか（#293）
 SETTING_GARBAGE_NOTIFY_ENABLED = "garbage_notify_enabled"
-#: 通知時刻（"HH:MM"）。未設定（None）は data/garbage.json の notify_hour を使う
+#: 前日通知の時刻（"HH:MM"）。未設定（None）は data/garbage.json の notify_hour を使う
 SETTING_GARBAGE_NOTIFY_TIME = "garbage_notify_time"
+#: ゴミの日の当日通知を送るか（#347）。前日通知（上記2つ）とは独立に設定できる
+SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED = "garbage_notify_same_day_enabled"
+#: 当日通知の時刻（"HH:MM"）。未設定（None）は garbage_notify.DEFAULT_SAME_DAY_NOTIFY_HOUR を使う
+SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME = "garbage_notify_same_day_time"
+#: 品目ごとに前日・当日どちらのタイミングで通知するか（#347）。
+#: {category_id: ["before", "same_day"]} のように、両方を指定することもできる。
+#: キーが無い品目は ["before"]（#293からの既定動作を維持）
+SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING = "garbage_notify_category_timing"
 #: 室温・湿度の異常をPush通知するか（#293）
 SETTING_ROOM_ANOMALY_NOTIFY_ENABLED = "room_anomaly_notify_enabled"
 #: 指標ごとの上限・下限。{"temperature": {"min": 16.0, "max": 30.0}, "humidity": {...}}
@@ -35,6 +43,10 @@ SETTING_ROOM_ANOMALY_REMINDER_MINUTES = "room_anomaly_reminder_minutes"
 DEFAULT_DISPLAY_ORDER = ["device:1", "device:2", "outdoor", "aircon"]
 
 DEFAULT_GARBAGE_NOTIFY_ENABLED = True
+DEFAULT_GARBAGE_NOTIFY_SAME_DAY_ENABLED = False
+#: 前日・当日の指定に使える値。品目ごとの既定は ["before"]（前日通知のみ、現行動作維持）
+GARBAGE_NOTIFY_TIMINGS = ("before", "same_day")
+DEFAULT_GARBAGE_NOTIFY_CATEGORY_TIMINGS: List[str] = ["before"]
 DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED = False
 #: 温湿度の異常判定に使う既定の上限・下限。画面で変えるまではこの値を使う
 DEFAULT_ROOM_ANOMALY_THRESHOLDS: Dict[str, Dict[str, float]] = {
@@ -97,6 +109,9 @@ def _default_settings() -> Dict[str, Any]:
         SETTING_REMOTE_CATALOG: None,
         SETTING_GARBAGE_NOTIFY_ENABLED: DEFAULT_GARBAGE_NOTIFY_ENABLED,
         SETTING_GARBAGE_NOTIFY_TIME: None,
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: DEFAULT_GARBAGE_NOTIFY_SAME_DAY_ENABLED,
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: None,
+        SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {},
         SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED,
         SETTING_ROOM_ANOMALY_THRESHOLDS: {
             metric: dict(values) for metric, values in DEFAULT_ROOM_ANOMALY_THRESHOLDS.items()
@@ -381,6 +396,36 @@ def _normalize_time_hhmm(raw: Any) -> Optional[str]:
     return f"{hour:02d}:{minute:02d}"
 
 
+def _normalize_garbage_notify_category_timing(raw: Any) -> Dict[str, List[str]]:
+    """品目ごとの通知タイミング（#347）。{category_id: ["before", "same_day"]}。
+
+    前日・当日は排他ではないため、両方を含む配列も受ける。品目IDの実在チェックは行わない
+    （light_thresholds・pressure_offsets と同じく、garbage.py への依存を作らないため）。
+    既定（["before"]）と同じ内容の配列は「未指定」と区別が付かないので保存しない。
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: Dict[str, List[str]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        category_id = key.strip()
+        if not category_id:
+            continue
+
+        timings: List[str] = []
+        for entry in value:
+            if entry in GARBAGE_NOTIFY_TIMINGS and entry not in timings:
+                timings.append(entry)
+        # 既定（前日のみ）と同じ内容は「未指定」と区別が付かないので保存しない。
+        # 空配列（前日・当日どちらも外した = 通知しない）は既定と異なるため保存する
+        if sorted(timings) == sorted(DEFAULT_GARBAGE_NOTIFY_CATEGORY_TIMINGS):
+            continue
+        normalized[category_id] = timings
+    return normalized
+
+
 def _normalize_room_anomaly_thresholds(raw: Any) -> Dict[str, Dict[str, float]]:
     """指標ごとの上限・下限。min >= max や数値でない値は既定へ落とす。"""
     if not isinstance(raw, dict):
@@ -460,6 +505,16 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             raw.get(SETTING_GARBAGE_NOTIFY_ENABLED), DEFAULT_GARBAGE_NOTIFY_ENABLED
         ),
         SETTING_GARBAGE_NOTIFY_TIME: _normalize_time_hhmm(raw.get(SETTING_GARBAGE_NOTIFY_TIME)),
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: _normalize_bool(
+            raw.get(SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED),
+            DEFAULT_GARBAGE_NOTIFY_SAME_DAY_ENABLED,
+        ),
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: _normalize_time_hhmm(
+            raw.get(SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME)
+        ),
+        SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: _normalize_garbage_notify_category_timing(
+            raw.get(SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING)
+        ),
         SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: _normalize_bool(
             raw.get(SETTING_ROOM_ANOMALY_NOTIFY_ENABLED), DEFAULT_ROOM_ANOMALY_NOTIFY_ENABLED
         ),
@@ -573,6 +628,21 @@ def save_settings(
         ),
         SETTING_GARBAGE_NOTIFY_TIME: updates.get(
             SETTING_GARBAGE_NOTIFY_TIME, current.get(SETTING_GARBAGE_NOTIFY_TIME)
+        ),
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: updates.get(
+            SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED,
+            current.get(
+                SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED,
+                DEFAULT_GARBAGE_NOTIFY_SAME_DAY_ENABLED,
+            ),
+        ),
+        SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME: updates.get(
+            SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME,
+            current.get(SETTING_GARBAGE_NOTIFY_SAME_DAY_TIME),
+        ),
+        SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: updates.get(
+            SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING,
+            current.get(SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING, {}),
         ),
         SETTING_ROOM_ANOMALY_NOTIFY_ENABLED: updates.get(
             SETTING_ROOM_ANOMALY_NOTIFY_ENABLED,
