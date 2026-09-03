@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.12.1",
+    date: "2026-09-04",
+    changes: [
+      "エアコンや屋外の詳細パネルで、グラフの凡例にある表示/非表示の切り替え(目のアイコン)が正しく効くようになりました。また、推移グラフの凡例で、エアコンの室温を非表示にしても設定温度の表示が消えなくなり、屋外の地点を複数登録している場合に同じ項目が重複して表示されなくなりました。",
+    ],
+  },
+  {
     version: "4.12.0",
     date: "2026-09-03",
     changes: [
