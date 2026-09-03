@@ -1,0 +1,109 @@
+import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { EnvironmentChart } from "@/components/environment-chart";
+import { buildDefaultChartLineVisibility } from "@/lib/chart-line-visibility";
+import {
+  normalizeDisplayOrder,
+  outdoorOrderKey,
+  type OutdoorOrderContext,
+} from "@/lib/display-order";
+import {
+  applyHiddenDevicesToLineVisibility,
+  filterDisplayOrderByVisibility,
+  getVisibleChartDeviceIds,
+  AIRCON_ROOM_HIDDEN_KEY,
+} from "@/lib/visible-devices";
+import { AIRCON_CHART_DEVICE_ID, type HistoryPoint } from "@/lib/types";
+
+const noop = () => {};
+
+const SENSOR_DEVICE_IDS = [1, 2];
+const DEVICE_NAMES = {
+  1: "リビング",
+  2: "寝室",
+  [AIRCON_CHART_DEVICE_ID]: "エアコン",
+};
+
+/** 屋外の地点を2つ登録している状態（基準は高槻市） */
+const TWO_LOCATIONS: OutdoorOrderContext = {
+  locationIds: ["taka", "settsu"],
+  primaryId: "taka",
+};
+
+function buildHistory(): HistoryPoint[] {
+  const base = new Date("2026-09-03T20:00:00").getTime();
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    rows.push({
+      datetime: new Date(base + i * 5 * 60 * 1000).toISOString(),
+      datetimeObj: base + i * 5 * 60 * 1000,
+      outdoor_temperature: 23.5,
+      d1_temperature: 33.6,
+      d2_temperature: 27.9,
+      d9001_temperature: 25.5,
+      d9001_target_temperature: 26,
+      d9001_power: "ON",
+    });
+  }
+  return rows as unknown as HistoryPoint[];
+}
+
+/** 凡例の行名。表示切替ボタンの `aria-label` から拾う */
+function legendNames(html: string): string[] {
+  return [...html.matchAll(/aria-label="([^"]*)の表示切替"/g)].map((match) => match[1]);
+}
+
+function render(hiddenKeys: Set<string> = new Set()) {
+  const legendOrder = filterDisplayOrderByVisibility(
+    normalizeDisplayOrder(null, SENSOR_DEVICE_IDS, TWO_LOCATIONS),
+    hiddenKeys
+  );
+  const lineVisibility = applyHiddenDevicesToLineVisibility(
+    buildDefaultChartLineVisibility(SENSOR_DEVICE_IDS),
+    hiddenKeys,
+    SENSOR_DEVICE_IDS,
+    outdoorOrderKey(TWO_LOCATIONS.primaryId)
+  );
+
+  return renderToStaticMarkup(
+    <EnvironmentChart
+      historyData={buildHistory()}
+      deviceIds={getVisibleChartDeviceIds(SENSOR_DEVICE_IDS, hiddenKeys)}
+      deviceNames={DEVICE_NAMES}
+      chartMetric="temperature"
+      onChartMetricChange={noop}
+      viewRange="day"
+      onViewRangeChange={noop}
+      loading={false}
+      onVisibleDomainChange={noop}
+      airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
+      outdoorLocationName="高槻市"
+      outdoorPrimaryLocationId={TWO_LOCATIONS.primaryId}
+      legendOrder={legendOrder}
+      chartColors={{}}
+      lineVisibility={lineVisibility}
+      onLineVisibilityChange={noop}
+    />
+  );
+}
+
+describe("EnvironmentChart の凡例", () => {
+  it("屋外の地点を複数登録しても屋外の行は基準地点の1行だけ（#358）", () => {
+    const names = legendNames(render());
+    expect(names.filter((name) => name === "高槻市")).toHaveLength(1);
+  });
+
+  it("室温・設定温度・DHT11以外の行を落とさない", () => {
+    const names = legendNames(render());
+    expect(names).toContain("リビング");
+    expect(names).toContain("寝室");
+    expect(names).toContain("エアコン");
+    expect(names).toContain("エアコン（設定温度）");
+  });
+
+  it("エアコンの室温だけ非表示にしても設定温度の行は残る（線だけ描かれるのを防ぐ。#358）", () => {
+    const names = legendNames(render(new Set([AIRCON_ROOM_HIDDEN_KEY])));
+    expect(names).not.toContain("エアコン");
+    expect(names).toContain("エアコン（設定温度）");
+  });
+});

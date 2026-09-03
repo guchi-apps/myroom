@@ -169,11 +169,27 @@ export function isTargetVisible(
   return !hiddenKeys.has(orderItemKey(item));
 }
 
+/**
+ * カードごとの表示・非表示を切り替える。
+ *
+ * **エアコンだけは `isTargetVisible()` が2つのキー（室温・設定温度）を見ている**ため、
+ * `orderItemKey()` の `"aircon"` を足し引きするだけでは切り替えが片道になる（#358）。
+ * 保存済みの `"aircon"` は `normalizeHiddenDeviceKeys()` が読み込み時に2つのキーへ
+ * 読み替えるので、非表示にして開き直したあとに表示へ戻しても
+ * （消すのは `"aircon"` だけで2つのキーが残り）**カードが戻ってこなかった**。
+ * 判定に使うキーをそのまま足し引きする。
+ */
 export function setTargetVisible(
   hiddenKeys: Set<string>,
   item: DisplayOrderItem,
   visible: boolean
 ): Set<string> {
+  if (item.type === "aircon") {
+    // `setHiddenKeyVisible()` はこの2つのキーを触るときに旧 `"aircon"` も落とす
+    const next = setHiddenKeyVisible(hiddenKeys, AIRCON_ROOM_HIDDEN_KEY, visible);
+    return setHiddenKeyVisible(next, AIRCON_TARGET_VISIBILITY_KEY, visible);
+  }
+
   const key = orderItemKey(item);
   const next = new Set(hiddenKeys);
   if (visible) {

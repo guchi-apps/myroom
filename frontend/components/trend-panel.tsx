@@ -34,6 +34,8 @@ interface TrendPanelProps {
   onVisibleDomainChange: (min: number, max: number) => void;
   airconTargetDeviceId: number;
   outdoorLocationName?: string;
+  /** 屋外ラインが指す基準地点のID（凡例を1行に保つため。#358） */
+  outdoorPrimaryLocationId?: string | null;
   legendOrder: DisplayOrderItem[];
   chartColors: ChartColorSettings;
   lineVisibility: ChartLineVisibilitySettings;
@@ -75,6 +77,7 @@ export function TrendPanel({
   onVisibleDomainChange,
   airconTargetDeviceId,
   outdoorLocationName,
+  outdoorPrimaryLocationId,
   legendOrder,
   chartColors,
   lineVisibility,
@@ -125,6 +128,7 @@ export function TrendPanel({
               onVisibleDomainChange={onVisibleDomainChange}
               airconTargetDeviceId={airconTargetDeviceId}
               outdoorLocationName={outdoorLocationName}
+              outdoorPrimaryLocationId={outdoorPrimaryLocationId}
               legendOrder={legendOrder}
               chartColors={chartColors}
               lineVisibility={lineVisibility}

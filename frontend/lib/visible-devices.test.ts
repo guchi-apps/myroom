@@ -131,6 +131,20 @@ describe("visible-devices", () => {
     expect(shown.has("device:1")).toBe(false);
   });
 
+  it("brings the aircon card back after hiding it and reloading (#358)", () => {
+    // 非表示にして保存 → 読み込み直し（`normalizeHiddenDeviceKeys` が2つのキーへ読み替える）
+    const hidden = setTargetVisible(new Set(), { type: "aircon" }, false);
+    expect(isAirconAnyVisible(hidden)).toBe(false);
+
+    const reloaded = normalizeHiddenDeviceKeys([...hidden], [1, 2]);
+    expect(isTargetVisible(reloaded, { type: "aircon" })).toBe(false);
+
+    const shown = setTargetVisible(reloaded, { type: "aircon" }, true);
+    expect(isAirconRoomVisible(shown)).toBe(true);
+    expect(isAirconTargetVisible(shown)).toBe(true);
+    expect(getVisibleChartDeviceIds([1, 2], shown)).toContain(AIRCON_CHART_DEVICE_ID);
+  });
+
   it("sorts hidden targets to the end", () => {
     const order = [
       { type: "device" as const, deviceId: 1 },

@@ -80,7 +80,11 @@ import {
 } from "@/lib/chart-line-visibility";
 import { cn } from "@/lib/utils";
 import type { DisplayOrderItem } from "@/lib/display-order";
-import { buildDefaultDisplayOrder, getChartDeviceSeriesOrder } from "@/lib/display-order";
+import {
+  buildDefaultDisplayOrder,
+  getChartDeviceSeriesOrder,
+  orderItemKey,
+} from "@/lib/display-order";
 
 const METRIC_ICONS = {
   temperature: Thermometer,
@@ -127,6 +131,11 @@ interface EnvironmentChartProps {
   onVisibleDomainChange?: (visibleMin: number, visibleMax: number) => void;
   airconTargetDeviceId?: number;
   outdoorLocationName?: string;
+  /**
+   * 屋外ラインが指す基準地点のID。並び順には地点ごとの項目が並ぶため、どの項目を
+   * 屋外ラインの凡例にするかをこれで決める（#358）。省略時は最初の屋外の項目。
+   */
+  outdoorPrimaryLocationId?: string | null;
   legendOrder?: readonly DisplayOrderItem[];
   chartColors: ChartColorSettings;
   lineVisibility: ChartLineVisibilitySettings;
@@ -273,6 +282,7 @@ export function EnvironmentChart({
   onVisibleDomainChange,
   airconTargetDeviceId,
   outdoorLocationName,
+  outdoorPrimaryLocationId,
   legendOrder,
   chartColors,
   lineVisibility,
@@ -309,6 +319,22 @@ export function EnvironmentChart({
     showAirconInOrder &&
     hasDeviceTargetStateData(historyData, airconTargetDeviceId);
   const showOutdoorInOrder = resolvedLegendOrder.some((item) => item.type === "outdoor");
+  /**
+   * 凡例に屋外の行を出す項目のキー。**屋外のラインは基準地点の1本だけ**（#308・#321）だが、
+   * 並び順（`legendOrder`）には地点ごとの項目が並ぶため、当たるたびに行を足すと同じ線の凡例が
+   * 地点数ぶん重複する（#358。地点を2つ登録すると基準地点の名前と値が2行出た）。
+   * 基準地点の項目が並びにあればその位置に、無ければ最初の屋外の項目の位置に1行だけ出す。
+   */
+  const outdoorLegendItemKey = useMemo(() => {
+    const outdoorItems = resolvedLegendOrder.filter((item) => item.type === "outdoor");
+    if (!outdoorItems.length) return null;
+    const primary = outdoorPrimaryLocationId
+      ? outdoorItems.find(
+          (item) => item.type === "outdoor" && item.locationId === outdoorPrimaryLocationId
+        )
+      : undefined;
+    return orderItemKey(primary ?? outdoorItems[0]);
+  }, [resolvedLegendOrder, outdoorPrimaryLocationId]);
   const showOutdoorLine =
     canShowOutdoor &&
     showOutdoorInOrder &&
@@ -773,13 +799,19 @@ export function EnvironmentChart({
       if (item.type === "device" || item.type === "aircon") {
         const deviceId =
           item.type === "device" ? item.deviceId : AIRCON_CHART_DEVICE_ID;
-        if (!deviceIds.includes(deviceId)) continue;
+        // 設定温度は室温とは別の指標で、`/devices` の「ダッシュボードに表示」も別に持つ。
+        // **室温の行が出ない場面（室温だけ非表示・室温の記録なし）でも線は描かれる**ため、
+        // ここで一緒に落とすと凡例の無いラインが残る（#358）
+        const showTargetRow =
+          !isMinMaxMode && deviceId === airconTargetDeviceId && showAirconTargetLine;
+        const inChart = deviceIds.includes(deviceId);
 
-        const hasMetric = hasDeviceMetricData(historyData, deviceId, chartMetric);
+        const hasMetric =
+          inChart && hasDeviceMetricData(historyData, deviceId, chartMetric);
         const hasDht11 =
+          inChart &&
           chartMetric === "temperature" &&
           hasDeviceDht11TemperatureData(historyData, deviceId);
-        if (!hasMetric && !hasDht11) continue;
 
         if (hasMetric) {
           const minMaxEntry = isMinMaxMode
@@ -826,12 +858,7 @@ export function EnvironmentChart({
           });
         }
 
-        if (
-          !isMinMaxMode &&
-          deviceId === airconTargetDeviceId &&
-          showAirconTargetLine &&
-          airconTargetDeviceId != null
-        ) {
+        if (showTargetRow && airconTargetDeviceId != null) {
           rows.push({
             id: "aircon-target",
             name: `${deviceNames[airconTargetDeviceId] ?? "エアコン"}（設定温度）`,
@@ -844,7 +871,11 @@ export function EnvironmentChart({
         continue;
       }
 
-      if (item.type === "outdoor" && canShowOutdoor) {
+      if (
+        item.type === "outdoor" &&
+        canShowOutdoor &&
+        orderItemKey(item) === outdoorLegendItemKey
+      ) {
         rows.push({
           id: "outdoor",
           name: formatOutdoorApiLabel(outdoorLocationName),
@@ -874,6 +905,7 @@ export function EnvironmentChart({
     airconTargetColor,
     canShowOutdoor,
     chartColors,
+    outdoorLegendItemKey,
     outdoorLineColor,
     outdoorLocationName,
     activeOutdoor,
