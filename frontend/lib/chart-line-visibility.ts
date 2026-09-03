@@ -152,3 +152,23 @@ export function getDisplayItemVisibilityKey(item: {
   if (item.type === "outdoor") return OUTDOOR_VISIBILITY_KEY;
   return deviceVisibilityKey(AIRCON_CHART_DEVICE_ID);
 }
+
+/**
+ * 詳細パネル内で使う表示状態を組み立てる（#357）。
+ *
+ * パネルは「そのカードを開いたのだから、その線は必ず出す」ため対象キーを `true` へ
+ * 上書きする（#351）。ただしこの上書きを凡例の操作より後に当てると、目のアイコンを
+ * 押しても常に `true` へ戻り、切り替えが効かなくなる。上書きは**パネルを開いた時点の
+ * 初期値**として扱い、パネル内での操作（`panelOverrides`）を最後に当てること。
+ */
+export function buildPanelChartLineVisibility(
+  base: ChartLineVisibilitySettings,
+  forcedVisibleKeys: readonly string[],
+  panelOverrides: ChartLineVisibilityOverrides
+): ChartLineVisibilitySettings {
+  const next = { ...base };
+  for (const key of forcedVisibleKeys) {
+    next[key] = true;
+  }
+  return mergeEffectiveChartLineVisibility(next, panelOverrides);
+}

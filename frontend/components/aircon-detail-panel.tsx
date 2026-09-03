@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AirVent, ChevronRight, X } from "lucide-react";
 import { EnvironmentChart } from "@/components/environment-chart";
 import type { ChartColorSettings } from "@/lib/chart-colors";
@@ -11,6 +11,7 @@ import {
 } from "@/lib/chart-line-visibility";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import { useChartHistory } from "@/lib/use-chart-history";
+import { usePanelLineVisibility } from "@/lib/use-panel-line-visibility";
 import {
   AIRCON_CHART_DEVICE_ID,
   buildAirconStatusPill,
@@ -24,6 +25,13 @@ import {
 const AIRCON_LEGEND_ORDER: readonly DisplayOrderItem[] = [{ type: "aircon" }];
 const AIRCON_CHART_DEVICE_IDS: readonly number[] = [AIRCON_CHART_DEVICE_ID];
 const EMPTY_HISTORY_DEVICE_IDS: readonly number[] = [];
+/** このパネルが開いた時点で必ず表示する線（グローバル設定より優先。#351） */
+const AIRCON_PANEL_FORCED_VISIBLE_KEYS: readonly string[] = [
+  ...CHART_METRICS.map((metric) =>
+    deviceMetricVisibilityKey(AIRCON_CHART_DEVICE_ID, metric)
+  ),
+  AIRCON_TARGET_VISIBILITY_KEY,
+];
 
 interface AirconDetailPanelProps {
   open: boolean;
@@ -72,16 +80,14 @@ export function AirconDetailPanel({
   const [viewRange, setViewRange] = useState<ChartViewRange>("day");
 
   // カードを開いた本人がこのエアコンを選んでいるので、室温や凡例をどこかで
-  // 非表示にしていても、このパネルの中でだけは必ずラインを出す（他部屋の
-  // 詳細パネルでも同じ考え方。`OutdoorDetailPanel` の outdoor ライン上書きと対）
-  const lineVisibility = useMemo(() => {
-    const next = { ...lineVisibilityProp };
-    for (const metric of CHART_METRICS) {
-      next[deviceMetricVisibilityKey(AIRCON_CHART_DEVICE_ID, metric)] = true;
-    }
-    next[AIRCON_TARGET_VISIBILITY_KEY] = true;
-    return next;
-  }, [lineVisibilityProp]);
+  // 非表示にしていても、このパネルを開いた時点では必ずラインを出す（他部屋の
+  // 詳細パネルでも同じ考え方。`OutdoorDetailPanel` の outdoor ライン上書きと対）。
+  // 開いたあとの凡例の目のアイコンはパネル内でだけ効く（#357）
+  const { lineVisibility, handleLineVisibilityChange } = usePanelLineVisibility(
+    lineVisibilityProp,
+    AIRCON_PANEL_FORCED_VISIBLE_KEYS,
+    onLineVisibilityChange
+  );
 
   const {
     historyData,
@@ -174,7 +180,7 @@ export function AirconDetailPanel({
               airconTargetDeviceId={AIRCON_CHART_DEVICE_ID}
               chartColors={chartColors}
               lineVisibility={lineVisibility}
-              onLineVisibilityChange={onLineVisibilityChange ?? (() => {})}
+              onLineVisibilityChange={handleLineVisibilityChange}
               pinMetricTabsOnMobile={false}
             />
           </div>
