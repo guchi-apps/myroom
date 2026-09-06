@@ -2200,18 +2200,34 @@ def _light_history_events(
     end_time: datetime.datetime,
     db: Session,
 ) -> List[tuple]:
+    """窓のあいだの記録と、**窓の手前で最後に記録された1件**（#371）。
+
+    `light_events` は状態が変わったときだけ1行足す追記専用のテーブルなので、窓の先頭で
+    すでに点いていたかは手前の1件を見ないと分からない。**だからといって下限なしで全件を
+    引かない**——照度からの判定（`_light_history_records`）が `LOOKBACK_MINUTES` で下限を
+    絞っているのと同じで、絞らないと運用が長くなるほど読む行が増え続ける。
+    """
     if database.DB_MOCK:
         return database.generate_mock_light_events(start_time, end_time)
 
+    base = db.query(database.LightEventRecord).filter(
+        database.LightEventRecord.appliance_key == appliance_key
+    )
+    previous = (
+        base.filter(database.LightEventRecord.recorded_at < start_time)
+        .order_by(database.LightEventRecord.recorded_at.desc())
+        .first()
+    )
     rows = (
-        db.query(database.LightEventRecord)
-        .filter(
-            database.LightEventRecord.appliance_key == appliance_key,
+        base.filter(
+            database.LightEventRecord.recorded_at >= start_time,
             database.LightEventRecord.recorded_at <= end_time,
         )
         .order_by(database.LightEventRecord.recorded_at.asc())
         .all()
     )
+    if previous is not None:
+        rows = [previous, *rows]
     return [(row.recorded_at, row.power) for row in rows]
 
 

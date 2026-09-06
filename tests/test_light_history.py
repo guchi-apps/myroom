@@ -222,3 +222,60 @@ def test_変わった機器だけ記録する():
         {"d-a": "off", "d-b": "on"}, {"d-a": "on", "d-b": "on"}, dt(6, 12)
     )
     assert changes == [("d-a", dt(6, 12), "off")]
+
+
+# ------------------------------------------------- 記録の読み出し（#371）
+
+
+def test_窓の手前は直前の1件だけ読む(monkeypatch):
+    """`light_events` を下限なしで全件引かない。
+
+    状態が変わったときだけ1行足す追記専用のテーブルなので、窓の先頭ですでに点いていたかを
+    知るには手前の記録が要る。ただし要るのは**直前の1件だけ**で、それより古い行は結果に
+    影響しない（運用が長くなるほど読む行が増え続けるのを防ぐ）。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from backend import database, main
+
+    engine = create_engine("sqlite://")
+    database.LightEventRecord.__table__.create(engine)
+    db = sessionmaker(bind=engine)()
+
+    rows = [
+        ("k", dt(1, 7), "on"),  # 窓のずっと手前。読まない
+        ("k", dt(1, 9), "off"),
+        ("k", dt(2, 22), "on"),  # 窓の直前。ここだけ読む
+        ("k", dt(3, 7), "off"),  # 窓の中
+        ("k", dt(4, 8), "on"),  # 窓より先
+        ("other", dt(3, 8), "on"),  # 別の機器
+    ]
+    for appliance_key, recorded_at, power in rows:
+        db.add(
+            database.LightEventRecord(
+                recorded_at=recorded_at, appliance_key=appliance_key, power=power
+            )
+        )
+    db.commit()
+
+    monkeypatch.setattr(database, "DB_MOCK", False)
+    got = main._light_history_events("k", dt(3, 0), dt(3, 23), db)
+
+    assert got == [(dt(2, 22), "on"), (dt(3, 7), "off")]
+
+
+def test_窓の手前に記録が無ければ窓の中だけ返す(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from backend import database, main
+
+    engine = create_engine("sqlite://")
+    database.LightEventRecord.__table__.create(engine)
+    db = sessionmaker(bind=engine)()
+    db.add(database.LightEventRecord(recorded_at=dt(3, 7), appliance_key="k", power="on"))
+    db.commit()
+
+    monkeypatch.setattr(database, "DB_MOCK", False)
+    assert main._light_history_events("k", dt(3, 0), dt(3, 23), db) == [(dt(3, 7), "on")]
