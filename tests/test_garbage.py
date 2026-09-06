@@ -307,37 +307,24 @@ def test_api_requires_auth(client):
 def test_notify_sends_for_tomorrow(data_dir, monkeypatch):
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 2026-08-10（月）20時 -> 翌 8/11（火）は普通ごみ
     entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
     assert len(entries) == 1
     assert entries[0]["timing"] == "before"
-    assert sent[0]["category_names"] == ["普通ごみ"]
-    assert sent[0]["date_label"] == "8/11（火）"
+    assert [c["name"] for c in entries[0]["categories"]] == ["普通ごみ"]
+    assert entries[0]["date"] == "2026-08-11"
+    assert entries[0]["weekday"] == "火"
 
     # 同じ収集日について二度目は送らない
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 30)) == []
-    assert len(sent) == 1
 
 
 def test_notify_skips_outside_notify_hour(data_dir, monkeypatch):
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 9, 0)) == []
-    assert sent == []
 
 
 def test_backend_runs_the_notifier_in_background(data_dir, mock_weather, monkeypatch):
@@ -362,23 +349,15 @@ def test_backend_runs_the_notifier_in_background(data_dir, mock_weather, monkeyp
 def test_notify_skips_when_no_collection_tomorrow(data_dir, monkeypatch):
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 2026-08-13（木）の翌日 8/14（金）は例外で中止
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 13, 20, 0)) == []
-    assert sent == []
 
 
 def test_notify_dispatches_a_push_event(data_dir, monkeypatch):
-    """#293: Signalyと同じタイミングでPush通知も送る。"""
+    """#293: 通知時刻になったらPush通知を送る。"""
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
-    monkeypatch.setattr(garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None)
     dispatched = []
     monkeypatch.setattr(
         garbage_notify.notify_events,
@@ -401,15 +380,8 @@ def test_notify_skipped_when_disabled_via_settings(data_dir, monkeypatch):
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
     ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_ENABLED: False})
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
-    assert sent == []
 
 
 def test_notify_time_setting_overrides_notify_hour(data_dir, monkeypatch):
@@ -419,21 +391,13 @@ def test_notify_time_setting_overrides_notify_hour(data_dir, monkeypatch):
     write_config(data_dir)  # notify_hour = 20（write_config の既定値）
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
     ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "07:00"})
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 20時（従来の notify_hour）ではもう送らない
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
-    assert sent == []
 
     # 7時（設定した時刻）に送る
     entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 7, 0))
     assert len(entries) == 1
-    assert len(sent) == 1
 
 
 # --- 前日/当日・品目ごとのタイミング（#347） --------------------------------------
@@ -443,16 +407,9 @@ def test_notify_same_day_disabled_by_default(data_dir, monkeypatch):
     """新機能は既定でOFFなので、当日朝の時刻になっても何も送らない。"""
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 2026-08-11（火）7時 = 当日通知の既定時刻。普通ごみの収集日だが、当日通知は既定OFF
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
-    assert sent == []
 
 
 def test_notify_same_day_sends_for_today(data_dir, monkeypatch):
@@ -467,22 +424,15 @@ def test_notify_same_day_sends_for_today(data_dir, monkeypatch):
             ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
         }
     )
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
     assert len(entries) == 1
     assert entries[0]["timing"] == "same_day"
-    assert sent[0]["category_names"] == ["普通ごみ"]
-    assert sent[0]["date_label"] == "8/11（火）"
+    assert [c["name"] for c in entries[0]["categories"]] == ["普通ごみ"]
+    assert entries[0]["date"] == "2026-08-11"
 
     # 同じ収集日について二度目は送らない
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 30)) == []
-    assert len(sent) == 1
 
 
 def test_notify_same_day_dedupe_independent_of_before(data_dir, monkeypatch):
@@ -498,9 +448,6 @@ def test_notify_same_day_dedupe_independent_of_before(data_dir, monkeypatch):
                 "burnable": ["before", "same_day"]
             },
         }
-    )
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None
     )
 
     # 前日20時分（8/10 20時 -> 8/11収集）を送る
@@ -532,12 +479,6 @@ def test_notify_category_timing_splits_before_and_same_day(data_dir, monkeypatch
             },
         }
     )
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     before_entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
     assert len(before_entries) == 1
@@ -555,15 +496,8 @@ def test_notify_skips_group_when_no_categories_assigned(data_dir, monkeypatch):
     write_config(data_dir)
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
     ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_SAME_DAY_ENABLED: True})
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
-    assert sent == []
 
 
 def test_notify_reads_old_state_file_format(data_dir, monkeypatch):
@@ -572,15 +506,8 @@ def test_notify_reads_old_state_file_format(data_dir, monkeypatch):
     state_path = data_dir / "garbage_notify_state.json"
     state_path.write_text(json.dumps({"last_notified_date": "2026-08-11"}), encoding="utf-8")
     monkeypatch.setattr(garbage_notify, "STATE_PATH", state_path)
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0)) == []
-    assert sent == []
 
 
 def test_notify_dedupe_key_differs_between_before_and_same_day(data_dir, monkeypatch):
@@ -601,9 +528,6 @@ def test_notify_dedupe_key_differs_between_before_and_same_day(data_dir, monkeyp
             },
         }
     )
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify, "send_garbage_notification", lambda **kwargs: None
-    )
     dispatched = []
     monkeypatch.setattr(
         garbage_notify.notify_events,
@@ -619,8 +543,8 @@ def test_notify_dedupe_key_differs_between_before_and_same_day(data_dir, monkeyp
     assert len(set(keys)) == 2, f"dedupe_keyが衝突している: {keys}"
 
 
-def test_notify_signaly_title_matches_timing(data_dir, monkeypatch):
-    """計画レビュー指摘2: Signalyの文面が当日通知でも「明日は」のまま固定にならない。"""
+def test_notify_push_title_matches_timing(data_dir, monkeypatch):
+    """計画レビュー指摘2: Push通知の文面が当日通知でも「明日は」のまま固定にならない。"""
     from backend import ui_settings
 
     write_config(data_dir)
@@ -631,17 +555,17 @@ def test_notify_signaly_title_matches_timing(data_dir, monkeypatch):
             ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
         }
     )
-    calls = []
+    dispatched = []
     monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: calls.append(kwargs),
+        garbage_notify.notify_events,
+        "dispatch_push_event",
+        lambda event: dispatched.append(event),
     )
 
     garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0))
 
-    assert len(calls) == 1
-    assert calls[0]["timing"] == "same_day"
+    assert len(dispatched) == 1
+    assert dispatched[0].title == "今日は普通ごみの日です"
 
 
 def test_notify_same_day_respects_minute_of_configured_time(data_dir, monkeypatch):
@@ -657,26 +581,17 @@ def test_notify_same_day_respects_minute_of_configured_time(data_dir, monkeypatc
             ui_settings.SETTING_GARBAGE_NOTIFY_CATEGORY_TIMING: {"burnable": ["same_day"]},
         }
     )
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 7時台でも、設定した分（15分）より前は送らない
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 0)) == []
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 10)) == []
-    assert sent == []
 
     # 設定した分ちょうど（5分間隔のループが実際に踏む時刻）で送る
     entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 15))
     assert len(entries) == 1
-    assert len(sent) == 1
 
     # 同じ日はもう送らない
     assert garbage_notify.run_notify(datetime.datetime(2026, 8, 11, 7, 20)) == []
-    assert len(sent) == 1
 
 
 def test_notify_before_group_still_ignores_minutes(data_dir, monkeypatch):
@@ -686,14 +601,7 @@ def test_notify_before_group_still_ignores_minutes(data_dir, monkeypatch):
     write_config(data_dir)  # notify_hour = 20
     monkeypatch.setattr(garbage_notify, "STATE_PATH", data_dir / "garbage_notify_state.json")
     ui_settings.save_settings({ui_settings.SETTING_GARBAGE_NOTIFY_TIME: "20:30"})
-    sent = []
-    monkeypatch.setattr(
-        garbage_notify.signaly_notify,
-        "send_garbage_notification",
-        lambda **kwargs: sent.append(kwargs),
-    )
 
     # 20:00（分は20:30の指定より前）でも「時」が一致していれば送る
     entries = garbage_notify.run_notify(datetime.datetime(2026, 8, 10, 20, 0))
     assert len(entries) == 1
-    assert len(sent) == 1

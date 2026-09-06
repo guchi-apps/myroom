@@ -1,15 +1,12 @@
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 SENSOR_WEBHOOK_URL = os.getenv("SENSOR_WEBHOOK_URL", "").strip()
-# ゴミの日は既存のセンサー通知と同じ Signaly の宛先を使う。
-# 宛先を分けたい場合だけ GARBAGE_WEBHOOK_URL を設定する。
-GARBAGE_WEBHOOK_URL = os.getenv("GARBAGE_WEBHOOK_URL", "").strip() or SENSOR_WEBHOOK_URL
 
 
 def post_notification(webhook_url: str, payload: dict) -> None:
@@ -66,37 +63,5 @@ def send_sensor_recovered_notification(
     post_notification(SENSOR_WEBHOOK_URL, {
         "title": "✅ センサーデータが復旧しました",
         "color": "#57f287",
-        "fields": fields,
-    })
-
-
-#: 前日/当日どちらのタイミングの通知かで見出しを変える（#347）
-_GARBAGE_TITLES = {
-    "before": "🗑️ 明日はゴミの日です",
-    "same_day": "🗑️ 今日はゴミの日です",
-}
-
-
-def send_garbage_notification(
-    *,
-    date_label: str,
-    category_names: List[str],
-    notes: Optional[List[str]] = None,
-    timing: str = "before",
-) -> None:
-    if not GARBAGE_WEBHOOK_URL:
-        logger.debug("GARBAGE_WEBHOOK_URL / SENSOR_WEBHOOK_URL not set; skipping Signaly notification")
-        return
-
-    fields = [
-        {"name": "収集日", "value": date_label, "inline": True},
-        {"name": "品目", "value": "・".join(category_names), "inline": True},
-    ]
-    if notes:
-        fields.append({"name": "備考", "value": "\n".join(notes), "inline": False})
-
-    post_notification(GARBAGE_WEBHOOK_URL, {
-        "title": _GARBAGE_TITLES.get(timing, _GARBAGE_TITLES["before"]),
-        "color": "#3498db",
         "fields": fields,
     })

@@ -1,4 +1,4 @@
-"""前日夜・当日朝に「ゴミの日」を Signaly と PWA Push で通知する。
+"""前日夜・当日朝に「ゴミの日」を PWA Push で通知する。
 
 通知は「前日グループ」「当日グループ」の2つに分かれ、それぞれ独立に有効/無効・通知時刻を
 持つ（#347）。品目（`data/garbage.json` の categories）ごとに、どちらのグループに属するかを
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
-from . import database, garbage, notify_events, signaly_notify, ui_settings
+from . import database, garbage, notify_events, ui_settings
 
 load_dotenv()
 
@@ -171,12 +171,6 @@ def _notify_for_group(
         date_label = f"{day.month}/{day.day}（{entry['weekday']}）"
         category_names = [category["name"] for category in categories]
         category_label = "・".join(category_names)
-        signaly_notify.send_garbage_notification(
-            date_label=date_label,
-            category_names=category_names,
-            notes=entry["notes"],
-            timing=group["timing"],
-        )
         notify_events.dispatch_push_event(
             notify_events.NotificationEvent(
                 kind="garbage",
