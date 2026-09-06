@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_token
 from pydantic import BaseModel, model_validator
@@ -112,6 +112,85 @@ async def _cleaning_notion_sync_loop() -> None:
         await asyncio.sleep(CLEANING_NOTION_SYNC_INTERVAL_SECONDS)
 
 
+#: Nature Remo に登録した照明の状態を読む間隔（#368）。レート制限は30回/5分なので、
+#: 5分に1回なら十分に余裕がある。**この間隔がそのまま「いつ点けたか」の粒度になる。**
+LIGHT_STATE_POLL_INTERVAL_SECONDS = 300
+
+
+def _configured_light_appliance_keys(db: Session) -> List[str]:
+    """`light_sources` で Nature Remo の機器を指している紐付けのキー。"""
+    sources = ui_settings.get_settings(db).get(ui_settings.SETTING_LIGHT_SOURCES) or {}
+    return sorted(
+        {
+            str(entry["appliance_key"])
+            for entry in sources.values()
+            if isinstance(entry, dict)
+            and entry.get("kind") == ui_settings.LIGHT_SOURCE_REMO
+            and entry.get("appliance_key")
+        }
+    )
+
+
+def _last_known_light_states(db: Session, keys: List[str]) -> Dict[str, str]:
+    """機器ごとに、最後に記録した状態。無ければキーごと入れない。"""
+    states: Dict[str, str] = {}
+    for key in keys:
+        row = (
+            db.query(database.LightEventRecord)
+            .filter(database.LightEventRecord.appliance_key == key)
+            .order_by(database.LightEventRecord.recorded_at.desc())
+            .first()
+        )
+        if row is not None:
+            states[key] = row.power
+    return states
+
+
+def _poll_light_states_once() -> None:
+    """紐付け済みの照明の状態を1回読み、変わっていれば記録する。
+
+    **紐付けが1つも無ければ Nature Remo を叩かない。** 照明を設定していない環境で、
+    5分ごとに外部APIを呼ぶ理由が無い。
+    """
+    if database.SessionLocal is None:
+        return
+
+    db = database.SessionLocal()
+    try:
+        keys = _configured_light_appliance_keys(db)
+        if not keys:
+            return
+        states = remote.fetch_light_states(keys)
+        if not states:
+            return
+        changes = light_history.detect_changes(
+            states, _last_known_light_states(db, keys), get_now_jst().replace(microsecond=0)
+        )
+        if not changes:
+            return
+        for key, at, power in changes:
+            db.merge(
+                database.LightEventRecord(recorded_at=at, appliance_key=key, power=power)
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
+async def _light_state_poll_loop() -> None:
+    """照明の状態を読んで履歴へ書き足す。通知と同じくバックエンド内で回す。
+
+    **「電気の操作」カードの設計（状態を持たない・#106）は変えない。** ここが読むのは
+    履歴のためだけで、カードは今までどおり押したら飛ぶだけのボタンのまま。
+    """
+    while True:
+        try:
+            await asyncio.to_thread(_poll_light_states_once)
+        except Exception:  # Nature Remo 側の障害で API を落とさない
+            logger.exception("Light state poll failed")
+        await asyncio.sleep(LIGHT_STATE_POLL_INTERVAL_SECONDS)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     tasks = []
@@ -119,6 +198,7 @@ async def lifespan(_app: FastAPI):
         tasks.append(asyncio.create_task(_garbage_notify_loop()))
         tasks.append(asyncio.create_task(_garbage_notion_sync_loop()))
         tasks.append(asyncio.create_task(_cleaning_notion_sync_loop()))
+        tasks.append(asyncio.create_task(_light_state_poll_loop()))
     try:
         yield
     finally:
@@ -212,6 +292,10 @@ class UiSettingsUpdate(BaseModel):
     pressure_offsets: Optional[Dict[str, float]] = None
     #: デバイスID -> 照明の点灯とみなす照度（lx）。入っていないデバイスは判定しない
     light_thresholds: Optional[Dict[str, float]] = None
+    #: デバイスID -> その場所の照明をどこから判定するか（#368）。
+    #: {"kind": "illuminance"} か {"kind": "remo", "appliance_key": "d-…"}。
+    #: 入っていないデバイスは照明を紐付けていない（詳細パネルの見た目は変わらない）
+    light_sources: Optional[Dict[str, Dict[str, Any]]] = None
     energy_unit_price: Optional[float] = None
     #: 消費電力の取得元（`tapo:冷蔵庫` など） -> 画面に出す別名。空文字を送ると既定へ戻る
     energy_source_names: Optional[Dict[str, str]] = None
@@ -2067,6 +2151,160 @@ def get_history(
     if not formatted_records:
         return _outdoor_only_day_records(outdoor_map, start_time, end_time)
     return formatted_records
+
+
+@app.get("/api/light-sources")
+def get_light_source_candidates(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """`/devices` の「この場所の照明」に並べる候補（#368）。
+
+    **Nature Remo は叩かない。** 最後に取得した候補一覧（`remote_catalog`）から読むだけで、
+    取り直すのは「電気の操作」の編集画面の「読み込み直す」（`POST /api/remote/catalog/refresh`）。
+    一度も取得していなければ空で返し、画面がそちらへ案内する。
+    """
+    return {
+        "candidates": remote.light_appliance_candidates(db),
+        "catalog_fetched_at": remote.load_catalog(db).get("fetched_at") or "",
+    }
+
+
+def _light_history_records(
+    device: int,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    db: Session,
+) -> List[Dict[str, Any]]:
+    """照度からの判定に使う記録。**窓の手前も少し読む**（先頭ですでに点いていたかを知るため）。"""
+    lookback = start_time - datetime.timedelta(minutes=light_history.LOOKBACK_MINUTES)
+    if database.DB_MOCK:
+        return database.generate_mock_history_for_range(lookback, end_time, device)
+
+    rows = (
+        db.query(database.SensorRecord)
+        .filter(
+            database.SensorRecord.datetime >= lookback,
+            database.SensorRecord.datetime <= end_time,
+            database.SensorRecord.device_id == device,
+        )
+        .order_by(database.SensorRecord.datetime.asc())
+        .all()
+    )
+    return [{"datetime": row.datetime, "illuminance": row.illuminance} for row in rows]
+
+
+def _light_history_events(
+    appliance_key: str,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    db: Session,
+) -> List[tuple]:
+    if database.DB_MOCK:
+        return database.generate_mock_light_events(start_time, end_time)
+
+    rows = (
+        db.query(database.LightEventRecord)
+        .filter(
+            database.LightEventRecord.appliance_key == appliance_key,
+            database.LightEventRecord.recorded_at <= end_time,
+        )
+        .order_by(database.LightEventRecord.recorded_at.asc())
+        .all()
+    )
+    return [(row.recorded_at, row.power) for row in rows]
+
+
+@app.get("/api/light-history")
+def get_light_history(
+    device: int = 1,
+    date: Optional[str] = None,
+    range: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """その場所の照明が点いていた時間帯（#368）。
+
+    窓の指定は `/api/history` と同じ形にしてある。推移グラフと同じ時間軸へ帯を重ねるため、
+    呼び出し側が同じ引数を使い回せるようにするのが狙い。
+
+    **紐付けていない場所には `source: null` を返す**（空の履歴とは区別する）。画面は
+    この場合だけ帯そのものを描かない。
+    """
+    start_time, end_time, _effective_range = _resolve_history_window(date, range, start, end)
+    settings = ui_settings.get_settings(db)
+    source = (settings.get(ui_settings.SETTING_LIGHT_SOURCES) or {}).get(str(device))
+
+    empty = {
+        "device_id": device,
+        "start": start_time.isoformat(),
+        "end": end_time.isoformat(),
+        "source": None,
+        "segments": [],
+        "events": [],
+        "summary": {"on_count": 0, "on_minutes": 0},
+    }
+    if not isinstance(source, dict):
+        return empty
+
+    kind = source.get("kind")
+    if kind == ui_settings.LIGHT_SOURCE_ILLUMINANCE:
+        thresholds = settings.get(ui_settings.SETTING_LIGHT_THRESHOLDS) or {}
+        try:
+            threshold = float(thresholds.get(str(device)) or 0)
+        except (TypeError, ValueError):
+            threshold = 0.0
+        # しきい値を設定していなければ判定そのものができない。画面はそのまま案内を出す
+        if threshold <= 0:
+            empty["source"] = {"kind": kind, "name": "", "threshold": None}
+            return empty
+        segments = light_history.segments_from_illuminance(
+            _light_history_records(device, start_time, end_time, db),
+            threshold,
+            start_time,
+            end_time,
+        )
+        source_payload = {"kind": kind, "name": "", "threshold": threshold}
+        daylight_flags = True
+    elif kind == ui_settings.LIGHT_SOURCE_REMO:
+        appliance_key = str(source.get("appliance_key") or "")
+        name = next(
+            (
+                candidate["name"]
+                for candidate in remote.light_appliance_candidates(db)
+                if candidate["key"] == appliance_key
+            ),
+            "",
+        )
+        rows = _light_history_events(appliance_key, start_time, end_time, db)
+        # 窓の手前で最後に記録された状態が「窓の先頭ですでに点いていたか」を決める
+        initial_status = next(
+            (power for at, power in reversed(rows) if at < start_time), None
+        )
+        segments = light_history.segments_from_events(
+            [(at, power) for at, power in rows if start_time <= at <= end_time],
+            start_time,
+            end_time,
+            initial_status,
+        )
+        source_payload = {"kind": kind, "name": name, "threshold": None}
+        daylight_flags = False
+    else:
+        return empty
+
+    return {
+        "device_id": device,
+        "start": start_time.isoformat(),
+        "end": end_time.isoformat(),
+        "source": source_payload,
+        "segments": [
+            light_history.segment_payload(segment, daylight_flags) for segment in segments
+        ],
+        "events": light_history.build_events(segments, start_time, end_time, daylight_flags),
+        "summary": light_history.summarize(segments),
+    }
 
 
 @app.get("/api/aircon/history")

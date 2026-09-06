@@ -34,6 +34,7 @@ import {
 import {
   clampDomainOffset,
   computeChartDomain,
+  type ChartDomain,
   computeDomainOffsetForSelectionTime,
   computeVisibleYDomain,
   buildAirconTargetChartSegments,
@@ -79,6 +80,7 @@ import {
   type ChartLineVisibilitySettings,
 } from "@/lib/chart-line-visibility";
 import { cn } from "@/lib/utils";
+import { buildBandPieces, type LightSegment } from "@/lib/light-history";
 import type { DisplayOrderItem } from "@/lib/display-order";
 import {
   buildDefaultDisplayOrder,
@@ -142,6 +144,76 @@ interface EnvironmentChartProps {
   onLineVisibilityChange: (key: string, visible: boolean) => void;
   /** スマホ表示時に指標タブを画面下部に固定する（モーダル内では false） */
   pinMetricTabsOnMobile?: boolean;
+  /**
+   * 照明が点いていた時間帯（#368）。グラフの真下に、同じ時間軸で帯として敷く。
+   * 空配列なら帯の枠だけを描き（＝記録が無い日）、省略すれば帯そのものを出さない。
+   */
+  lightSegments?: readonly LightSegment[];
+  /** 帯の見出しに添える判定元。「リビング照明 · Nature Remo の状態」 */
+  lightSourceLabel?: string;
+  /**
+   * 点灯とみなす照度（lx）。**指標が「照度」のときだけ基準線として引く。**
+   * 線が跨いだところで帯が切り替わるので、しきい値のずれをその場で見つけられる。
+   */
+  lightThreshold?: number | null;
+}
+
+/**
+ * グラフの真下に敷く、照明が点いていた時間帯の帯（#368）。
+ *
+ * **プロット領域と同じ余白を取る。** `PLOT_INSET` はY軸の幅・グラフの margin から
+ * 導いた値で、ここを合わせておかないと帯とグラフの時間軸が横にずれる。
+ * 期間の切り替え・横スクロールでは `domain` が変わるだけなので、帯も自動で追従する。
+ */
+function LightBand({
+  segments,
+  domain,
+  label,
+}: {
+  segments: readonly LightSegment[];
+  domain: readonly [number, number];
+  label?: string;
+}) {
+  const pieces = useMemo(() => buildBandPieces(segments, domain), [segments, domain]);
+
+  return (
+    <div
+      className="pb-1 pt-0.5"
+      style={{ paddingLeft: PLOT_INSET.left, paddingRight: PLOT_INSET.right }}
+    >
+      {label ? (
+        <p className="mb-1 text-[10.5px] text-muted-foreground">照明（{label}）</p>
+      ) : null}
+      <div className="relative h-3.5 overflow-hidden rounded-[7px] bg-muted">
+        {/* 日中の帯。照度からの判定が日射に引きずられる時間帯を薄く示す */}
+        <div
+          className="absolute inset-y-0"
+          style={{
+            left: "25%",
+            width: "50%",
+            backgroundColor: "color-mix(in srgb, var(--remote-color) 9%, transparent)",
+          }}
+          aria-hidden
+        />
+        {pieces.map((piece) => (
+          <div
+            key={piece.key}
+            className="absolute inset-y-0"
+            style={{
+              left: `${piece.left * 100}%`,
+              width: `${piece.width * 100}%`,
+              backgroundColor: "var(--remote-color)",
+              // 期間の外へ続いている端は丸めない。「ここで消したわけではない」を形で伝える
+              borderTopLeftRadius: piece.openStart ? 2 : 7,
+              borderBottomLeftRadius: piece.openStart ? 2 : 7,
+              borderTopRightRadius: piece.openEnd ? 2 : 7,
+              borderBottomRightRadius: piece.openEnd ? 2 : 7,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** 最新データの取得待ちに出すグラフ領域のスケルトン */
@@ -288,6 +360,9 @@ export function EnvironmentChart({
   lineVisibility,
   onLineVisibilityChange,
   pinMetricTabsOnMobile = true,
+  lightSegments,
+  lightSourceLabel,
+  lightThreshold = null,
 }: EnvironmentChartProps) {
   const resolvedLegendOrder = legendOrder ?? buildDefaultDisplayOrder(deviceIds.filter(
     (id) => id !== AIRCON_CHART_DEVICE_ID
@@ -493,6 +568,11 @@ export function EnvironmentChart({
     () => computeChartDomain(historyData, viewRange, domainOffset),
     [historyData, viewRange, domainOffset]
   );
+
+  //`["dataMin", "dataMax"]`（データが無くて範囲が決まらないとき）は帯を敷けない。
+  // 他の重ね描き（選択位置の線・点）と同じ判定にそろえる
+  const bandDomain: ChartDomain | null =
+    currentDomain[0] === "dataMin" ? null : (currentDomain as ChartDomain);
 
   const minMaxHistorySource = useMemo(() => {
     if (!isMinMaxMode) return null;
@@ -1240,6 +1320,19 @@ export function EnvironmentChart({
                       : val.toFixed(1)
                 }
               />
+              {/*
+                点灯とみなす照度。線がここを跨いだところで下の帯が切り替わるので、
+                しきい値が実態とずれていればグラフを見るだけで気づける（#368）
+              */}
+              {chartMetric === "illuminance" && lightThreshold != null && lightThreshold > 0 && (
+                <ReferenceLine
+                  y={lightThreshold}
+                  stroke="var(--remote-color)"
+                  strokeDasharray="5 4"
+                  strokeWidth={1.5}
+                  ifOverflow="extendDomain"
+                />
+              )}
               {showOutdoorLine && (
                 <Line
                   type="linear"
@@ -1367,6 +1460,10 @@ export function EnvironmentChart({
           </div>
         )}
       </div>
+
+      {lightSegments && bandDomain && !awaitingLatest && historyData.length > 0 ? (
+        <LightBand segments={lightSegments} domain={bandDomain} label={lightSourceLabel} />
+      ) : null}
 
       <div className="px-2 pb-4 pt-2">
         <div className="flex rounded-lg border bg-muted p-0.5">

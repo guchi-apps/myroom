@@ -20,7 +20,7 @@ import {
   normalizeHiddenDeviceKeys,
 } from "@/lib/visible-devices";
 import { fetchUiSettings, updateUiSettings } from "@/lib/api";
-import { DASHBOARD_SENSOR_DEVICE_IDS } from "@/lib/types";
+import { DASHBOARD_SENSOR_DEVICE_IDS, type LightSource } from "@/lib/types";
 
 const LEGACY_DISPLAY_ORDER_KEY = "myroom_display_order";
 const LEGACY_CHART_COLORS_KEY = "myroom_chart_colors";
@@ -52,6 +52,7 @@ export async function loadUiSettingsFromServer(
   staleAlertExcludedKeys: Set<string>;
   pressureOffsets: Record<string, number>;
   lightThresholds: Record<string, number>;
+  lightSources: Record<string, LightSource>;
 }> {
   discardLegacyLocalStorage();
   const settings = await fetchUiSettings();
@@ -80,6 +81,7 @@ export async function loadUiSettingsFromServer(
     staleAlertExcludedKeys: new Set(staleAlertExcluded),
     pressureOffsets: settings.pressure_offsets ?? {},
     lightThresholds: settings.light_thresholds ?? {},
+    lightSources: settings.light_sources ?? {},
   };
 }
 
@@ -115,6 +117,12 @@ export async function saveLightThresholdsToServer(
   await updateUiSettings({ light_thresholds: thresholds });
 }
 
+export async function saveLightSourcesToServer(
+  sources: Record<string, LightSource>
+): Promise<void> {
+  await updateUiSettings({ light_sources: sources });
+}
+
 export function getDefaultUiSettings(
   sensorDeviceIds: readonly number[] = DASHBOARD_SENSOR_DEVICE_IDS,
   outdoor: OutdoorOrderContext = EMPTY_OUTDOOR_ORDER_CONTEXT
@@ -127,5 +135,6 @@ export function getDefaultUiSettings(
     staleAlertExcludedKeys: new Set<string>(),
     pressureOffsets: {} as Record<string, number>,
     lightThresholds: {} as Record<string, number>,
+    lightSources: {} as Record<string, LightSource>,
   };
 }

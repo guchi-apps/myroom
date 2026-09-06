@@ -25,7 +25,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 
@@ -369,6 +369,23 @@ def _candidate_id(prefix: str, *parts: str) -> str:
     return f"{prefix}-{digest}"
 
 
+#: Nature Remo アプリで「照明」として登録した機器の type。**この型だけが状態を持つ**
+#: （`light.state.power`）。生の赤外線（IR）はクラウド側に状態が残らない
+LIGHT_APPLIANCE_TYPE = "LIGHT"
+
+
+def appliance_key(appliance: Dict[str, Any], index: int = 0) -> str:
+    """機器を指す安定したID。候補一覧の `devices[].id` と同じ値になる。
+
+    `appliance_id` を画面へ出さないため（README「外へ出す値は少ないほど安全です」）、
+    照明の紐付け（#368）もこのハッシュで持つ。ポーリングのたびに `/1/appliances` から
+    同じ式で引き直せば、保存した値のまま機器へたどり着ける。
+    """
+    appliance_id = str(appliance.get("id") or "").strip()
+    nickname = str(appliance.get("nickname") or "").strip() or f"機器{index + 1}"
+    return _candidate_id("d", appliance_id or nickname)
+
+
 def build_catalog_devices(appliances: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """`GET /1/appliances` の応答から、画面に並べる「選べる操作」を機器ごとに組み立てる。
 
@@ -425,7 +442,7 @@ def build_catalog_devices(appliances: List[Dict[str, Any]]) -> List[Dict[str, An
 
         devices.append(
             {
-                "id": _candidate_id("d", appliance_id or nickname),
+                "id": appliance_key(appliance, index),
                 "name": nickname,
                 "type": kind,
                 "note": note,
@@ -440,6 +457,46 @@ def fetch_catalog() -> Dict[str, Any]:
     devices = build_catalog_devices(fetch_appliances())
     fetched_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
     return {"fetched_at": fetched_at.replace("+00:00", "Z"), "devices": devices}
+
+
+def light_appliance_candidates(db: Optional[Any] = None) -> List[Dict[str, str]]:
+    """`/devices` の「この場所の照明」に選べる機器（#368）。
+
+    **`LIGHT` として登録した機器だけを返す。** 生の赤外線（IR）の照明はクラウド側に
+    状態が残らないため、選ばせても履歴が作れない。IR の照明は照度からの判定へ回す。
+    候補一覧は「読み込み直す」でしか更新しないので、ここでも Nature Remo は叩かない。
+    """
+    return [
+        {"key": device["id"], "name": device["name"]}
+        for device in load_catalog(db)["devices"]
+        if device.get("type") == LIGHT_APPLIANCE_TYPE
+    ]
+
+
+def fetch_light_states(keys: Iterable[str]) -> Dict[str, str]:
+    """指定した機器の今の電源状態（`"on"` / `"off"`）を Nature Remo から引く（#368）。
+
+    **`/1/appliances` は1回のリクエストで全機器を返す**ので、何か所ぶん見ても1回で済む。
+    レート制限（30回/5分）に対し5分に1回なので余裕がある。
+
+    状態を読めなかった機器はキーごと落とす。「消灯」と取り違えると、取得に失敗しただけで
+    消灯の記録が1件増えてしまう。
+    """
+    wanted = {key for key in keys if key}
+    if not wanted:
+        return {}
+
+    states: Dict[str, str] = {}
+    for index, appliance in enumerate(fetch_appliances()):
+        if not isinstance(appliance, dict):
+            continue
+        key = appliance_key(appliance, index)
+        if key not in wanted:
+            continue
+        power = str(((appliance.get("light") or {}).get("state") or {}).get("power") or "").strip()
+        if power in ("on", "off"):
+            states[key] = power
+    return states
 
 
 def load_catalog(db: Optional[Any] = None) -> Dict[str, Any]:

@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Trash2, X } from "lucide-react";
 import { CurrentReadings } from "@/components/current-readings";
 import { LightStatusStrip } from "@/components/light-status-badge";
+import { LightHistorySection } from "@/components/light-history-section";
 import { resolveLightStatus } from "@/lib/light-status";
+import { formatLightSourceLabel, type LightHistory } from "@/lib/light-history";
 import { EnvironmentChart } from "@/components/environment-chart";
 import { Button } from "@/components/ui/button";
 import {
   deleteSensorRecord,
   deleteSensorRecordsBulk,
+  fetchLightHistory,
   fetchSensorRecords,
 } from "@/lib/api";
 import type { ChartColorSettings } from "@/lib/chart-colors";
@@ -108,6 +111,11 @@ export function DeviceDetailPanel({
     () => new Set()
   );
   const [error, setError] = useState("");
+  //`source: null`（照明を紐付けていない）と、取得前の null を同じ状態で持つ。
+  // どちらでも帯・一覧を出さないので、区別する必要が無い
+  const [lightHistory, setLightHistory] = useState<LightHistory | null>(null);
+  // グラフが今見せている時間軸。帯と一覧の範囲をそろえるために覚える
+  const [visibleDomain, setVisibleDomain] = useState<[number, number] | null>(null);
 
   const inheritanceChain = useMemo(
     () => getInheritanceChain(deviceId, devices),
@@ -156,6 +164,9 @@ export function DeviceDetailPanel({
     setRecordsDeviceId(deviceId);
     setSelectedDatetimes(new Set());
     setError("");
+    // 別の場所を開いたときに、前の場所の帯が残らないようにする
+    setLightHistory(null);
+    setVisibleDomain(null);
   }, [open, deviceId]);
 
   const loadPage = useCallback(
@@ -191,6 +202,42 @@ export function DeviceDetailPanel({
     if (!open || view !== "records" || isOfflineMode) return;
     loadPage(recordsDeviceId, 0, false);
   }, [open, view, recordsDeviceId, loadPage, isOfflineMode]);
+
+  //`useChartHistory` が読み込んだ範囲。照明の履歴も同じ窓で取らないと、グラフの端で
+  // 帯だけが途切れる（#368）。ポーリングで末尾が伸びるたびに取り直すので、
+  //「継続中」の長さもグラフと同じ間隔で更新される
+  const historyStartMs = historyData.length ? historyData[0].datetimeObj : null;
+  const historyEndMs = historyData.length
+    ? historyData[historyData.length - 1].datetimeObj
+    : null;
+
+  useEffect(() => {
+    if (!open || view !== "chart" || isOfflineMode) return;
+    if (historyStartMs == null || historyEndMs == null) return;
+
+    let cancelled = false;
+    fetchLightHistory(new Date(historyStartMs), new Date(historyEndMs), deviceId)
+      .then((data) => {
+        if (!cancelled) setLightHistory(data);
+      })
+      .catch(() => {
+        // 履歴が取れなくてもグラフは出す。帯と一覧が消えるだけに留める
+        if (!cancelled) setLightHistory(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, view, isOfflineMode, historyStartMs, historyEndMs, deviceId]);
+
+  const handleVisibleDomainChange = useCallback(
+    (visibleMin: number, visibleMax: number) => {
+      setVisibleDomain([visibleMin, visibleMax]);
+      ensureVisibleRangeLoaded(visibleMin, visibleMax);
+    },
+    [ensureVisibleRangeLoaded]
+  );
+
+  const lightSource = lightHistory?.source ?? null;
 
   const selectedCount = selectedDatetimes.size;
   const allLoadedSelected =
@@ -357,14 +404,20 @@ export function DeviceDetailPanel({
                 awaitingLatest={awaitingLatest}
                 historyEpoch={historyEpoch}
                 noMoreOlderData={noMoreOlderData}
-                onVisibleDomainChange={ensureVisibleRangeLoaded}
+                onVisibleDomainChange={handleVisibleDomainChange}
                 legendOrder={legendOrder}
                 chartColors={chartColors}
                 lineVisibility={lineVisibility}
                 onLineVisibilityChange={onLineVisibilityChange ?? (() => {})}
                 pinMetricTabsOnMobile={false}
+                lightSegments={lightSource ? lightHistory?.segments : undefined}
+                lightSourceLabel={lightSource ? formatLightSourceLabel(lightSource) : undefined}
+                lightThreshold={lightSource?.threshold ?? null}
               />
             </div>
+            {lightHistory && lightSource ? (
+              <LightHistorySection history={lightHistory} visibleDomain={visibleDomain} />
+            ) : null}
             </>
           ) : loading ? (
             <p className="px-5 py-10 text-center text-sm text-muted-foreground">

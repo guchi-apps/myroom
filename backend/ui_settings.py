@@ -15,6 +15,8 @@ SETTING_HIDDEN_DEVICES = "hidden_devices"
 SETTING_STALE_ALERT_EXCLUDED = "stale_alert_excluded_devices"
 SETTING_PRESSURE_OFFSETS = "pressure_offsets"
 SETTING_LIGHT_THRESHOLDS = "light_thresholds"
+#: デバイスID -> その場所の照明の判定元（#368）。しきい値と違い「どこから読むか」を持つ
+SETTING_LIGHT_SOURCES = "light_sources"
 SETTING_ENERGY_UNIT_PRICE = "energy_unit_price"
 #: 消費電力の取得元に付けた表示名の上書き（#335）。{"tapo:冷蔵庫": "キッチンの冷蔵庫"}
 SETTING_ENERGY_SOURCE_NAMES = "energy_source_names"
@@ -98,6 +100,8 @@ def _default_settings() -> Dict[str, Any]:
         # 空 = どのデバイスでも照明の判定を行わない。部屋の作りで妥当な照度が変わるため、
         # 既定のしきい値は置かず、画面から設定するまで表示を増やさない
         SETTING_LIGHT_THRESHOLDS: {},
+        # 空 = どの場所にも照明を紐付けていない。紐付けるまで詳細パネルの見た目は変わらない
+        SETTING_LIGHT_SOURCES: {},
         SETTING_ENERGY_UNIT_PRICE: DEFAULT_ENERGY_UNIT_PRICE,
         # 空 = どの取得元にも別名を付けていない。既定の名前は `daily_energy.source`
         # （Tapoアプリで付けた名前）が持っているので、ここに既定値は置かない
@@ -248,6 +252,52 @@ def _normalize_light_thresholds(raw: Any) -> Dict[str, float]:
             continue
         thresholds[device_id] = round(threshold, 1)
     return thresholds
+
+
+#: 照明の点灯・消灯を「照度としきい値」から復元する（`light_thresholds` が要る）
+LIGHT_SOURCE_ILLUMINANCE = "illuminance"
+#: Nature Remo が持っている照明の状態を読む。`appliance_key` は remote.appliance_key() のハッシュ
+LIGHT_SOURCE_REMO = "remo"
+LIGHT_SOURCE_KINDS = (LIGHT_SOURCE_ILLUMINANCE, LIGHT_SOURCE_REMO)
+
+
+def _normalize_light_sources(raw: Any) -> Dict[str, Dict[str, str]]:
+    """デバイスID -> その場所の照明を「どこから判定するか」（#368）。
+
+    `light_thresholds` が「いくつを超えたら点灯とみなすか」なのに対し、こちらは判定の
+    出どころを持つ。2つを1つのキーにまとめないのは、照度のしきい値が #258 から
+    独立して意味を持ち（詳細パネルのいまの状態表示）、照明を紐付けていない場所でも
+    そのまま効いているため。
+
+        {"1": {"kind": "illuminance"}}
+        {"2": {"kind": "remo", "appliance_key": "a-1f2e3d4c5b"}}
+
+    キーが無いデバイスは「照明を紐付けていない」。読めない値・`appliance_key` の無い
+    remo は、紐付けを外す指定（＝キーを消す）として扱う。画面で「使わない」を選んだ
+    ときもここへ落ちてくる。
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    sources: Dict[str, Dict[str, str]] = {}
+    for key, value in raw.items():
+        try:
+            device_id = str(int(key))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        kind = str(value.get("kind") or "").strip()
+        if kind not in LIGHT_SOURCE_KINDS:
+            continue
+        if kind == LIGHT_SOURCE_ILLUMINANCE:
+            sources[device_id] = {"kind": LIGHT_SOURCE_ILLUMINANCE}
+            continue
+        appliance_key = str(value.get("appliance_key") or "").strip()
+        if not appliance_key:
+            continue
+        sources[device_id] = {"kind": LIGHT_SOURCE_REMO, "appliance_key": appliance_key}
+    return sources
 
 
 def _normalize_energy_unit_price(raw: Any) -> float:
@@ -488,6 +538,9 @@ def _normalize_settings(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         SETTING_LIGHT_THRESHOLDS: _normalize_light_thresholds(
             raw.get(SETTING_LIGHT_THRESHOLDS, defaults[SETTING_LIGHT_THRESHOLDS])
         ),
+        SETTING_LIGHT_SOURCES: _normalize_light_sources(
+            raw.get(SETTING_LIGHT_SOURCES, defaults[SETTING_LIGHT_SOURCES])
+        ),
         SETTING_ENERGY_UNIT_PRICE: _normalize_energy_unit_price(
             raw.get(SETTING_ENERGY_UNIT_PRICE, defaults[SETTING_ENERGY_UNIT_PRICE])
         ),
@@ -605,6 +658,9 @@ def save_settings(
         ),
         SETTING_LIGHT_THRESHOLDS: updates.get(
             SETTING_LIGHT_THRESHOLDS, current.get(SETTING_LIGHT_THRESHOLDS, {})
+        ),
+        SETTING_LIGHT_SOURCES: updates.get(
+            SETTING_LIGHT_SOURCES, current.get(SETTING_LIGHT_SOURCES, {})
         ),
         SETTING_ENERGY_UNIT_PRICE: updates.get(
             SETTING_ENERGY_UNIT_PRICE,

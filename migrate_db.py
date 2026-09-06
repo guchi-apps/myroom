@@ -329,6 +329,25 @@ def migrate():
                 """))
                 print("Table 'energy_readings' created.")
 
+            # 照明の点灯・消灯が変わった時刻（#368）。Nature Remo に「照明」として登録した
+            # 機器の状態を5分ごとに読み、前回と違うときだけ1行足す。スナップショットを
+            # 積まないのは、要るのが変わった瞬間だけで、5分おきに書くと1機器あたり
+            # 年10万行になるため。照度から判定する照明はこのテーブルを使わない。
+            print("Checking if 'light_events' table exists...")
+            if _table_exists(conn, "light_events"):
+                print("Table 'light_events' already exists.")
+            else:
+                print("Creating table 'light_events'...")
+                conn.execute(text("""
+                    CREATE TABLE light_events (
+                        recorded_at DATETIME NOT NULL,
+                        appliance_key VARCHAR(64) NOT NULL,
+                        power VARCHAR(8) NOT NULL,
+                        PRIMARY KEY (recorded_at, appliance_key)
+                    )
+                """))
+                print("Table 'light_events' created.")
+
             # 月ごとの確定請求（#249）。はぴeみる電のお知らせメール由来。
             # 引越しの月は旧契約と新契約の2通が届くため、contract_key まで主キーに含める。
             print("Checking if 'utility_bills' table exists...")

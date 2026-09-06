@@ -125,6 +125,18 @@ export function formatOutdoorApiLabel(locationName?: string | null): string {
   return trimmed || "地点未登録";
 }
 
+/**
+ * その場所の照明を「どこから判定するか」（#368）。
+ *
+ * `illuminance` は照度としきい値（`light_thresholds`・#258）から復元する。生の赤外線で
+ * 操作する照明はクラウド側に状態が残らないため、この経路しか無い。
+ * `remote` は Nature Remo に「照明」として登録した機器の状態を読む。`appliance_key` は
+ * `GET /api/light-sources` が返す候補の `key` で、Nature Remo の appliance ID は画面へ出さない。
+ */
+export type LightSource =
+  | { kind: "illuminance" }
+  | { kind: "remo"; appliance_key: string };
+
 export interface UiSettings {
   display_order: string[];
   /**
@@ -141,6 +153,11 @@ export interface UiSettings {
    * キーが無いデバイスは判定そのものを行わず、点灯・消灯を表示しない（#258）
    */
   light_thresholds: Record<string, number>;
+  /**
+   * デバイスID -> その場所の照明をどこから判定するか（#368）。
+   * キーが無いデバイスは照明を紐付けておらず、詳細パネルに帯も一覧も出ない
+   */
+  light_sources: Record<string, LightSource>;
   /** 電気料金の単価（円/kWh）。使用量に掛けて電気代の目安を出す */
   energy_unit_price: number;
   /**
