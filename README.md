@@ -640,7 +640,7 @@ Nature Remo に登録済みのリモコン操作を、ダッシュボードの�
 
 収集日を `data/garbage.json`（**リポジトリに含まれる**手編集ファイル）に書くと、ダッシュボードの
 「暮らし」セクションに次の収集が見出しで出て、今日・明日の予定と、品目ごとの次の収集日が並び、
-前日夜に Signaly へ通知が飛びます。
+前日夜に PWA Push 通知が届きます。
 外部 API もスクレイピングも使わず、書いたルールから日付を計算するだけです。
 
 ```jsonc
@@ -677,10 +677,9 @@ Nature Remo に登録済みのリモコン操作を、ダッシュボードの�
   見つからない品目は「予定なし」と出るので、ルールの書き忘れに気付けます
 - 年末年始などの変則日程は `exceptions` に書きます。`cancel: true` でその日を全休、
   `cancel: ["id"]` で品目を指定して中止、`add: ["id"]` で臨時収集を追加
-- 通知は `backend/garbage_notify.py`。バックエンドが5分ごとに呼び、`notify_hour` の時刻にだけ送信します
+- 通知は `backend/garbage_notify.py`。バックエンドが5分ごとに呼び、`notify_hour` の時刻にだけ PWA Push で送信します
   （本番のバックエンドは PM2 が起動するプロセス1つなので、systemd タイマーではなくこのプロセス内で回しています。
-  手動で試すときは `python -m backend.garbage_notify`）。
-  宛先はセンサー通知と同じ `SENSOR_WEBHOOK_URL`。分けたい場合のみ `GARBAGE_WEBHOOK_URL` を設定します
+  手動で試すときは `python -m backend.garbage_notify`）
 - 同じ収集日に二重通知しないよう、送信済みの日付を `data/garbage_notify_state.json`（gitignore）に残します
 - カードを消したい場合は表示設定ページ（`/devices`）の「暮らし」でオフにします
 
@@ -776,7 +775,6 @@ DaySpan・AIDE が読むタスク一覧に「次の掃除」を並べること�
   - ログイン成功時: Signaly へ通知（`LOGIN_WEBHOOK_URL`）。Supabase Auth ではコールバックが Supabase 側にあり、バックエンドに「ログインした瞬間」が通らないため、フロントエンドの `/auth/callback` が `POST /api/auth/login-notify` を1回だけ叩いて起点にしている（#240）。宛先は**全アプリ共通の1チャンネル**で、どのアプリのログインかはペイロードの `source`（`backend/login_notify.py` の `APP_NAME`）で見分ける（guchi-apps/signaly#192）。**未設定なら通知が飛ばないだけで、ログイン自体は通る**
     - **`/auth/callback` に来たこと自体を「いまログインした」の合図にしている。** URL の `?code=` の有無では判定できない。Supabase クライアント（`frontend/lib/supabase-client.ts`）は `flowType` を指定しておらず、既定の **implicit フロー**で動くため、本物のログインではアクセストークンがハッシュ（`#access_token=...`）で返り、`code` は付かない
   - センサー異常・復旧時: Signaly（1Password の `sensor-webhook-url`）へ通知
-  - ゴミの日の前日夜: 同じ Signaly の宛先へ通知（`GARBAGE_WEBHOOK_URL` で分離可能）
   - GitHub Actions（CI / デプロイ）の成功・失敗: Signaly へ通知
 
 ## API 概要
