@@ -159,6 +159,19 @@ interface EnvironmentChartProps {
 }
 
 /**
+ * 日射の可能性がある区間の塗り（#371）。
+ *
+ * **「日中」を時間軸の固定位置で描かないこと。** `domain` は `computeChartDomain()` が返す
+ * ローリングウィンドウで、日付の境界にも 6:00 にも整列しない（週・月の表示では1本の帯に
+ * 何日ぶんも乗る）。日中を割合の決め打ちで塗ると、実際の時間帯とは無関係な場所が光る。
+ * 印を付ける相手は時間軸ではなく**区間そのもの**で、どの区間が日中に収まるかはバックエンドが
+ * `daylight` として返している。
+ */
+const DAYLIGHT_FILL =
+  "repeating-linear-gradient(45deg, var(--remote-color) 0 3px," +
+  " color-mix(in srgb, var(--remote-color) 30%, transparent) 3px 6px)";
+
+/**
  * グラフの真下に敷く、照明が点いていた時間帯の帯（#368）。
  *
  * **プロット領域と同じ余白を取る。** `PLOT_INSET` はY軸の幅・グラフの margin から
@@ -175,6 +188,7 @@ function LightBand({
   label?: string;
 }) {
   const pieces = useMemo(() => buildBandPieces(segments, domain), [segments, domain]);
+  const hasDaylight = pieces.some((piece) => piece.daylight);
 
   return (
     <div
@@ -185,24 +199,16 @@ function LightBand({
         <p className="mb-1 text-[10.5px] text-muted-foreground">照明（{label}）</p>
       ) : null}
       <div className="relative h-3.5 overflow-hidden rounded-[7px] bg-muted">
-        {/* 日中の帯。照度からの判定が日射に引きずられる時間帯を薄く示す */}
-        <div
-          className="absolute inset-y-0"
-          style={{
-            left: "25%",
-            width: "50%",
-            backgroundColor: "color-mix(in srgb, var(--remote-color) 9%, transparent)",
-          }}
-          aria-hidden
-        />
         {pieces.map((piece) => (
           <div
             key={piece.key}
             className="absolute inset-y-0"
+            // 日射の可能性がある区間は縞で塗る。一覧の「日射の可能性」と同じ区間を指す
+            title={piece.daylight ? "日射の可能性" : undefined}
             style={{
               left: `${piece.left * 100}%`,
               width: `${piece.width * 100}%`,
-              backgroundColor: "var(--remote-color)",
+              background: piece.daylight ? DAYLIGHT_FILL : "var(--remote-color)",
               // 期間の外へ続いている端は丸めない。「ここで消したわけではない」を形で伝える
               borderTopLeftRadius: piece.openStart ? 2 : 7,
               borderBottomLeftRadius: piece.openStart ? 2 : 7,
@@ -212,6 +218,16 @@ function LightBand({
           />
         ))}
       </div>
+      {hasDaylight ? (
+        <p className="mt-1 flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+          <span
+            className="inline-block h-2 w-4 shrink-0 rounded-[3px]"
+            style={{ background: DAYLIGHT_FILL }}
+            aria-hidden
+          />
+          縞の区間は日射の可能性があります
+        </p>
+      ) : null}
     </div>
   );
 }

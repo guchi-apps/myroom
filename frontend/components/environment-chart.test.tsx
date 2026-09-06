@@ -14,6 +14,7 @@ import {
   AIRCON_ROOM_HIDDEN_KEY,
 } from "@/lib/visible-devices";
 import { AIRCON_CHART_DEVICE_ID, type HistoryPoint } from "@/lib/types";
+import type { LightSegment } from "@/lib/light-history";
 
 const noop = () => {};
 
@@ -105,5 +106,53 @@ describe("EnvironmentChart の凡例", () => {
     const names = legendNames(render(new Set([AIRCON_ROOM_HIDDEN_KEY])));
     expect(names).not.toContain("エアコン");
     expect(names).toContain("エアコン（設定温度）");
+  });
+});
+
+/** 照明の帯だけを見るための描画。区間は `buildHistory()` が作る範囲の中に置く */
+function renderBand(segments: LightSegment[]) {
+  return renderToStaticMarkup(
+    <EnvironmentChart
+      historyData={buildHistory()}
+      deviceIds={SENSOR_DEVICE_IDS}
+      deviceNames={DEVICE_NAMES}
+      chartMetric="illuminance"
+      onChartMetricChange={noop}
+      viewRange="day"
+      onViewRangeChange={noop}
+      loading={false}
+      onVisibleDomainChange={noop}
+      chartColors={{}}
+      lineVisibility={buildDefaultChartLineVisibility(SENSOR_DEVICE_IDS)}
+      onLineVisibilityChange={noop}
+      lightSegments={segments}
+      lightSourceLabel="照度から判定"
+    />
+  );
+}
+
+function segment(start: string, end: string, daylight: boolean): LightSegment {
+  return { start, end, open_start: false, open_end: false, daylight };
+}
+
+describe("EnvironmentChart の照明の帯（#371）", () => {
+  it("日中に収まる区間だけを縞で塗り、凡例を添える", () => {
+    const html = renderBand([
+      segment("2026-09-03T12:00:00", "2026-09-03T13:00:00", true),
+      segment("2026-09-03T20:10:00", "2026-09-03T20:30:00", false),
+    ]);
+    expect(html).toContain("repeating-linear-gradient");
+    expect(html).toContain("縞の区間は日射の可能性があります");
+  });
+
+  it("日中に収まる区間が無ければ縞も凡例も出さない", () => {
+    const html = renderBand([segment("2026-09-03T20:10:00", "2026-09-03T20:30:00", false)]);
+    expect(html).not.toContain("repeating-linear-gradient");
+    expect(html).not.toContain("縞の区間は日射の可能性があります");
+  });
+
+  it("「日中」を時間軸の固定位置で塗らない（domain は日付境界に整列しない）", () => {
+    const html = renderBand([segment("2026-09-03T12:00:00", "2026-09-03T13:00:00", true)]);
+    expect(html).not.toContain("left:25%;width:50%");
   });
 });
