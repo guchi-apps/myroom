@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import {
   fetchAirconUnits,
   fetchDevices,
+  fetchLightSourceCandidates,
   fetchOutdoorLocations,
   updateAirconUnitName,
   updateDeviceName,
@@ -55,6 +56,7 @@ import {
   getSensorDeviceIds,
   type AirconUnitInfo,
   type DeviceInfo,
+  type LightSource,
   type OutdoorLocationEntry,
 } from "@/lib/types";
 import {
@@ -87,9 +89,11 @@ import {
   saveDisplayOrderToServer,
   saveHiddenDevicesToServer,
   savePressureOffsetsToServer,
+  saveLightSourcesToServer,
   saveLightThresholdsToServer,
   saveStaleAlertExcludedToServer,
 } from "@/lib/ui-settings-client";
+import { draftToLightSource, lightSourceToDraft } from "@/lib/light-history";
 
 export const STALE_ALERT_EXCLUDED_CHANGED_EVENT = "stalealertexcluded_changed";
 import { AuthError } from "@/lib/auth";
@@ -175,6 +179,12 @@ export function DeviceVisibilityPage() {
   const [inheritsDrafts, setInheritsDrafts] = useState<Record<number, number | null>>({});
   const [pressureOffsetDrafts, setPressureOffsetDrafts] = useState<Record<number, string>>({});
   const [lightThresholdDrafts, setLightThresholdDrafts] = useState<Record<number, string>>({});
+  // デバイスID -> その場所の照明をどこから判定するか（#368）。キーが無い場所は紐付けていない
+  const [lightSources, setLightSources] = useState<Record<string, LightSource>>({});
+  //`""`=使わない / `"illuminance"` / `"remo:<key>"`。select の値をそのまま持つ
+  const [lightSourceDrafts, setLightSourceDrafts] = useState<Record<number, string>>({});
+  // Nature Remo に「照明」として登録した機器。候補一覧を取得していなければ空
+  const [lightCandidates, setLightCandidates] = useState<{ key: string; name: string }[]>([]);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -241,6 +251,7 @@ export function DeviceVisibilityPage() {
       setStaleAlertExcludedKeys(settings.staleAlertExcludedKeys);
       setPressureOffsets(settings.pressureOffsets);
       setLightThresholds(settings.lightThresholds);
+      setLightSources(settings.lightSources);
     } catch (err) {
       if (err instanceof AuthError) {
         setIsAuthenticated(false);
@@ -251,18 +262,22 @@ export function DeviceVisibilityPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [deviceList, units, outdoor] = await Promise.all([
+      const [deviceList, units, outdoor, lightSourceCandidates] = await Promise.all([
         fetchDevices(),
         fetchAirconUnits(),
         fetchOutdoorLocations().catch(() => [] as OutdoorLocationEntry[]),
+        // 候補一覧は Nature Remo を叩かない（控えを読むだけ）。取れなくても他は出す
+        fetchLightSourceCandidates().catch(() => ({ candidates: [], catalog_fetched_at: "" })),
       ]);
       setDevices(deviceList);
       setAirconUnits(units);
       setOutdoorLocations(outdoor);
+      setLightCandidates(lightSourceCandidates.candidates);
     } catch {
       setDevices([]);
       setAirconUnits([]);
       setOutdoorLocations([]);
+      setLightCandidates([]);
     } finally {
       setLoading(false);
     }
@@ -283,6 +298,7 @@ export function DeviceVisibilityPage() {
     const inheritDrafts: Record<number, number | null> = {};
     const offsetDrafts: Record<number, string> = {};
     const lightDrafts: Record<number, string> = {};
+    const sourceDrafts: Record<number, string> = {};
     for (const device of devices) {
       drafts[`device:${device.id}`] = device.name;
       inheritDrafts[device.id] = device.inherits_from ?? null;
@@ -290,6 +306,7 @@ export function DeviceVisibilityPage() {
       // 未設定は空欄。0 を初期値にすると「判定しない」が数値として保存されてしまう
       const threshold = lightThresholds[String(device.id)];
       lightDrafts[device.id] = threshold != null ? String(threshold) : "";
+      sourceDrafts[device.id] = lightSourceToDraft(lightSources[String(device.id)]);
     }
     for (const unit of airconUnits) {
       drafts[`aircon:${unit.ac_id}`] = unit.name;
@@ -298,7 +315,8 @@ export function DeviceVisibilityPage() {
     setInheritsDrafts(inheritDrafts);
     setPressureOffsetDrafts(offsetDrafts);
     setLightThresholdDrafts(lightDrafts);
-  }, [devices, airconUnits, pressureOffsets, lightThresholds]);
+    setLightSourceDrafts(sourceDrafts);
+  }, [devices, airconUnits, pressureOffsets, lightThresholds, lightSources]);
 
   const persistDisplayOrder = useCallback((order: DisplayOrderItem[]) => {
     setDisplayOrder(order);
@@ -496,6 +514,16 @@ export function DeviceVisibilityPage() {
       setLightThresholds(nextThresholds);
       await saveLightThresholdsToServer(nextThresholds);
 
+      const nextSources = { ...lightSources };
+      const nextSource = draftToLightSource(lightSourceDrafts[deviceId]);
+      if (nextSource == null) {
+        delete nextSources[String(deviceId)];
+      } else {
+        nextSources[String(deviceId)] = nextSource;
+      }
+      setLightSources(nextSources);
+      await saveLightSourcesToServer(nextSources);
+
       const saved = await updateDeviceName(
         deviceId,
         name,
@@ -628,6 +656,48 @@ export function DeviceVisibilityPage() {
     </div>
   );
 
+  /**
+   * その場所の照明をどこから判定するか（#368）。
+   *
+   * **Nature Remo の機器は「照明」として登録したものだけが並ぶ。** 生の赤外線の照明は
+   * クラウド側に状態が残らず、選ばせても履歴が作れないため、そちらは照度からの判定へ回す。
+   */
+  const renderLightSourceExtra = (deviceId: number) => {
+    const value = lightSourceDrafts[deviceId] ?? "";
+    const hasThreshold = Boolean(lightThresholdDrafts[deviceId]?.trim());
+    return (
+      <div className="space-y-2">
+        <Label htmlFor={`device:${deviceId}-light-source`}>この場所の照明</Label>
+        <select
+          id={`device:${deviceId}-light-source`}
+          value={value}
+          onChange={(e) =>
+            setLightSourceDrafts((prev) => ({ ...prev, [deviceId]: e.target.value }))
+          }
+          className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm"
+        >
+          <option value="">使わない</option>
+          <option value="illuminance">照度から判定する</option>
+          {lightCandidates.map((candidate) => (
+            <option key={candidate.key} value={`remo:${candidate.key}`}>
+              {candidate.name}（Nature Remo）
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">
+          選ぶと、推移グラフの下に「いつ点いていたか」の帯と、点灯・消灯の一覧が出ます。
+          アレクサ・アプリ・壁のスイッチ、どれで操作しても記録に出ます。
+          {value === "illuminance" && !hasThreshold
+            ? "「照明の点灯とみなす照度」も合わせて設定してください。"
+            : ""}
+          {lightCandidates.length === 0
+            ? " Nature Remo の照明を選ぶには、先に「電気の操作」の編集画面で候補一覧を読み込み直してください。"
+            : ""}
+        </p>
+      </div>
+    );
+  };
+
   const renderEditSheet = () => {
     if (!editingTarget) return null;
 
@@ -654,6 +724,7 @@ export function DeviceVisibilityPage() {
             <>
               {renderPressureOffsetExtra(deviceId)}
               {renderLightThresholdExtra(deviceId)}
+              {renderLightSourceExtra(deviceId)}
             </>
           }
           chartColors={[

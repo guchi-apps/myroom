@@ -112,6 +112,27 @@ class EnergyReadingRecord(Base):
     power_w = Column(Float, nullable=True)
 
 
+class LightEventRecord(Base):
+    """照明の点灯・消灯が「変わった」時刻（#368）。
+
+    Nature Remo に `LIGHT` として登録した機器の状態を5分ごとに読み、**前回と違うときだけ**
+    1行足す。`energy_readings` のようなスナップショットの積み上げにしないのは、
+    5分おきに書くと1機器あたり年10万行になるのに対し、要るのは変わった瞬間だけのため。
+    照度から判定する照明（生の赤外線で操作するもの）はこのテーブルを使わず、
+    `sensor_readings.illuminance` から算出のたびに組み立てる。
+
+    `appliance_key` は `remote.appliance_key()` のハッシュ。Nature Remo の appliance ID を
+    そのまま持たないのは、この値が UI 設定（`light_sources`）にも入り、画面まで届くため。
+    """
+
+    __tablename__ = "light_events"
+
+    recorded_at = Column(DateTime, primary_key=True)
+    appliance_key = Column(String(64), primary_key=True)
+
+    power = Column(String(8), nullable=False)
+
+
 class KepcoHourlyUsageRecord(Base):
     """KEPCO「みるでん」からダウンロードしたCSV由来の、家全体の時間ごと実測（#302）。
 
@@ -196,6 +217,59 @@ class AppSetting(Base):
 # SensorDaily model removed as we aggregate from sensor_readings table directly
 
 # Mock Data Generator
+#: モックの室内灯が点いている時間帯（分単位・0時起点）。前日から続く 0:00-1:20、
+#: 朝の 6:40-8:00、夕方から日付が変わるまでの 17:20-24:00 の3つ。
+#: **昔のモックは夜でも 200 lx あり、照明の判定（#258・#368）が常に「点灯」になっていた。**
+#: 開発サーバーで履歴を確かめられないので、夜は暗く・点けたときだけ明るい形にしてある。
+_MOCK_LIT_WINDOWS = ((0, 80), (400, 480), (1040, 1440))
+
+
+def _mock_illuminance(t: datetime.datetime) -> float:
+    """モックの照度（lx）。夜の暗さ・日中の拡散光・昼の直射・室内灯を足し合わせる。
+
+    昼の直射（11:30-14:00）だけは、しきい値の当て方次第で「消灯なのに点灯と出る」
+    ——照度からの判定が日射に引きずられる場面（#368）を手元で再現するために残してある。
+    """
+    minutes = t.hour * 60 + t.minute
+    #`sin` は周期関数なので、時間帯を `if` で区切らないと想定外の時刻にも山が立つ。
+    # 直射（11:30-14:00）の式をそのまま全時刻へ当てると深夜と夕方にも山ができ、
+    # 「点いていないのに点灯」の区間がモックに紛れ込む
+    diffuse = 40 * math.sin((minutes - 360) / 720 * math.pi) if 360 <= minutes <= 1080 else 0.0
+    sunbeam = 220 * math.sin((minutes - 690) / 150 * math.pi) if 690 <= minutes <= 840 else 0.0
+    indoor = 400 if any(start <= minutes < end for start, end in _MOCK_LIT_WINDOWS) else 0
+    return round(max(0.0, 3 + diffuse + sunbeam + indoor + random.uniform(-3, 3)), 1)
+
+
+#: モックの照明が変わる時刻（時, 分, 状態）。毎日この形で繰り返す。
+#: 室内灯の点灯時間帯（`_MOCK_LIT_WINDOWS`）と揃えてあるので、照度から判定した場所と
+#: Nature Remo の状態から作った場所を並べても、同じ生活のように見える。
+_MOCK_LIGHT_CHANGES = ((1, 20, "off"), (6, 50, "on"), (8, 10, "off"), (18, 35, "on"))
+
+
+def generate_mock_light_events(
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+) -> list:
+    """`light_events` のモック。`(recorded_at, power)` を時刻順に返す。
+
+    呼び出し側が「窓の手前で最後に記録された状態」を引けるよう、指定された期間より
+    前の分も落とさずに返す（`start_time` から素直に作れば、初日の 1:20 の消灯が
+    その前の点灯を含んでいる）。
+    """
+    start_naive = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
+    end_naive = end_time.replace(tzinfo=None) if end_time.tzinfo else end_time
+
+    events = []
+    day = start_naive.date() - datetime.timedelta(days=1)
+    while day <= end_naive.date():
+        for hour, minute, power in _MOCK_LIGHT_CHANGES:
+            at = datetime.datetime.combine(day, datetime.time(hour, minute))
+            if at <= end_naive:
+                events.append((at, power))
+        day += datetime.timedelta(days=1)
+    return events
+
+
 def generate_mock_history_for_range(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
@@ -215,12 +289,7 @@ def generate_mock_history_for_range(
         temp = 20 + temp_offset + 5 * (1 + math.sin(t.hour / 24 * 2 * math.pi)) + random.uniform(-1, 1)
         humid = 50 + humid_offset + 10 * (1 + math.cos(t.hour / 24 * 2 * math.pi)) + random.uniform(-2, 2)
         co2 = 450 + co2_offset + 150 * (1 + math.sin(t.hour / 24 * 2 * math.pi)) + random.uniform(-30, 30)
-        illuminance = max(
-            0,
-            200
-            + 800 * max(0, math.sin((t.hour - 6) / 12 * math.pi))
-            + random.uniform(-50, 50),
-        )
+        illuminance = _mock_illuminance(t)
         entry = {
             "datetime": t,
             "temperature": round(temp, 1),

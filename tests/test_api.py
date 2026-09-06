@@ -578,6 +578,130 @@ def test_light_thresholds_kept_when_other_settings_change(authed_client):
     assert fetched["light_thresholds"] == {"1": 120.5}
 
 
+# --- 場所と照明の紐付け・点灯履歴（#368） ---
+
+
+def test_light_sources_default_is_empty(authed_client):
+    """既定では紐付けていない。詳細パネルの見た目は今までどおり。"""
+    assert authed_client.get("/api/ui-settings").json()["light_sources"] == {}
+
+
+def test_light_sources_saved_per_device(authed_client):
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={
+            "light_sources": {
+                "1": {"kind": "illuminance"},
+                "2": {"kind": "remo", "appliance_key": "d-1f2e3d4c5b"},
+            }
+        },
+    ).json()
+    assert saved["light_sources"] == {
+        "1": {"kind": "illuminance"},
+        "2": {"kind": "remo", "appliance_key": "d-1f2e3d4c5b"},
+    }
+
+
+def test_light_sources_drop_unknown_kind_and_keyless_remo(authed_client):
+    """知らない種別・機器を指していない remo は「紐付けを外す」として保存しない。"""
+    saved = authed_client.put(
+        "/api/ui-settings",
+        json={
+            "light_sources": {
+                "1": {"kind": "illuminance"},
+                "2": {"kind": "remo"},
+                "3": {"kind": "switchbot"},
+            }
+        },
+    ).json()
+    assert saved["light_sources"] == {"1": {"kind": "illuminance"}}
+
+
+def test_light_sources_reject_non_object_entry(authed_client):
+    """値がオブジェクトでない紐付けは、正規化まで届かず422で弾く。
+
+    保存済みの壊れた値を読み飛ばすのは `_normalize_light_sources()` の役目だが、
+    画面から送られてきた時点で形が違うなら、黙って落とすより理由を返すほうがよい。
+    """
+    response = authed_client.put(
+        "/api/ui-settings", json={"light_sources": {"1": "illuminance"}}
+    )
+    assert response.status_code == 422
+
+
+def test_light_sources_kept_when_other_settings_change(authed_client):
+    """別の設定だけを保存したときに、紐付けが消えない（save_settings の merged 漏れ検知）。"""
+    authed_client.put("/api/ui-settings", json={"light_sources": {"1": {"kind": "illuminance"}}})
+    authed_client.put("/api/ui-settings", json={"hidden_devices": ["device:2"]})
+
+    fetched = authed_client.get("/api/ui-settings").json()
+    assert fetched["light_sources"] == {"1": {"kind": "illuminance"}}
+
+
+def test_light_history_without_source_returns_null_source(authed_client):
+    """紐付けていない場所は「履歴が空」ではなく「照明を持たない」として返す。"""
+    data = authed_client.get("/api/light-history?device=1&range=day").json()
+    assert data["source"] is None
+    assert data["segments"] == []
+    assert data["summary"] == {"on_count": 0, "on_minutes": 0}
+
+
+def test_light_history_illuminance_needs_threshold(authed_client):
+    """照度から判定する設定でも、しきい値が無ければ区間は作れない。"""
+    authed_client.put("/api/ui-settings", json={"light_sources": {"1": {"kind": "illuminance"}}})
+
+    data = authed_client.get("/api/light-history?device=1&range=day").json()
+    assert data["source"] == {"kind": "illuminance", "name": "", "threshold": None}
+    assert data["segments"] == []
+
+
+def test_light_history_from_illuminance(authed_client):
+    """しきい値を設定すると、モックの照度から点灯の区間が出る。"""
+    authed_client.put("/api/ui-settings", json={"light_thresholds": {"1": 80}})
+    authed_client.put("/api/ui-settings", json={"light_sources": {"1": {"kind": "illuminance"}}})
+
+    data = authed_client.get("/api/light-history?device=1&range=day").json()
+    assert data["source"]["kind"] == "illuminance"
+    assert data["source"]["threshold"] == 80.0
+    assert data["segments"], "モックの照度なら点灯の区間が1つ以上できる"
+    assert data["summary"]["on_minutes"] > 0
+    # 区間は必ず窓の中に収まる
+    for segment in data["segments"]:
+        assert data["start"] <= segment["start"] <= data["end"]
+        assert data["start"] <= segment["end"] <= data["end"]
+
+
+def test_light_history_from_remo_state(authed_client):
+    """Nature Remo の記録から作る場合、日射の印は付けない。"""
+    authed_client.put(
+        "/api/ui-settings",
+        json={"light_sources": {"1": {"kind": "remo", "appliance_key": "d-mock"}}},
+    )
+
+    data = authed_client.get("/api/light-history?device=1&range=day").json()
+    assert data["source"]["kind"] == "remo"
+    assert data["segments"], "モックの点灯・消灯なら区間ができる"
+    assert all(segment["daylight"] is False for segment in data["segments"])
+
+
+def test_light_history_events_are_newest_first(authed_client):
+    authed_client.put(
+        "/api/ui-settings",
+        json={"light_sources": {"1": {"kind": "remo", "appliance_key": "d-mock"}}},
+    )
+
+    events = authed_client.get("/api/light-history?device=1&range=day").json()["events"]
+    assert events == sorted(events, key=lambda row: row["datetime"], reverse=True)
+    assert {row["status"] for row in events} <= {"on", "off"}
+
+
+def test_light_source_candidates_empty_without_catalog(authed_client):
+    """候補一覧を一度も取得していなければ空。画面はそちらへ案内する。"""
+    data = authed_client.get("/api/light-sources").json()
+    assert data["candidates"] == []
+    assert data["catalog_fetched_at"] == ""
+
+
 # --- 「電気の操作」のボタン名・表示の選択（#260） ---
 
 

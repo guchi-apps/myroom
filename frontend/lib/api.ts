@@ -1,3 +1,4 @@
+import type { LightHistory } from "@/lib/light-history";
 import {
   AIRCON_CHART_DEVICE_ID,
   DASHBOARD_SENSOR_DEVICE_IDS,
@@ -207,6 +208,33 @@ export async function fetchHistoryWindow(
     `/api/history?${params.toString()}`
   );
   return processHistoryData(data);
+}
+
+/**
+ * その場所の照明が点いていた時間帯（#368）。
+ *
+ * **窓の指定は `fetchHistoryWindow()` と同じにする。** 推移グラフと同じ時間軸へ帯を重ねるので、
+ * 取得する期間もグラフと揃っていないと、端で帯だけが途切れる。
+ */
+export async function fetchLightHistory(
+  start: Date,
+  end: Date,
+  deviceId = PRIMARY_SENSOR_DEVICE_ID
+): Promise<LightHistory> {
+  const params = new URLSearchParams({
+    start: toApiDateTime(start),
+    end: toApiDateTime(end),
+    device: String(deviceId),
+  });
+  return fetchJson<LightHistory>(`/api/light-history?${params.toString()}`);
+}
+
+/** `/devices` の「この場所の照明」に並べる候補（Nature Remo に「照明」として登録した機器） */
+export async function fetchLightSourceCandidates(): Promise<{
+  candidates: { key: string; name: string }[];
+  catalog_fetched_at: string;
+}> {
+  return fetchJson("/api/light-sources");
 }
 
 export async function fetchAirconHistoryWindow(
