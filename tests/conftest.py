@@ -123,6 +123,20 @@ def no_internal_api_key(monkeypatch):
 
 
 @pytest.fixture
+def internal_control_api_key(monkeypatch):
+    """操作専用トークンを設定する（#419）。読み取り用の `internal_api_key` とは別の値。"""
+    key = "test-internal-control-api-key"
+    monkeypatch.setenv("INTERNAL_CONTROL_API_KEY", key)
+    return key
+
+
+@pytest.fixture
+def no_internal_control_api_key(monkeypatch):
+    """開発機の .env に値が入っていても、未設定時の挙動を確認できるようにする。"""
+    monkeypatch.delenv("INTERNAL_CONTROL_API_KEY", raising=False)
+
+
+@pytest.fixture
 def client(data_dir, mock_weather):
     from backend.main import app
 
