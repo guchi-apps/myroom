@@ -28,7 +28,7 @@ MYROOM_API_URL=https://myroom.gucchii.com/api/sensor
 
 ## シークレットは「登録しただけ」では本番に反映されない
 
-GitHub Secret（`INTERNAL_API_KEY` 等）を追加・更新しても、本番VPSの `.env` は自動では書き換わらない。
+GitHub Secret（`INTERNAL_API_KEY`・`INTERNAL_CONTROL_API_KEY` 等）を追加・更新しても、本番VPSの `.env` は自動では書き換わらない。
 
 `.env` を書いているのは `Deploy to Production`（`.github/workflows/deploy.yml`）の
 `Restart Backend Service` ステップにある `sync_env_var` で、**これはデプロイのときにしか走らない**。
@@ -47,6 +47,15 @@ GitHub Secrets → 本番 `.env` は行わない。ここも混同しやすい�
 curl -s -o /dev/null -w '%{http_code}\n' https://myroom.gucchii.com/api/internal/room-state
 # 503 … INTERNAL_API_KEY が未設定（= デプロイが足りていない）
 # 401 … 設定はされている（トークン不一致。今回はトークン無しで叩いているので401が正常）
+```
+
+照明などを操作する内部API（`/api/internal/remote/…`・#419）は**別のトークン**
+`INTERNAL_CONTROL_API_KEY` を見る。切り分けは同じで、こちらも未設定なら常に 503。
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://myroom.gucchii.com/api/internal/remote/buttons
+# 503 … INTERNAL_CONTROL_API_KEY が未設定（Secret が未登録、または登録後にデプロイしていない）
+# 401 … 設定はされている（トークン無しで叩いているので401が正常）
 ```
 
 Secret の登録時刻と最後のデプロイ時刻を比べると確定できる。

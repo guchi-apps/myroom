@@ -12,7 +12,7 @@ import random
 from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
-from .internal_auth import require_internal_token
+from .internal_auth import require_internal_control_token, require_internal_token
 from pydantic import BaseModel, model_validator
 
 load_dotenv()
@@ -835,7 +835,8 @@ def get_internal_room_state(
     利用者は同じVPS上で動く AIDE の MCP サーバー（guchi-apps/aide#101）。
 
     **書き込み・設定変更の口はここに足さないこと。** ユーザーJWTを介さない経路なので、
-    増やすほど「ログインしていない誰かが叩ける操作」が増える。
+    増やすほど「ログインしていない誰かが叩ける操作」が増える。操作は別のトークン
+    （`INTERNAL_CONTROL_API_KEY`）で通る `/api/internal/remote/…` に限る（#419）。
     """
     return _build_room_state_payload(db)
 
@@ -1000,6 +1001,42 @@ def send_remote_button(
 
     返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは
     赤外線が片方向のため分からない。
+    """
+    try:
+        return remote.press(button_id, _remote_button_overrides(db), db)
+    except remote.RemoteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
+
+@app.get("/api/internal/remote/buttons")
+def get_internal_remote_buttons(
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_control_token),
+):
+    """押せるリモコン操作の一覧。AIDE が「何を押せるか」を知るためのサーバー間用（#419）。
+
+    `GET /api/remote/buttons` と同じ形を返し、Nature Remo は叩かない。
+    ログインセッションでも読み取り用の `INTERNAL_API_KEY` でも通らない
+    （`INTERNAL_CONTROL_API_KEY` の Bearer トークン専用）。
+    """
+    return remote.build_payload(_remote_button_overrides(db), db)
+
+
+@app.post("/api/internal/remote/buttons/{button_id}/send")
+def send_internal_remote_button(
+    button_id: str,
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_control_token),
+):
+    """画面で登録済みのボタンを押して赤外線を送る、サーバー間用の操作API（#419）。
+
+    **受け取るのはボタンIDだけ。** signal ID・appliance ID を直接受ける口は作らない
+    （登録していない機器へ送れてしまうため）。失敗は `remote.RemoteError` の
+    status（404 未登録・429 送信回数の上限・502 Nature Remo の失敗・503 トークン未設定）と
+    利用者向けの文言をそのまま返す。
+
+    **エアコンの操作・設定の変更はここに足さないこと。** ユーザーJWTを介さない書き込みの口なので、
+    範囲は「登録済みボタンを押す」だけに絞っている。
     """
     try:
         return remote.press(button_id, _remote_button_overrides(db), db)
@@ -1728,8 +1765,9 @@ async def create_utility_bills(
 
     **認証は付けていない。** 収集側からのPOST（`/api/sensor`・`/api/aircon`・`/api/energy`）は
     どれも無認証で、ここだけ固定トークンを要求すると収集スクリプトの作りが揃わなくなる。
-    `internal_auth` は用途を「読み取り専用の内部API」と定めているので、書き込みへ広げるなら
-    その方針ごと決め直す話になる。付けるかどうかは収集経路全体でまとめて判断する（#249）。
+    `internal_auth` の `INTERNAL_API_KEY` は用途を「読み取り専用の内部API」と定めているので、
+    書き込みへ広げるなら その方針ごと決め直す話になる（照明の操作だけは別トークンの
+    `INTERNAL_CONTROL_API_KEY` で通す形にした・#419）。付けるかどうかは収集経路全体でまとめて判断する（#249）。
     """
     if database.DB_MOCK:
         return {"status": "mock_ok", "received": len(payload.records)}

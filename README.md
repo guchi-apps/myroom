@@ -810,6 +810,8 @@ DaySpan・AIDE が読むタスク一覧に「次の掃除」を並べること�
 | PUT | `/api/cleaning/tasks` | 掃除の定義をまとめて置き換え（追加・編集・削除・並べ替え、要認証） |
 | POST | `/api/cleaning/tasks/{id}/done` | 掃除をやった記録を追加（要認証） |
 | GET | `/api/internal/room-state` | 部屋の状態のスナップショット（**サーバー間専用**・下記） |
+| GET | `/api/internal/remote/buttons` | 「電気の操作」で押せるボタンの一覧（**サーバー間専用・操作用トークン**・下記） |
+| POST | `/api/internal/remote/buttons/{button_id}/send` | 登録済みのボタンを押す（**サーバー間専用・操作用トークン**・下記） |
 
 ### サーバー間参照用の内部API
 
@@ -833,6 +835,41 @@ curl -s -H "Authorization: Bearer <トークン>" http://127.0.0.1:8000/api/inte
 - 画面向けAPIは snake_case ですが、**このAPIだけ camelCase** です（AIDE 側がその前提で実装済み）
 - 日時は日本時間のISO8601（オフセット付き）。**本番VPSのタイムゾーンはUTC**のため、オフセットを
   省くと受け側で9時間ずれます
+
+#### 操作用の内部API（照明などの操作・#419）
+
+AIDE から ChatGPT / Claude 経由で照明などを操作するための口です。**読み取り用とは別のトークン**
+`INTERNAL_CONTROL_API_KEY` で通ります（DaySpan の `INTERNAL_EVENTS_API_KEY` と同じ分け方）。
+
+- **`INTERNAL_API_KEY`（読み取り用）では通りません。** 逆も同じで、操作用トークンで `room-state` は
+  読めません。片方が漏れても、もう片方の経路は塞がったままにするための分け方です
+- ログインセッション（Supabase のJWT）でも通りません
+- 状況ごとのステータスは上の表と同じです（未設定 503・無い／不一致 401）
+
+```bash
+# 押せるボタンの一覧（Nature Remo は叩かない。GET /api/remote/buttons と同じ形）
+curl -s -H "Authorization: Bearer <操作用トークン>" http://127.0.0.1:8000/api/internal/remote/buttons
+
+# 登録済みのボタンを押す
+curl -s -X POST -H "Authorization: Bearer <操作用トークン>" \
+  http://127.0.0.1:8000/api/internal/remote/buttons/<button_id>/send
+```
+
+| 結果 | ステータス・本文 |
+|------|-----------------|
+| 送信を依頼できた | 200 `{"sent": true, "button_id": "…", "label": "…", "group_name": "…"}` |
+| 登録されていないボタン | 404 |
+| 送信回数の上限（Nature Remo は 30回/5分） | 429 |
+| Nature Remo 側の失敗・つながらない | 502 |
+| `NATURE_REMO_TOKEN` が未設定 | 503 |
+
+失敗時の本文は `{"detail": "<利用者向けの文言>"}` です。
+
+- **送れるのは画面で登録済みのボタンだけ。** `button_id`（一覧の `id`）だけを受け取り、signal ID・
+  appliance ID を直接渡す口はありません。隠したボタン（`hidden: true`）も押せます
+- 返せるのは「Nature Remo が送信を受け付けたか」までで、機器が実際に反応したかは分かりません（赤外線は片方向）
+- **エアコンの操作・ボタンの登録や名前の変更はこの口では行えません**（ユーザーJWTを介さない書き込みの口を
+  増やさないため、範囲を絞っています）
 - トークンは AIDE 側の `AIDE_MYROOM_TOKEN` と**同じ値**にします。片方だけ変えると 401 で静かに
   連携が止まります
 - **書き込み・設定変更の口をここに足さないでください。** ユーザーJWTを介さない経路のため、
@@ -903,6 +940,7 @@ ALTER 権限がない場合は、スクリプトが表示する SQL を管理者
 | `cleaning-notion-token` | 次の掃除を書き出す Notion インテグレーションのトークン（`CLEANING_NOTION_TOKEN` として同期）。`garbage-notion-token` と同じ値でよいが、Task データベース側にもそのインテグレーションを接続しておくこと |
 | `cleaning-notion-data-source-id` | 書き出し先（Notion の `☑️ Task`）のデータソースID（`CLEANING_NOTION_DATA_SOURCE_ID` として同期。`database_id` ではない） |
 | `internal-api-key` | サーバー間参照用APIのトークン（`INTERNAL_API_KEY` として同期）。AIDE 側の `op://apps/aide/myroom-token` と**同じ値**にする |
+| `internal-control-api-key` | 照明などの操作専用のサーバー間トークン（`INTERNAL_CONTROL_API_KEY` として同期）。AIDE 側の `AIDE_MYROOM_CONTROL_TOKEN` と**同じ値**にし、`internal-api-key` とは**別の値**にする（#419） |
 | `nature-remo-token` | 「電気の操作」カードが赤外線を送るための Nature Remo アクセストークン（`NATURE_REMO_TOKEN` として同期）。https://home.nature.global/ で発行 |
 | `db-name` | 接続先データベース名（`DB_NAME` として同期） |
 | `target-dir` | デプロイ先ディレクトリ（例: `/home/guchi/myroom`） |
@@ -1026,6 +1064,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 | `CLEANING_NOTION_TOKEN` | secret `CLEANING_NOTION_TOKEN` | このリポジトリ |
 | `CLEANING_NOTION_DATA_SOURCE_ID` | secret `CLEANING_NOTION_DATA_SOURCE_ID` | このリポジトリ |
 | `INTERNAL_API_KEY` | secret `INTERNAL_API_KEY` | このリポジトリ |
+| `INTERNAL_CONTROL_API_KEY` | secret `INTERNAL_CONTROL_API_KEY` | このリポジトリ |
 | `NATURE_REMO_TOKEN` | secret `NATURE_REMO_TOKEN` | このリポジトリ |
 | `DB_NAME` | secret `DB_NAME` | このリポジトリ |
 | `DB_USER` | secret `SHARED_DB_USER` | organization 共通 |
@@ -1042,7 +1081,7 @@ rsync では `.env` を転送しません。サーバー上の `.env` には、�
 1. `frontend/package.json` のバージョンから Git タグ（`v*`）を作成
 2. フロントエンドのビルド（`npm run build` → `frontend/out` に静的出力）
 3. ファイルの転送 (`rsync`)
-4. GitHub の secret / variable から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `LOGIN_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `CLEANING_NOTION_*` / `INTERNAL_API_KEY` / DB 接続情報をサーバー `.env` に同期（対応は「1-4. 本番サーバーの `.env`」の表）
+4. GitHub の secret / variable から `SUPABASE_URL` / `ALLOWED_GOOGLE_EMAILS` / `SENSOR_WEBHOOK_URL` / `LOGIN_WEBHOOK_URL` / `GARBAGE_NOTION_*` / `CLEANING_NOTION_*` / `INTERNAL_API_KEY` / `INTERNAL_CONTROL_API_KEY` / DB 接続情報をサーバー `.env` に同期（対応は「1-4. 本番サーバーの `.env`」の表）
 5. DB マイグレーション (`migrate_db.py`)
 6. バックエンドの依存関係更新と PM2 による再起動（`pm2 restart` では cwd が変わらないため、毎回 `delete` → `start`）
 7. **デプロイ成功後** GitHub Release を作成
