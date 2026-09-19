@@ -381,6 +381,173 @@ def test_send_endpoint_returns_detail_on_failure(authed_client, data_dir, monkey
     assert "トークン" in response.json()["detail"]
 
 
+# --------------------------- サーバー間の操作API（AIDE 連携 / #419）
+
+
+@pytest.fixture
+def internal_remote(data_dir, monkeypatch, internal_control_api_key):
+    """ボタンを登録し、操作用トークンつきのヘッダーを返す。"""
+    monkeypatch.setattr("backend.remote.CONFIG_PATH", data_dir / "remote.json")
+    write_config(data_dir)
+    monkeypatch.setenv(remote.ENV_TOKEN, "test-token")
+    return {"Authorization": f"Bearer {internal_control_api_key}"}
+
+
+def test_internal_remote_requires_configured_key(client, no_internal_control_api_key):
+    """INTERNAL_CONTROL_API_KEY が未設定なら 503。401（値が違う）と切り分けられること。"""
+    headers = {"Authorization": "Bearer anything"}
+    assert client.get("/api/internal/remote/buttons", headers=headers).status_code == 503
+    assert (
+        client.post("/api/internal/remote/buttons/light-on/send", headers=headers).status_code
+        == 503
+    )
+
+
+def test_internal_remote_rejects_missing_and_wrong_token(client, internal_control_api_key):
+    for headers in ({}, {"Authorization": "Bearer wrong-token"}):
+        assert client.get("/api/internal/remote/buttons", headers=headers).status_code == 401
+        assert (
+            client.post(
+                "/api/internal/remote/buttons/light-on/send", headers=headers
+            ).status_code
+            == 401
+        )
+
+
+def test_internal_remote_rejects_non_bearer_scheme(client, internal_control_api_key):
+    response = client.get(
+        "/api/internal/remote/buttons",
+        headers={"Authorization": f"Token {internal_control_api_key}"},
+    )
+    assert response.status_code == 401
+
+
+def test_internal_remote_does_not_accept_read_only_key(
+    client, internal_api_key, internal_control_api_key, internal_remote, monkeypatch
+):
+    """読み取り用の INTERNAL_API_KEY では操作できない（片方が漏れても塞がったままにする）。"""
+    sent = []
+    monkeypatch.setattr(requests, "post", lambda *a, **k: sent.append(a) or FakeResponse(200))
+    headers = {"Authorization": f"Bearer {internal_api_key}"}
+
+    assert client.get("/api/internal/remote/buttons", headers=headers).status_code == 401
+    response = client.post("/api/internal/remote/buttons/light-on/send", headers=headers)
+    assert response.status_code == 401
+    assert sent == []
+
+
+def test_internal_remote_read_key_is_not_replaced_by_control_key(
+    client, internal_api_key, internal_control_api_key
+):
+    """逆向きも同じ。操作用トークンで room-state（読み取り）は通らない。"""
+    response = client.get(
+        "/api/internal/room-state",
+        headers={"Authorization": f"Bearer {internal_control_api_key}"},
+    )
+    assert response.status_code == 401
+
+
+def test_internal_remote_does_not_accept_login_session(authed_client, internal_control_api_key):
+    """ログインセッションでは通さない（サーバー間専用）。"""
+    assert authed_client.get("/api/internal/remote/buttons").status_code == 401
+    assert (
+        authed_client.post("/api/internal/remote/buttons/light-on/send").status_code == 401
+    )
+
+
+def test_internal_remote_buttons_matches_the_screen_api(
+    client, authed_client, internal_remote
+):
+    internal = client.get("/api/internal/remote/buttons", headers=internal_remote)
+    assert internal.status_code == 200
+    assert internal.json() == authed_client.get("/api/remote/buttons").json()
+    # signal ID・appliance ID は外へ出さない
+    assert "app-1" not in internal.text and "sig-1" not in internal.text
+
+
+def test_internal_remote_buttons_does_not_call_nature_remo(client, internal_remote, monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("一覧の取得で Nature Remo を叩いてはいけない")
+
+    monkeypatch.setattr(requests, "get", fail)
+    monkeypatch.setattr(requests, "post", fail)
+
+    assert client.get("/api/internal/remote/buttons", headers=internal_remote).status_code == 200
+
+
+def test_internal_remote_send_presses_the_registered_button(client, internal_remote, monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse(200)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    response = client.post("/api/internal/remote/buttons/light-on/send", headers=internal_remote)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sent": True,
+        "button_id": "light-on",
+        "label": "点ける",
+        "group_name": "照明",
+    }
+    assert len(calls) == 1
+    assert "app-1" in calls[0][0]
+
+
+def test_internal_remote_send_uses_the_name_set_on_screen(client, internal_remote, monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(200))
+    ui_settings.save_settings(
+        {ui_settings.SETTING_REMOTE_BUTTONS: {"light-on": {"label": "あかりをつける"}}}
+    )
+
+    response = client.post("/api/internal/remote/buttons/light-on/send", headers=internal_remote)
+
+    assert response.json()["label"] == "あかりをつける"
+
+
+def test_internal_remote_send_rejects_unregistered_button(client, internal_remote, monkeypatch):
+    """登録していないIDは 404。signal ID を直接渡しても送れない。"""
+    sent = []
+    monkeypatch.setattr(requests, "post", lambda *a, **k: sent.append(a) or FakeResponse(200))
+
+    for button_id in ("no-such-button", "sig-1", "app-1"):
+        response = client.post(
+            f"/api/internal/remote/buttons/{button_id}/send", headers=internal_remote
+        )
+        assert response.status_code == 404
+        assert response.json() == {"detail": "そのボタンは登録されていません"}
+    assert sent == []
+
+
+@pytest.mark.parametrize(
+    "remo_status,expected",
+    [(401, 502), (429, 429), (500, 502)],
+)
+def test_internal_remote_send_returns_remote_error_status(
+    client, internal_remote, monkeypatch, remo_status, expected
+):
+    monkeypatch.setattr(
+        requests, "post", lambda *a, **k: FakeResponse(remo_status, text="error")
+    )
+
+    response = client.post("/api/internal/remote/buttons/light-on/send", headers=internal_remote)
+
+    assert response.status_code == expected
+    assert response.json()["detail"]
+
+
+def test_internal_remote_send_without_remo_token_is_503(client, internal_remote, monkeypatch):
+    monkeypatch.delenv(remote.ENV_TOKEN, raising=False)
+
+    response = client.post("/api/internal/remote/buttons/light-on/send", headers=internal_remote)
+
+    assert response.status_code == 503
+    assert "トークン" in response.json()["detail"]
+
+
 # --------------------------------------- 画面からの登録（#262）
 
 

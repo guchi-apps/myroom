@@ -8,7 +8,15 @@
 ops-dashboard の `OPS_API_TOKEN`（`requireSessionOrApiToken`）と同じ形。違いは、
 こちらはログインセッションを併用せず**サーバー間専用**にしている点だけ。
 
-`INTERNAL_API_KEY` が未設定なら常に 503 を返す。401（値が違う）と切り分けられるのは
+トークンは用途ごとに分けている（DaySpan の `INTERNAL_EVENTS_API_KEY` と同じ分け方）。
+
+- `INTERNAL_API_KEY` … 読み取り専用（`GET /api/internal/room-state`）
+- `INTERNAL_CONTROL_API_KEY` … 操作専用（`/api/internal/remote/…`・#419）
+
+**片方のトークンでもう片方の経路は通らない。** 読み取り用が漏れても操作の口は塞がったままに
+するための分け方なので、1つの依存にまとめて「どちらでも通す」形にしないこと。
+
+対応する環境変数が未設定なら常に 503 を返す。401（値が違う）と切り分けられるのは
 呼ぶ側にとって重要で、AIDE 側は 503 を「相手側でAPIキーが未設定」、401 を
 「トークンが一致しない」と表示し分けている。
 """
@@ -26,16 +34,28 @@ from fastapi import Header, HTTPException, status
 load_dotenv()
 
 ENV_VAR_NAME = "INTERNAL_API_KEY"
+CONTROL_ENV_VAR_NAME = "INTERNAL_CONTROL_API_KEY"
+
+
+def _read_token(env_var_name: str) -> Optional[str]:
+    """環境変数のトークン。空文字は「未設定」として扱う。
+
+    モジュール読み込み時ではなく都度読むのは、テストが `monkeypatch.setenv` で
+    差し替えられるようにするため。デプロイは未登録の secret を空文字で `.env` へ書くので、
+    空を「未設定」に倒しておかないと、空のトークンで通る口ができてしまう。
+    """
+    value = os.getenv(env_var_name)
+    return value if value else None
 
 
 def get_internal_api_key() -> Optional[str]:
-    """設定されたトークン。空文字は「未設定」として扱う。
+    """読み取り用トークン（`INTERNAL_API_KEY`）。"""
+    return _read_token(ENV_VAR_NAME)
 
-    モジュール読み込み時ではなく都度読むのは、テストが `monkeypatch.setenv` で
-    差し替えられるようにするため。
-    """
-    value = os.getenv(ENV_VAR_NAME)
-    return value if value else None
+
+def get_internal_control_api_key() -> Optional[str]:
+    """操作用トークン（`INTERNAL_CONTROL_API_KEY`）。"""
+    return _read_token(CONTROL_ENV_VAR_NAME)
 
 
 def _token_matches(provided: str, expected: str) -> bool:
@@ -45,15 +65,14 @@ def _token_matches(provided: str, expected: str) -> bool:
     return hmac.compare_digest(provided_digest, expected_digest)
 
 
-async def require_internal_token(
-    authorization: Optional[str] = Header(default=None),
+def _check_bearer(
+    authorization: Optional[str], env_var_name: str, expected: Optional[str]
 ) -> None:
-    """内部API用の依存。通れば None、通らなければ 503 / 401。"""
-    expected = get_internal_api_key()
+    """Bearer トークンを `expected` と突き合わせる。通れば None、通らなければ 503 / 401。"""
     if expected is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"{ENV_VAR_NAME} is not configured",
+            detail=f"{env_var_name} is not configured",
         )
 
     scheme, _, token = (authorization or "").partition(" ")
@@ -63,3 +82,20 @@ async def require_internal_token(
             detail="Invalid internal API token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def require_internal_token(
+    authorization: Optional[str] = Header(default=None),
+) -> None:
+    """読み取り用の内部API向けの依存（`INTERNAL_API_KEY`）。"""
+    _check_bearer(authorization, ENV_VAR_NAME, get_internal_api_key())
+
+
+async def require_internal_control_token(
+    authorization: Optional[str] = Header(default=None),
+) -> None:
+    """操作用の内部API向けの依存（`INTERNAL_CONTROL_API_KEY`）。
+
+    読み取り用の `INTERNAL_API_KEY` では通らない。
+    """
+    _check_bearer(authorization, CONTROL_ENV_VAR_NAME, get_internal_control_api_key())
