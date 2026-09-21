@@ -17,6 +17,7 @@ import { TrendPanel } from "@/components/trend-panel";
 import { BillCard } from "@/components/bill-card";
 import { CleaningCard } from "@/components/cleaning-card";
 import { PrinterCard } from "@/components/printer-card";
+import { FilamentSheet } from "@/components/filament-sheet";
 import {
   CleaningDetailPanel,
   CleaningSettingsPanel,
@@ -39,6 +40,7 @@ import {
   fetchDashboardData,
   fetchDevices,
   fetchEnergyBreakdown,
+  fetchFilament,
   fetchGarbageSchedule,
   fetchOutdoorLocations,
   fetchOutdoorLocationsWeather,
@@ -110,6 +112,7 @@ import {
   PRINTER_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import type { BambuPrinterResponse } from "@/lib/bambu";
+import type { FilamentPayload } from "@/lib/filament";
 import type {
   CleaningSchedule,
   CleaningTask,
@@ -376,6 +379,9 @@ export function MyRoomDashboard() {
   const [cleaningSaveError, setCleaningSaveError] = useState<string | null>(null);
   const [bambuPrinter, setBambuPrinter] = useState<BambuPrinterResponse | null>(null);
   const [bambuError, setBambuError] = useState(false);
+  // フィラメント在庫（#445）。プリンターの接続とは別に取り、取れなかったときは欄を出さない
+  const [filament, setFilament] = useState<FilamentPayload | null>(null);
+  const [filamentOpen, setFilamentOpen] = useState(false);
   const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
   const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
@@ -790,6 +796,7 @@ export function MyRoomDashboard() {
           bills,
           cleaning,
           bambu,
+          filamentData,
           outdoorList,
           outdoorWeathers,
         ] = await Promise.all([
@@ -801,6 +808,7 @@ export function MyRoomDashboard() {
           fetchBillsSummary().catch(() => null),
           fetchCleaningSchedule().catch(() => null),
           fetchBambuPrinter().catch(() => null),
+          fetchFilament().catch(() => null),
           fetchOutdoorLocations().catch(() => null),
           fetchOutdoorLocationsWeather().catch(() => null),
         ]);
@@ -829,6 +837,7 @@ export function MyRoomDashboard() {
         setCleaningError(cleaning == null);
         if (bambu) setBambuPrinter(bambu);
         setBambuError(bambu == null);
+        if (filamentData) setFilament(filamentData);
         // 地点そのものは `/devices` からしか変わらないので、取れなかったときは前回を残す
         if (outdoorList) setOutdoorLocations(outdoorList);
         if (outdoorWeathers) {
@@ -1474,6 +1483,8 @@ export function MyRoomDashboard() {
                         printer={bambuPrinter}
                         loading={!dashboardDataLoaded && bambuPrinter == null}
                         error={bambuError && bambuPrinter == null}
+                        filament={filament}
+                        onOpenFilament={() => setFilamentOpen(true)}
                       />
                     );
                   }
@@ -1677,6 +1688,19 @@ export function MyRoomDashboard() {
           onSave={(tasks) => {
             void handleSaveCleaningTasks(tasks);
           }}
+        />
+      )}
+
+      {filamentOpen && filament && (
+        <FilamentSheet
+          payload={filament}
+          suggestedNote={
+            bambuPrinter?.printer?.state === "finished"
+              ? (bambuPrinter.printer.job.name ?? null)
+              : null
+          }
+          onChange={setFilament}
+          onClose={() => setFilamentOpen(false)}
         />
       )}
 

@@ -53,6 +53,11 @@ def data_dir(tmp_path, monkeypatch):
         "backend.cleaning.CONFIG_PATH",
         tmp_path / "cleaning.json",
     )
+    # フィラメントの在庫も DB_MOCK ではファイルに落ちる（本番は app_settings テーブル）
+    monkeypatch.setattr(
+        "backend.filament.FILE_PATH",
+        tmp_path / "filament.json",
+    )
     return tmp_path
 
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PrinterCard } from "@/components/printer-card";
 import type { BambuPrinterResponse, BambuSnapshot } from "@/lib/bambu";
+import { makePayload, makeSpool } from "@/lib/filament-fixtures";
+import type { FilamentPayload } from "@/lib/filament";
 
 function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
   return {
@@ -42,10 +44,21 @@ function response(overrides: Partial<BambuPrinterResponse> = {}): BambuPrinterRe
 
 function render(
   printer: BambuPrinterResponse | null,
-  extra?: { loading?: boolean; error?: boolean }
+  extra?: {
+    loading?: boolean;
+    error?: boolean;
+    filament?: FilamentPayload | null;
+    onOpenFilament?: () => void;
+  }
 ) {
   return renderToStaticMarkup(
-    <PrinterCard printer={printer} loading={extra?.loading ?? false} error={extra?.error ?? false} />
+    <PrinterCard
+      printer={printer}
+      loading={extra?.loading ?? false}
+      error={extra?.error ?? false}
+      filament={extra?.filament}
+      onOpenFilament={extra?.onOpenFilament}
+    />
   );
 }
 
@@ -225,5 +238,65 @@ describe("PrinterCard", () => {
     expect(html).toContain("外付けスプール");
     expect(html).toContain("PLA");
     expect(html).not.toContain("AMS Lite");
+  });
+
+  describe("フィラメント残量（#445）", () => {
+    const open = () => {};
+
+    it("使用中スプールの残量・割合・入口を出す", () => {
+      const html = render(response(), { filament: makePayload(), onOpenFilament: open });
+      expect(html).toContain("フィラメント残量");
+      expect(html).toContain("ELEGOO PLA (ホワイト)");
+      expect(html).toContain(">391<");
+      expect(html).toContain("39%");
+      expect(html).toContain("9/14に計量、以降2回で68g");
+      expect(html).toContain("在庫 1本");
+      expect(html).toContain("在庫を開く");
+      expect(html).toContain('aria-valuenow="39"');
+    });
+
+    it("在庫を渡さなければ欄ごと出さない（既存の表示は変わらない）", () => {
+      expect(render(response())).not.toContain("フィラメント残量");
+      expect(render(response(), { filament: makePayload() })).not.toContain("フィラメント残量");
+    });
+
+    it("プリンターがオフラインでも残量は出す", () => {
+      const html = render(
+        response({ online: false, connection: "printer_offline", printer: null, lastKnown: snapshot() }),
+        { filament: makePayload(), onOpenFilament: open }
+      );
+      expect(html).toContain("プリンターに繋がっていません");
+      expect(html).toContain("ELEGOO PLA (ホワイト)");
+    });
+
+    it("プリンターを読み込み中のあいだは出さない", () => {
+      const html = render(null, { loading: true, filament: makePayload(), onOpenFilament: open });
+      expect(html).not.toContain("フィラメント残量");
+    });
+
+    it("残りわずかのときは注記と警告色を出す", () => {
+      const html = render(response(), {
+        filament: makePayload([
+          makeSpool({ remaining_g: 62, percent: 6, level: "low" }),
+        ]),
+        onOpenFilament: open,
+      });
+      expect(html).toContain("残りわずか");
+      expect(html).toContain("text-[#a86200]");
+    });
+
+    it("スプールが1本も無いときは登録を促す", () => {
+      const html = render(response(), { filament: makePayload([]), onOpenFilament: open });
+      expect(html).toContain("スプールを登録すると、残量を計算します");
+    });
+
+    it("使用中が選ばれていないときは、選ぶよう伝えて入口は残す", () => {
+      const html = render(response(), {
+        filament: makePayload([makeSpool({ active: false })], { active_id: null }),
+        onOpenFilament: open,
+      });
+      expect(html).toContain("使用中のスプールが選ばれていません");
+      expect(html).toContain("在庫を開く");
+    });
   });
 });
