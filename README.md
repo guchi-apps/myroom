@@ -1164,14 +1164,15 @@ npm run version:major -- -m "Release v%s: 破壊的変更の要約"
 
 1. `typecheck` と `test`（`preversion`）
 2. `package.json` / `package-lock.json` のバージョン更新
-3. `app-changelog.ts` 先頭に新バージョンの枠を追加
+3. 環境変数 `RELEASE_CHANGELOG` に変更内容があれば、`changelog.ts` 先頭に新バージョンのエントリを追加
+   （**空のときはエントリを作らず、バージョンだけが上がる**。仮の文言は入れない・#446）
 4. 上記をまとめて git commit（**タグは作成しない**）
 
-changelog の「（変更内容を追記してください）」を実際の文言に直してから push してください。
+画面で体感できる変更があるのにエントリが作られなかった場合は、`changelog.ts` 先頭へ手で追記してから push してください。
 
 ```bash
 # changelog を追記したら amend する例
-git add frontend/lib/app-changelog.ts
+git add frontend/lib/changelog.ts
 git commit --amend --no-edit
 
 git push origin develop

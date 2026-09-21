@@ -4,8 +4,10 @@
  *
  * リリース自動化ワークフロー（release-develop-to-main.yml）は、developへ取り込まれた
  * 差分から利用者向けの更新履歴を生成し、環境変数 RELEASE_CHANGELOG で渡してくる。
- * 設定されていればその内容を changes へ反映する。未設定・空のとき（ローカルで
- * `npm version` を叩いた場合など）は、従来どおり手で埋めるための枠だけを作る。
+ * 設定されていればその内容を changes へ反映する。未設定・空のとき（画面で体感できる
+ * 変化が無いリリースや、ローカルで `npm version` を叩いた場合など）はエントリを作らない。
+ * 仮の文言だけのエントリを作ると誰も埋めないまま更新履歴の画面に残り続けるため
+ * （#446）。バージョンだけが上がる。
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,8 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const changelogPath = join(__dirname, "../lib/changelog.ts");
-
-export const CHANGELOG_PLACEHOLDER = "（変更内容を追記してください）";
 
 /**
  * RELEASE_CHANGELOG の文面を changes 配列へ整形する。
@@ -36,7 +36,7 @@ function escapeForTs(value) {
 
 export function insertChangelogEntry(content, version, date, changes = []) {
   if (content.includes(`version: "${version}"`)) {
-    return { content, inserted: false };
+    return { content, inserted: false, reason: "exists" };
   }
 
   const marker = "export const APP_CHANGELOG: ChangelogEntry[] = [";
@@ -45,14 +45,18 @@ export function insertChangelogEntry(content, version, date, changes = []) {
     throw new Error("APP_CHANGELOG marker not found in changelog.ts");
   }
 
-  const items = changes.length > 0 ? changes : [CHANGELOG_PLACEHOLDER];
+  // マーカーの検査を先に済ませる: 空でも、更新履歴の形が壊れていることは失敗として気付く。
+  if (changes.length === 0) {
+    return { content, inserted: false, reason: "empty" };
+  }
+
   const insertAt = index + marker.length;
   const entry = `
   {
     version: "${version}",
     date: "${date}",
     changes: [
-${items.map((item) => `      "${escapeForTs(item)}",`).join("\n")}
+${changes.map((item) => `      "${escapeForTs(item)}",`).join("\n")}
     ],
   },`;
 
@@ -76,7 +80,7 @@ function main() {
 
   const changes = parseReleaseChangelog(process.env.RELEASE_CHANGELOG);
   const original = readFileSync(changelogPath, "utf8");
-  const { content, inserted } = insertChangelogEntry(
+  const { content, inserted, reason } = insertChangelogEntry(
     original,
     version,
     todayJst(),
@@ -84,18 +88,18 @@ function main() {
   );
 
   if (!inserted) {
-    console.log(`changelog.ts already has version ${version}; skipping.`);
+    console.log(
+      reason === "empty"
+        ? `No changes for v${version} (RELEASE_CHANGELOG is empty); not adding a changelog entry.`
+        : `changelog.ts already has version ${version}; skipping.`
+    );
     return;
   }
 
   writeFileSync(changelogPath, content, "utf8");
-  if (changes.length > 0) {
-    console.log(
-      `Added changelog entry for v${version} (${changes.length} change(s))`
-    );
-  } else {
-    console.log(`Added changelog stub for v${version}`);
-  }
+  console.log(
+    `Added changelog entry for v${version} (${changes.length} change(s))`
+  );
 }
 
 const isMain =
