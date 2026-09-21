@@ -26,7 +26,7 @@ from .signaly_notify import post_notification
 logger = logging.getLogger(__name__)
 
 LOGIN_WEBHOOK_URL = os.getenv("LOGIN_WEBHOOK_URL", "").strip()
-APP_NAME = "MyRoom"  # 通知タイトルと送信元に使うアプリ名。他アプリへ流用する場合はここだけ変更する
+APP_NAME = "kurashio"  # 通知タイトルと送信元に使うアプリ名。他アプリへ流用する場合はここだけ変更する
 
 
 def client_ip(request: Request) -> str:

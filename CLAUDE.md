@@ -349,24 +349,30 @@ Supabase は共有プロジェクトで、`signOut()` を引数なしで呼ぶ�
 `min >= max` のような組み合わせの不正はフロントで弾いてメッセージを出す——バックエンドに任せると
 「既定値へ戻る」という結果だけが返り、理由が画面に出ない。
 
-## アプリアイコン
+## アプリアイコン・ブランド画像
 
-**アイコンの正は `frontend/assets/app-icon-source.svg`。** ここを編集して
-`cd frontend && node scripts/generate-icons.mjs` を実行すると、`public/` の
-`icon-512.png` / `icon-192.png` / `apple-touch-icon.png` / `favicon.png` と
-`app/apple-icon.png` / `app/icon.png`、それに旧経路の入力である
-`assets/app-icon-source.png`（1024px）がまとめて書き出される。
+**表示名は `kurashio`（#447）。** 画面・manifest・通知・ログイン通知の `source` は kurashio だが、
+リポジトリ名・DB名・localStorage のキー（`myroom_*`）・イベント名（`myroom-*`）・`sw.js` の
+`CACHE_NAME`・コンポーネント名（`MyRoomDashboard`）は**内部識別子として `myroom` のまま残している。**
+キーを変えると保存済みの設定が読めなくなるので、名前を揃えるためだけに変えないこと。
 
-ラスタライズには **sharp** を使う。これは Next.js が連れてくる既存の依存なので、
-`npm ci` 済みなら追加インストールは要らない。
+**アイコンとブランド画像の正は `frontend/assets/` の2枚のPNG**（`kurashio-app-icon.png`・
+`kurashio-brand-source.png`。受け取った素材にSVGが無いため）。差し替えたら
+`cd frontend && node scripts/generate-icons.mjs` を実行すると、`public/kurashio-*.png` と
+`app/apple-icon.png` / `app/icon.png` がまとめて書き出される。ラスタライズには **sharp**
+（Next.js が連れてくる既存の依存）を使うので、`npm ci` 済みなら追加インストールは要らない。
 
-**`frontend/scripts/generate-icons.py` は旧経路。** PNG を入力に取る Pillow 版だが、
-**Pillow は `requirements.txt` にも `requirements-dev.txt` にも入っていない。**
-素の worktree では動かないので、アイコンを作り直すときは `.mjs` のほうを使う。
-
-**`manifest.json` の `icon-512.png` には `purpose: "maskable"` が付いている。**
-Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・半径 204.8 の円に収める。
-はみ出すと端が欠ける。
+- **アイコンのファイル名は変えるたびに付け替える。** iOS のホーム画面・ブラウザは同じURLの
+  アイコンをキャッシュし続けるため、中身だけ差し替えると旧アイコンが残る。`icon-192.png` から
+  `kurashio-icon-192.png` へ変えたのはこのため（`app/` の2つは Next.js がハッシュ付きURLにする）
+- **maskable は角をタイル色で塗った別ファイル**（`kurashio-icon-maskable-512.png`）。Android は
+  中央80%の円で切り抜くため、絵柄は中心から一辺の0.40以内に収める（今の絵は0.38）。
+  Apple Touch Icon も同じく塗りつぶし版（透明な角は iOS で黒くなる）
+- **ヘッダーのブランド画像は、元画像のタイルとロゴ文字だけを座標で切り出して並べ直している。**
+  キャッチコピーはヘッダーの高さでは読めないため使わない。元画像を差し替えたら
+  `BRAND_TILE`・`BRAND_WORDMARK` の座標を測り直すこと。白背景は色→透明で抜いている
+- **ダークテーマ用に、ロゴ文字だけ明るく塗った `kurashio-brand-dark.png` を別に持つ。**
+  元の文字は濃い紺で、ダークの背景では沈む。ヘッダーは `dark:hidden` / `dark:block` で出し分ける
 
 ## 本番DBのマイグレーション
 

@@ -208,7 +208,7 @@ async def lifespan(_app: FastAPI):
                 await task
 
 
-app = FastAPI(title="MyRoom API", lifespan=lifespan)
+app = FastAPI(title="kurashio API", lifespan=lifespan)
 
 # --- Models ---
 class SensorData(BaseModel):
