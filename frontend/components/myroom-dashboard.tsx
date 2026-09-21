@@ -136,8 +136,7 @@ import {
   getLocationName,
   isPredecessorDevice,
 } from "@/lib/device-inheritance";
-import { AuthError } from "@/lib/auth";
-import { supabase } from "@/lib/supabase-client";
+import { AuthError, signOutThisApp } from "@/lib/auth";
 import { resolveAuthGate, useAuthState } from "@/lib/use-auth";
 import { APP_VERSION } from "@/lib/app-version";
 import { formatUpdatedAt } from "@/lib/format-updated-at";
@@ -940,7 +939,7 @@ export function MyRoomDashboard() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
-    void supabase.auth.signOut();
+    void signOutThisApp();
   };
 
   const mergedDailyStatsByDevice = useMemo(
