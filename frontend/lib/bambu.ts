@@ -46,6 +46,20 @@ export interface BambuHmsEntry {
   severity: "fatal" | "serious" | "common" | "info" | null;
 }
 
+/** この造形で使うフィラメント（スライサーの予定値）。複数色なら `filaments` が2件以上 */
+export interface BambuJobFilament {
+  /** 造形1回ごとの識別子。在庫の使用量の記録（`job_key`）と突き合わせる */
+  jobKey: string;
+  name: string;
+  totalGrams: number;
+  filaments: {
+    slot: number | null;
+    material: string | null;
+    color: string | null;
+    usedGrams: number;
+  }[];
+}
+
 export interface BambuSnapshot {
   state: BambuState;
   rawState: string | null;
@@ -56,6 +70,8 @@ export interface BambuSnapshot {
     totalLayers: number | null;
     remainingMinutes: number | null;
     estimatedFinishAt: string | null;
+    /** 3mf から読んだこの造形の使用量（予定値・#454）。読めていないときは null／省略 */
+    filament?: BambuJobFilament | null;
   };
   nozzle: { temperature: number | null; target: number | null };
   bed: { temperature: number | null; target: number | null };
@@ -264,42 +280,4 @@ const SPEED_LABELS: Record<string, string> = {
 
 export function formatSpeedMode(mode: string | null): string | null {
   return mode ? (SPEED_LABELS[mode] ?? null) : null;
-}
-
-export interface BambuFilamentSlot {
-  tray: BambuTray;
-  /** いま印刷に使っているスロット（輪を付ける） */
-  active: boolean;
-}
-
-export interface BambuFilamentView {
-  source: "ams" | "external";
-  slots: BambuFilamentSlot[];
-}
-
-/**
- * フィラメントの表示。AMS Lite があればスロットを並べ、無ければ外付けスプール1つだけを出す
- * （AMS なしの構成では `ams.units` が空で、材料・色は `externalSpool` にしか入らない）。
- * どちらも無ければ null で、カードは節ごと出さない。AMS Lite は1ユニット4スロットで、
- * `tray_now` はそのスロット番号（0〜3）。
- */
-export function buildFilamentView(snapshot: BambuSnapshot): BambuFilamentView | null {
-  const { units, activeSource, activeSlot, externalSpool } = snapshot.ams;
-  const trays = units.flatMap((unit) => unit.slots);
-  if (trays.length > 0) {
-    return {
-      source: "ams",
-      slots: trays.map((tray) => ({
-        tray,
-        active: activeSource === "ams" && activeSlot != null && tray.slot === activeSlot,
-      })),
-    };
-  }
-  if (externalSpool) {
-    return {
-      source: "external",
-      slots: [{ tray: externalSpool, active: activeSource === "external" }],
-    };
-  }
-  return null;
 }

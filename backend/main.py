@@ -502,11 +502,15 @@ class BambuStatePayload(BaseModel):
     connected: bool
     last_message_at: Optional[str] = None
     report: Optional[Dict[str, Any]] = None
+    #: 収集がプリンターSDの3mfから読んだ、いまのジョブの使用量（#454）。読めていないときは省く
+    job_filament: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def report_is_not_oversized(self):
         if self.report is not None and len(json.dumps(self.report)) > bambu.MAX_REPORT_BYTES:
             raise ValueError("report is too large")
+        if self.job_filament is not None and len(json.dumps(self.job_filament)) > 20_000:
+            raise ValueError("job_filament is too large")
         return self
 
 class AirconData(BaseModel):
@@ -2026,6 +2030,34 @@ def _handle_bambu_events(events: List[Any]) -> None:
         logger.info("Bambu event: kind=%s title=%s", event.kind, event.title)
 
 
+def _apply_bambu_filament_usage(usage: Dict[str, Any], db: Session) -> str:
+    """造形の完了・停止で検出した使用量を、使用中のスプールへ引く（#454）。
+
+    **状態の保存はもう済んでいるので、ここで失敗しても収集への応答は成功のまま返す**
+    （収集は再送するだけで、在庫の失敗を状態の失敗にすると再送のたびに詰まる）。
+    引けなかったときは手入力（既存の使用量の記録）で直せる。
+    """
+    try:
+        result = filament.record_auto_usage(
+            usage["grams"],
+            usage["job_key"],
+            usage["name"],
+            db,
+            estimated=usage["estimated"],
+        )
+    except Exception:
+        logger.exception("Filament: 造形の使用量を記録できませんでした job=%s", usage["name"])
+        return "error"
+    logger.info(
+        "Filament: 造形の使用量 job=%s grams=%s estimated=%s → %s",
+        usage["name"],
+        usage["grams"],
+        usage["estimated"],
+        result,
+    )
+    return result
+
+
 @app.post("/api/bambu/state")
 def create_bambu_state(
     payload: BambuStatePayload,
@@ -2039,18 +2071,22 @@ def create_bambu_state(
     扱いで、付けるかどうかは収集経路全体でまとめて判断する（#249）。
     """
     try:
-        _, events = bambu.record_state(
+        _, events, usage = bambu.record_state(
             connected=payload.connected,
             report=payload.report,
             last_message_at=payload.last_message_at,
             db=db,
+            job_filament=payload.job_filament,
         )
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     _handle_bambu_events(events)
-    return {"status": "ok", "events": [event.kind for event in events]}
+    response: Dict[str, Any] = {"status": "ok", "events": [event.kind for event in events]}
+    if usage is not None:
+        response["filament"] = _apply_bambu_filament_usage(usage, db)
+    return response
 
 
 @app.post("/api/bills")

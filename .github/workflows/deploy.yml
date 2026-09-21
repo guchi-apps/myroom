@@ -125,7 +125,17 @@ jobs:
 
       - name: Deploy with rsync
         run: |
-          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${USERNAME}@${HOST}" "mkdir -p ${TARGET_DIR}"
+          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${USERNAME}@${HOST}" "mkdir -p ${TARGET_DIR}/frontend/out"
+
+          # 先に JS/CSS チャンクだけを送る（#450）。rsync は同じ階層のファイルを
+          # サブディレクトリの中身より先に送るため、1回で送ると out/index.html と
+          # out/version.json が out/_next/ より先に届く。その数秒に開くと、新しいHTML
+          # （または更新を検知した自動リロード）がまだ無いチャンクを読みに行き、
+          # 「Application error」の白い画面になる。古いチャンクは消さないので、
+          # 先に置いても開いている古い画面は壊れない
+          rsync -rlDz \
+            -e "ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no" \
+            ./frontend/out/_next/ "${USERNAME}@${HOST}:${TARGET_DIR}/frontend/out/_next/"
 
           rsync -rlDvz \
             -e "ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no" \

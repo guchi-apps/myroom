@@ -83,14 +83,25 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
+    // オフラインのときに出す控え。**成功した応答だけを、そのページのURLで残す**（#450）。
+    // 以前はどのページでも "/" へ上書きし、再起動中の 502/503 まで残していたため、
+    // 控えから出るのが別のページのHTMLやエラーページになることがあった
+    const cacheKey = url.pathname;
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          void caches.open(CACHE_NAME).then((cache) => cache.put("/", copy));
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, copy));
+          }
           return response;
         })
-        .catch(async () => (await caches.match("/")) ?? (await caches.match("/index.html")))
+        .catch(
+          async () =>
+            (await caches.match(cacheKey)) ??
+            (await caches.match("/")) ??
+            (await caches.match("/index.html"))
+        )
     );
     return;
   }

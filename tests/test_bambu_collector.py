@@ -369,3 +369,211 @@ class TestPushallInterval:
     def test_minimum_interval_is_at_least_five_minutes(self):
         assert bambu.PUSHALL_MIN_INTERVAL >= 300
         assert bambu.PUSHALL_INTERVAL >= bambu.PUSHALL_MIN_INTERVAL
+
+
+# --- 3mf から読む造形の使用量（#454）-----------------------------------------------
+
+import io
+import zipfile
+
+# 実機（A1 mini）の 3mf の `Metadata/slice_info.config`。`error_code =` の前の空白も実物のまま
+SLICE_INFO = """<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <header>
+    <header_item key="X-BBL-Client-Type" value="slicer"/>
+  </header>
+  <plate>
+    <metadata key="index" value="1"/>
+    <metadata key="weight" value="24.41"/>
+    <object identify_id="78" name="ボディ1" skipped="false" />
+    <filament id="1" tray_info_idx="GFL99" type="PLA" color="#BCBCBC" used_m="8.18" used_g="24.41" group_id="0" nozzle_diameter="0.40" volume_type="Standard" used_for_object="true" used_for_support="false"/>
+    <warning msg="bed_temperature_too_high_than_filament" level="3" error_code ="1000C001"  />
+  </plate>
+</config>
+"""
+
+
+def _make_3mf(slice_info=SLICE_INFO):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("Metadata/plate_1.json", "{}")
+        if slice_info is not None:
+            archive.writestr("Metadata/slice_info.config", slice_info)
+    return buffer.getvalue()
+
+
+class TestSliceInfo:
+    def test_reads_used_grams_per_filament(self):
+        assert bambu.parse_slice_info(SLICE_INFO) == [
+            {"id": 1, "type": "PLA", "color": "#BCBCBC", "used_g": 24.41}
+        ]
+
+    def test_reads_it_out_of_the_3mf_archive(self):
+        assert bambu.read_filaments_from_3mf(_make_3mf())[0]["used_g"] == 24.41
+
+    def test_several_filaments_are_all_returned(self):
+        xml = SLICE_INFO.replace(
+            "</plate>", '<filament id="2" type="PETG" color="#FF0000" used_g="3.5"/></plate>'
+        )
+
+        assert [item["used_g"] for item in bambu.parse_slice_info(xml)] == [24.41, 3.5]
+
+    def test_several_plates_cannot_be_told_apart(self):
+        xml = SLICE_INFO.replace("</config>", SLICE_INFO.split("<config>")[1])
+
+        assert bambu.parse_slice_info(xml) is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "not xml",
+            "<config><plate></plate></config>",
+            '<config><plate><filament id="1" used_g="0"/></plate></config>',
+            '<config><plate><filament id="1" used_g="abc"/></plate></config>',
+            '<config><plate><filament id="1" used_g="nan"/></plate></config>',
+        ],
+    )
+    def test_unusable_content_returns_none(self, text):
+        assert bambu.parse_slice_info(text) is None
+
+    def test_broken_or_incomplete_archives_return_none(self):
+        assert bambu.read_filaments_from_3mf(b"not a zip") is None
+        assert bambu.read_filaments_from_3mf(_make_3mf(slice_info=None)) is None
+
+
+class TestThreemfPaths:
+    def test_cache_first_then_root_with_both_naming_styles(self):
+        assert bambu.threemf_paths("50x110 ケース.3mf") == [
+            "/cache/50x110 ケース.3mf",
+            "/cache/50x110 ケース.gcode.3mf",
+            "/50x110 ケース.3mf",
+            "/50x110 ケース.gcode.3mf",
+        ]
+
+    def test_name_without_extension_tries_both_extensions(self):
+        assert "/箸立て.gcode.3mf" in bambu.threemf_paths("箸立て")
+        assert "/cache/箸立て.3mf" in bambu.threemf_paths("箸立て")
+
+    @pytest.mark.parametrize(
+        "name", ["", ".hidden.3mf", "../etc/passwd", "a/b.3mf", "a\\b.3mf", "a\r\nDELE x", "a\x00b"]
+    )
+    def test_names_that_are_not_plain_file_names_are_refused(self, name):
+        """プリンターから届いた文字列を、そのままFTPのコマンドへ入れない。"""
+        assert bambu.threemf_paths(name) == []
+
+
+class TestJobTracking:
+    FILAMENTS = [{"id": 1, "type": "PLA", "color": "#BCBCBC", "used_g": 24.41}]
+
+    def _monitor(self):
+        clock = {"now": 1000.0}
+        monitor = bambu.BambuMonitor(now=lambda: clock["now"])
+        monitor.clock = clock
+        return monitor
+
+    def _running(self, monitor, name="benchy", **fields):
+        monitor.handle_message(
+            _message(**_full_report(gcode_state="RUNNING", subtask_name=name, **fields))
+        )
+
+    def test_starting_a_job_asks_for_its_3mf_once(self):
+        monitor = self._monitor()
+        self._running(monitor)
+
+        request = monitor.take_fetch_request()
+
+        assert request["name"] == "benchy"
+        assert request["key"].startswith("benchy@")
+        assert monitor.take_fetch_request() is None  # 読み込み中は重ねて頼まない
+
+    def test_idle_printer_asks_for_nothing(self):
+        monitor = self._monitor()
+        monitor.handle_message(_message(**_full_report()))
+
+        assert monitor.take_fetch_request() is None
+
+    def test_a_job_without_a_name_yet_is_not_started(self):
+        """接続直後の差分には状態だけが来て、名前が無いことがある。"""
+        monitor = self._monitor()
+        monitor.handle_message(_message(**_full_report(gcode_state="RUNNING", subtask_name="")))
+
+        assert monitor.take_fetch_request() is None
+
+    def test_result_is_sent_with_the_payload(self):
+        monitor = self._monitor()
+        self._running(monitor)
+        request = monitor.take_fetch_request()
+
+        assert monitor.finish_fetch(request["key"], self.FILAMENTS) is True
+
+        assert monitor.snapshot(True)["job_filament"] == {
+            "job_key": request["key"],
+            "name": "benchy",
+            "filaments": self.FILAMENTS,
+        }
+        assert monitor.take_fetch_request() is None  # 読めたら取りに行かない
+
+    def test_payload_omits_it_until_read(self):
+        monitor = self._monitor()
+        self._running(monitor)
+
+        assert "job_filament" not in monitor.snapshot(True)
+
+    def test_a_new_result_counts_as_a_change_to_send(self):
+        monitor = self._monitor()
+        self._running(monitor)
+        monitor.mark_sent()
+        assert monitor.has_change() is False
+
+        monitor.finish_fetch(monitor.take_fetch_request()["key"], self.FILAMENTS)
+
+        assert monitor.has_change() is True
+        monitor.mark_sent()
+        assert monitor.has_change() is False
+
+    def test_result_survives_the_end_of_the_print(self):
+        """完了の瞬間に MyRoom へ渡すのに要るので、造形が終わっても消さない。"""
+        monitor = self._monitor()
+        self._running(monitor)
+        monitor.finish_fetch(monitor.take_fetch_request()["key"], self.FILAMENTS)
+
+        monitor.handle_message(
+            _message(**_full_report(gcode_state="FINISH", subtask_name="benchy"))
+        )
+
+        assert monitor.snapshot(True)["job_filament"]["name"] == "benchy"
+
+    def test_next_job_starts_over_even_with_the_same_file(self):
+        monitor = self._monitor()
+        self._running(monitor)
+        first = monitor.take_fetch_request()
+        monitor.finish_fetch(first["key"], self.FILAMENTS)
+        monitor.handle_message(
+            _message(**_full_report(gcode_state="FINISH", subtask_name="benchy"))
+        )
+        monitor.clock["now"] += 3600
+
+        self._running(monitor)
+        second = monitor.take_fetch_request()
+
+        assert second is not None
+        assert "job_filament" not in monitor.snapshot(True)
+        assert monitor.finish_fetch(first["key"], self.FILAMENTS) is False  # 古い結果は捨てる
+
+    def test_failures_are_retried_with_a_pause_then_given_up(self, caplog):
+        monitor = self._monitor()
+        self._running(monitor)
+
+        for delay in bambu.FETCH_RETRY_DELAYS:
+            request = monitor.take_fetch_request()
+            assert request is not None
+            assert monitor.finish_fetch(request["key"], None) is False
+            assert monitor.take_fetch_request() is None  # 間隔が空くまで待つ
+            monitor.clock["now"] += delay
+        request = monitor.take_fetch_request()
+        with caplog.at_level(logging.WARNING, logger="bambu_to_myroom"):
+            monitor.finish_fetch(request["key"], None)
+
+        monitor.clock["now"] += 10_000
+        assert monitor.take_fetch_request() is None
+        assert any("自動では引かれません" in record.getMessage() for record in caplog.records)

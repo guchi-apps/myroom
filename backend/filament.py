@@ -15,8 +15,13 @@ Notion では「現在の全体重量 − 空スプールの重さ」を手で�
   入れ忘れて登録しても、その分は計量の値にすでに含まれているので数えない
 - 空スプールの重さが未設定なら計量は受けない（残量を出せないため）
 
-MQTT（`backend/bambu.py`）には使用グラム数が無いので、使用量は印刷のあとに人が1回入れる。
-スライサーが出す「フィラメント使用量」をそのまま入れればよい。
+MQTT（`backend/bambu.py`）には使用グラム数が無い。使用量は次の2経路で入る。
+
+- **自動（#454）**: サブPCの収集がプリンターSDの3mf（`slice_info.config` の `used_g`）から読み、
+  造形の完了・停止の遷移で `record_auto_usage()` が**使用中のスプール**へ記録する。完了は予定値そのまま
+  （`source: "auto"`）、停止は進捗率で按分した概算（`"auto_estimate"`）。`job_key` で二重に引かない
+- **手入力**: スライサーが出す「フィラメント使用量」を印刷のあとに人が1回入れる（`"manual"`）。
+  自動で入らなかった造形（3mfが読めない・使用中のスプールが無い・複数色）の直し方もこれ
 
 保存先
 ------
@@ -63,6 +68,9 @@ SETTING_KEY = "filament_spools"
 
 #: Notion の「素材」と同じ選択肢。知らない値は「その他」へ倒す
 MATERIALS = ("PLA", "PETG", "ABS", "TPU", "その他")
+
+#: 使用量の記録の出どころ。`auto` は造形の完了、`auto_estimate` は途中停止の概算（#454）
+USAGE_SOURCES = ("manual", "auto", "auto_estimate")
 
 #: 1本あたりの既定の中身（1kgスプール）
 DEFAULT_NET_G = 1000.0
@@ -205,6 +213,9 @@ def _normalize_usages(raw: Any) -> List[Dict[str, Any]]:
                 "grams": grams,
                 "note": _clean_text(item.get("note"), MAX_NOTE_LENGTH),
                 "recorded_at": _parse_recorded_at(item.get("recorded_at")),
+                # 古い記録には無い。無ければ手入力として読む（移行は要らない）
+                "source": item.get("source") if item.get("source") in USAGE_SOURCES else "manual",
+                "job_key": _clean_text(item.get("job_key"), 200) or None,
             }
         )
     entries.sort(key=lambda entry: (entry["date"], entry["recorded_at"]))
@@ -696,26 +707,106 @@ def record_usage(
 
     def mutate(document: Dict[str, Any]) -> None:
         spool = _find(document, spool_id)
-        entry = {
-            "id": _new_id("u"),
-            "date": used_on,
-            "grams": used,
-            "note": _clean_text(note, MAX_NOTE_LENGTH),
-            "recorded_at": now.isoformat(timespec="seconds"),
-        }
-        usages = [*spool["usages"], entry]
-        if len(usages) > MAX_USAGES:
-            # 計量に含まれていて残量に効かない古い記録から落とす。効く記録は落とせない
-            weighing = latest_weighing(spool)
-            droppable = [item for item in usages if not is_counted(item, weighing)]
-            overflow = len(usages) - MAX_USAGES
-            if len(droppable) < overflow:
-                raise FilamentError("使用量の記録が多すぎます。いちど計量して基準を取り直してください")
-            drop_ids = {item["id"] for item in droppable[:overflow]}
-            usages = [item for item in usages if item["id"] not in drop_ids]
-        spool["usages"] = usages
+        _append_usage(spool, _usage_entry(used, used_on, note, now))
 
     return _update(db, mutate)
+
+
+def _usage_entry(
+    grams: float,
+    date: str,
+    note: Optional[str],
+    now: datetime.datetime,
+    *,
+    source: str = "manual",
+    job_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": _new_id("u"),
+        "date": date,
+        "grams": grams,
+        "note": _clean_text(note, MAX_NOTE_LENGTH),
+        "recorded_at": now.isoformat(timespec="seconds"),
+        "source": source,
+        "job_key": job_key,
+    }
+
+
+def _append_usage(spool: Dict[str, Any], entry: Dict[str, Any]) -> None:
+    usages = [*spool["usages"], entry]
+    if len(usages) > MAX_USAGES:
+        # 計量に含まれていて残量に効かない古い記録から落とす。効く記録は落とせない
+        weighing = latest_weighing(spool)
+        droppable = [item for item in usages if not is_counted(item, weighing)]
+        overflow = len(usages) - MAX_USAGES
+        if len(droppable) < overflow:
+            raise FilamentError("使用量の記録が多すぎます。いちど計量して基準を取り直してください")
+        drop_ids = {item["id"] for item in droppable[:overflow]}
+        usages = [item for item in usages if item["id"] not in drop_ids]
+    spool["usages"] = usages
+
+
+def record_auto_usage(
+    grams: Any,
+    job_key: str,
+    job_name: Optional[str],
+    db: Optional[Session] = None,
+    *,
+    estimated: bool = False,
+    today: Optional[datetime.date] = None,
+    now: Optional[datetime.datetime] = None,
+) -> str:
+    """造形の完了・停止で、使用中のスプールへ使用量を記録する（#454）。
+
+    3Dプリンターの状態を受けたバックエンド（`bambu.detect_filament_usage()`）から呼ばれる。
+    画面の操作ではないので、記録できない理由は例外ではなく戻り値で返す（呼び出し側は状態の保存を
+    止めない）。戻り値:
+
+    - `"recorded"` — 記録した
+    - `"duplicate"` — 同じ `job_key` の記録がすでにある（どのスプールでも）。二重に引かない
+    - `"no_active_spool"` — 使用中のスプールが無い。引く先が決まらないので何もしない
+    - `"too_many_usages"` — 使用量の記録が上限で、効いている記録を落とせない
+    - `"invalid"` — 使用量が範囲外
+
+    **使用中のスプールは書き込みの排他区間の中で決める。** 読んでから選ぶと、そのあいだに
+    使用中が切り替わって別のスプールから引く。
+    """
+    today = today or get_today_jst()
+    now = now or get_now_jst()
+    used = _number(grams, 0.1, MAX_USAGE_G)
+    key = _clean_text(job_key, 200)
+    if used is None or not key:
+        return "invalid"
+
+    outcome = "recorded"
+
+    def mutate(document: Dict[str, Any]) -> None:
+        nonlocal outcome
+        if any(
+            usage.get("job_key") == key for spool in document["spools"] for usage in spool["usages"]
+        ):
+            outcome = "duplicate"
+            return
+        active_id = document["active_id"]
+        if active_id is None:
+            outcome = "no_active_spool"
+            return
+        spool = _find(document, active_id)
+        entry = _usage_entry(
+            used,
+            today.isoformat(),
+            job_name,
+            now,
+            source="auto_estimate" if estimated else "auto",
+            job_key=key,
+        )
+        try:
+            _append_usage(spool, entry)
+        except FilamentError:
+            outcome = "too_many_usages"
+
+    _update(db, mutate)
+    return outcome
 
 
 def remove_usage(spool_id: str, usage_id: str, db: Optional[Session] = None) -> Dict[str, Any]:

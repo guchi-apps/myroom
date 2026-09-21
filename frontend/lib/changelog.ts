@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.22.0",
+    date: "2026-09-21",
+    changes: [
+      "3Dプリンターの印刷が終わると、使った分のフィラメントを自動で在庫から差し引くようになりました。差し引いた量や概算での記録は履歴から確認・取り消しできます。また、デプロイ直後に画面が真っ白になることがあった不具合を修正し、ヘッダーのデザインを見やすく整えました。",
+    ],
+  },
+  {
     version: "4.21.0",
     date: "2026-09-21",
     changes: [

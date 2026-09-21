@@ -184,21 +184,22 @@ describe("PrinterCard", () => {
     expect(render(response(), { loading: true })).not.toContain("印刷中");
   });
 
-  it("AMS Lite のスロットは材料・残量・使用中の印を出し、空きは「空」にする", () => {
-    const tray = (slot: number, material: string, remain: number | null, empty = false) => ({
+  // 自動で取れる材料・色は実物のスプールと合わないことが多いので、カードには出さない（#453）
+  it("プリンターから取れる材料・色（AMS Lite・外付けスプール）は出さない", () => {
+    const tray = (slot: number, material: string) => ({
       slot,
-      empty,
-      material: empty ? null : material,
+      empty: false,
+      material,
       brand: null,
-      color: empty ? null : "#2B2B2B",
-      remainPercent: remain,
+      color: "#2B2B2B",
+      remainPercent: 62,
     });
-    const html = render(
+    const withAms = render(
       response({
         printer: snapshot({
           ams: {
             connected: true,
-            units: [{ id: 0, humidity: 4, slots: [tray(0, "PLA", 84), tray(1, "PETG", 62), tray(2, "", null, true)] }],
+            units: [{ id: 0, humidity: 4, slots: [tray(0, "PLA"), tray(1, "PETG")] }],
             activeSource: "ams",
             activeSlot: 1,
             externalSpool: null,
@@ -206,16 +207,7 @@ describe("PrinterCard", () => {
         }),
       })
     );
-    expect(html).toContain("フィラメント（AMS Lite）");
-    expect(html).toContain("PETG");
-    expect(html).toContain("62%");
-    expect(html).toContain("輪＝使用中");
-    expect(html).toContain("空");
-  });
-
-  // 実機は AMS Lite なしの構成。外付けスプールの残量は読めない（null）
-  it("AMS が無いときは外付けスプールだけを出す", () => {
-    const html = render(
+    const withExternal = render(
       response({
         printer: snapshot({
           ams: {
@@ -223,21 +215,19 @@ describe("PrinterCard", () => {
             units: [],
             activeSource: "external",
             activeSlot: null,
-            externalSpool: {
-              slot: 254,
-              empty: false,
-              material: "PLA",
-              brand: null,
-              color: "#BCBCBC",
-              remainPercent: null,
-            },
+            externalSpool: tray(254, "PLA"),
           },
         }),
       })
     );
-    expect(html).toContain("外付けスプール");
-    expect(html).toContain("PLA");
-    expect(html).not.toContain("AMS Lite");
+    for (const html of [withAms, withExternal]) {
+      expect(html).not.toContain("フィラメント");
+      expect(html).not.toContain("外付けスプール");
+      expect(html).not.toContain("PETG");
+      // 温度と更新時刻は今までどおり出す
+      expect(html).toContain("ノズル");
+      expect(html).toContain("13:28 時点");
+    }
   });
 
   describe("フィラメント残量（#445）", () => {
@@ -298,5 +288,63 @@ describe("PrinterCard", () => {
       expect(html).toContain("使用中のスプールが選ばれていません");
       expect(html).toContain("在庫を開く");
     });
+  });
+});
+
+
+describe("この造形の使用量（#454）", () => {
+  const jobKey = "cable-clip_v3@2026-09-21T12:00:00+09:00";
+  const withFilament = (state: BambuSnapshot["state"] = "printing") =>
+    snapshot({
+      state,
+      job: {
+        ...snapshot().job,
+        filament: {
+          jobKey,
+          name: "cable-clip_v3",
+          totalGrams: 24.4,
+          filaments: [{ slot: 1, material: "PLA", color: "#BCBCBC", usedGrams: 24.41 }],
+        },
+      },
+    });
+
+  it("印刷中は、完了したらどのスプールから引くかを予告する", () => {
+    const html = render(response({ printer: withFilament() }), {
+      filament: makePayload(),
+      onOpenFilament: () => {},
+    });
+    expect(html).toContain("この造形で使う量（予定）");
+    expect(html).toContain("完了すると「ELEGOO PLA (ホワイト)」から差し引きます");
+    expect(html).toContain("24.4");
+  });
+
+  it("完了後は、在庫に記録された使用量を「差し引きました」として出す", () => {
+    const base = makeSpool();
+    const spool = makeSpool({
+      usages: [
+        {
+          id: "ua",
+          date: "2026-09-21",
+          grams: 24.4,
+          note: "cable-clip_v3",
+          recorded_at: "2026-09-21T13:30:00+09:00",
+          counted: true,
+          source: "auto",
+          job_key: jobKey,
+        },
+        ...base.usages,
+      ],
+    });
+    const html = render(response({ printer: withFilament("finished") }), {
+      filament: makePayload([spool]),
+      onOpenFilament: () => {},
+    });
+    expect(html).toContain("使用量を差し引きました");
+    expect(html).toContain("−24.4");
+  });
+
+  it("使用量が読めていない造形には、この行を出さない", () => {
+    const html = render(response(), { filament: makePayload(), onOpenFilament: () => {} });
+    expect(html).not.toContain("この造形で使う量");
   });
 });

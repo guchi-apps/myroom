@@ -20,6 +20,14 @@ DB_MOCK のときは `data/bambu_state.json` へ書く（`cleaning.py` と同じ
 - どちらも `printer`（現在値）は `null` にし、最後に受け取った値は `lastKnown` へ分ける。
   呼ぶ側が `online` を見忘れても、古い温度や進捗率を「いま」の値として読めない
 
+造形の使用量（#454）
+--------------------
+MQTT の `report` にグラム数は無い。サブPCの収集がプリンターSDの3mf（`slice_info.config` の `used_g`）を
+FTPS で読み、`job_filament` として一緒に送ってくる（`normalize_job_filament()`）。**スライサーの予定値。**
+造形が終わった（止まった）遷移のとき、`detect_filament_usage()` が在庫から引く量を返し、
+`main.py` が `filament.record_auto_usage()` へ渡す（完了は予定値そのまま、停止は進捗率で按分した概算。
+使うフィラメントが1色のときだけ）。
+
 完了・停止・エラーの遷移は `detect_transition_events()` が `NotificationEvent` として組み立てる。
 **この段階ではPush配信までは行わない**（AIDE側 guchi-apps/aide#378 との役割分担が決まってから
 `notify_events.dispatch_push_event()` へ渡す）。
@@ -31,6 +39,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -53,6 +62,12 @@ DEFAULT_STALE_SECONDS = 180
 
 #: 受信する生の report の大きさの上限。実機の全状態は数KBで、桁違いに大きければ形が変わっている
 MAX_REPORT_BYTES = 200_000
+
+#: 収集が3mfから読んだ使用量（`job_filament`）の上限。1本のスプール（`filament.MAX_USAGE_G`）を
+#: 超える値は桁の読み違いか改ざんとして捨てる
+MAX_JOB_FILAMENT_G = 5000.0
+MAX_JOB_FILAMENTS = 16
+MAX_JOB_KEY_LENGTH = 200
 
 #: `gcode_state` → 画面向けの状態。**知らない値は "unknown" に倒し、警告を1回だけ出す**
 #: （ファームウェア更新で状態が増えたときに気付くため）
@@ -268,6 +283,56 @@ def _normalize_ams(raw_ams: Any, raw_external: Any) -> Dict[str, Any]:
     }
 
 
+def _grams(value: Any) -> Optional[float]:
+    number = _number(value)
+    if number is None or number <= 0 or number > MAX_JOB_FILAMENT_G:
+        return None
+    return round(number, 2)
+
+
+def normalize_job_filament(raw: Any, job_name: Optional[str]) -> Optional[Dict[str, Any]]:
+    """収集が3mfの `slice_info.config` から読んだ、この造形の使用量（#454）。
+
+    MQTT の `report` にグラム数は無いので、サブPCの収集がプリンターSD（`/cache/<subtask_name>`）を
+    FTPS で読んで `job_filament` として一緒に送ってくる。**スライサーの予定値で、実測ではない。**
+
+    - `job_key` は造形1回ごとの識別子（同じファイルの再印刷と区別する）。使用量の二重記録を防ぐ
+    - **いま印刷中のジョブ名（`subtask_name`）と一致しないものは捨てる。** 前のジョブの値を
+      次のジョブの使用量として見せないため
+    """
+    if not isinstance(raw, dict):
+        return None
+    job_key = _text(raw.get("job_key"))
+    name = _text(raw.get("name"))
+    if job_key is None or len(job_key) > MAX_JOB_KEY_LENGTH or name is None:
+        return None
+    if job_name is not None and name != job_name:
+        return None
+
+    filaments: List[Dict[str, Any]] = []
+    for item in (raw.get("filaments") or [])[:MAX_JOB_FILAMENTS]:
+        if not isinstance(item, dict):
+            continue
+        used = _grams(item.get("used_g"))
+        if used is None:
+            continue
+        filaments.append(
+            {
+                "slot": _int(item.get("id")),
+                "material": _text(item.get("type")),
+                # 3mf の色は `#BCBCBC`。MQTT の `tray_color`（`BCBCBCFF`）と同じ関数で読むため `#` を外す
+                "color": _hex_color((_text(item.get("color")) or "").lstrip("#")),
+                "usedGrams": used,
+            }
+        )
+    if not filaments:
+        return None
+    total = round(sum(item["usedGrams"] for item in filaments), 1)
+    if total <= 0 or total > MAX_JOB_FILAMENT_G:
+        return None
+    return {"jobKey": job_key, "name": name, "totalGrams": total, "filaments": filaments}
+
+
 # --- 正規化 -------------------------------------------------------------------
 
 
@@ -276,13 +341,17 @@ def missing_expected_keys(report: Dict[str, Any]) -> List[str]:
 
 
 def build_snapshot(
-    report: Dict[str, Any], observed_at: datetime.datetime
+    report: Dict[str, Any],
+    observed_at: datetime.datetime,
+    job_filament: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """生の `print`（収集側でマージ済みの全状態）を、画面・AIDE向けの形へ正規化する。
 
     `observed_at` はプリンターから最後にメッセージを受けた時刻。残り時間からの
     終了予測はこれを起点にする（受信のたびに動く時刻を使うと、変化の無い再送のたびに
     終了予測が後ろへずれる）。
+
+    `job_filament` は収集が3mfから読んだ使用量（`normalize_job_filament()` を参照）。
     """
     raw_state = _text(report.get("gcode_state"))
     state = STATE_MAP.get(raw_state or "", "unknown")
@@ -312,17 +381,19 @@ def build_snapshot(
     percent = _int(report.get("mc_percent"))
     print_error_raw = _int(report.get("print_error"))
     speed_level = _int(report.get("spd_lvl"))
+    job_name = _text(report.get("subtask_name")) or _text(report.get("gcode_file"))
 
     return {
         "state": state,
         "rawState": raw_state,
         "job": {
-            "name": _text(report.get("subtask_name")) or _text(report.get("gcode_file")),
+            "name": job_name,
             "progressPercent": percent if percent is not None and 0 <= percent <= 100 else None,
             "layer": _int(report.get("layer_num")),
             "totalLayers": _int(report.get("total_layer_num")),
             "remainingMinutes": remaining_minutes,
             "estimatedFinishAt": _iso(finish_at),
+            "filament": normalize_job_filament(job_filament, job_name),
         },
         "nozzle": {
             "temperature": _temperature(report.get("nozzle_temper")),
@@ -423,6 +494,51 @@ def detect_transition_events(
     return events
 
 
+def detect_filament_usage(
+    previous: Optional[Dict[str, Any]], current: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """造形が終わった（止まった）遷移のときだけ、在庫から引く使用量を返す（#454）。
+
+    - **完了（FINISH）は3mfの予定値をそのまま**返す。
+    - **停止（FAILED・中断も含む）は進捗率で按分した概算**（`estimated: true`）。フィラメントは
+      層ごとに均等には使われないので目安でしかなく、記録には「概算」の印を付けて取り消せるようにする
+    - **使うフィラメントが1色のときだけ。** 複数色（AMS）は「どのスプールから何g」かを決められない
+    - 前回が無い・前回も終わっていた場合は何も返さない（`detect_transition_events` と同じ理由で、
+      再開直後に終わった造形を「いま終わった」と誤検出しない）
+    """
+    if previous is None:
+        return None
+    if previous.get("state") not in ACTIVE_STATES:
+        return None
+    after = current.get("state")
+    if after not in ("finished", "failed"):
+        return None
+
+    job = current.get("job") or {}
+    filament = job.get("filament")
+    if not filament or len(filament.get("filaments") or []) != 1:
+        return None
+
+    total = filament["totalGrams"]
+    if after == "finished":
+        grams, estimated, percent = total, False, 100
+    else:
+        percent = job.get("progressPercent")
+        if percent is None or percent <= 0:
+            return None
+        grams, estimated = round(total * min(percent, 100) / 100, 1), True
+    if grams < 0.1:
+        return None
+    return {
+        "job_key": filament["jobKey"],
+        # 在庫の履歴のメモに使う。`benchy.gcode.3mf` ではなく `benchy` と読めるようにする
+        "name": re.sub(r"(\.gcode)?\.3mf$", "", filament["name"], flags=re.IGNORECASE) or filament["name"],
+        "grams": grams,
+        "estimated": estimated,
+        "percent": percent,
+    }
+
+
 # --- 保存 ---------------------------------------------------------------------
 
 
@@ -472,8 +588,9 @@ def record_state(
     last_message_at: Optional[str],
     db: Optional[Session] = None,
     now: Optional[datetime.datetime] = None,
-) -> Tuple[Dict[str, Any], List[NotificationEvent]]:
-    """収集からの送信を保存し、検出した遷移のイベントを返す。
+    job_filament: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], List[NotificationEvent], Optional[Dict[str, Any]]]:
+    """収集からの送信を保存し、検出した遷移のイベントと、在庫から引く使用量を返す。
 
     `report` が無い（プリンターに繋がっていない）ときは、保存済みの状態を残したまま
     接続状態と受信時刻だけを更新する。これが `lastKnown` の元になる。
@@ -484,8 +601,9 @@ def record_state(
     message_at = _parse_iso(last_message_at) or now
 
     events: List[NotificationEvent] = []
+    usage: Optional[Dict[str, Any]] = None
     if report is not None:
-        snapshot = build_snapshot(report, message_at)
+        snapshot = build_snapshot(report, message_at, job_filament)
         # 収集が止まっていた間の古い状態とは比べない（再開直後に完了済みを誤検出しない）
         previous_received = _parse_iso(previous.get("received_at")) if previous else None
         previous_fresh = (
@@ -494,6 +612,7 @@ def record_state(
         )
         if previous_fresh:
             events = detect_transition_events(previous_snapshot, snapshot, now)
+            usage = detect_filament_usage(previous_snapshot, snapshot)
     else:
         snapshot = previous_snapshot
 
@@ -512,7 +631,7 @@ def record_state(
         )
     for event in events:
         logger.info("Bambu: 状態遷移を検出しました kind=%s job=%s", event.kind, event.body)
-    return record, events
+    return record, events, usage
 
 
 # --- 応答 ---------------------------------------------------------------------
