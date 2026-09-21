@@ -34,6 +34,7 @@ import {
   type UiSettings,
   type UtilityBillSummary,
 } from "@/lib/types";
+import type { BambuPrinterResponse } from "@/lib/bambu";
 import type { CleaningSchedule, CleaningTaskInput } from "@/lib/cleaning";
 import type { GarbageSchedule } from "@/lib/garbage";
 import type {
@@ -557,6 +558,14 @@ export async function notifyLogin(): Promise<void> {
 
 export async function fetchGarbageSchedule(): Promise<GarbageSchedule> {
   return fetchJson<GarbageSchedule>("/api/garbage");
+}
+
+/**
+ * 3Dプリンターカード用（#436）。現在値は `online` のときだけ `printer` に入り、
+ * 収集停止・接続なしのときは `lastKnown` に分かれて返る。
+ */
+export async function fetchBambuPrinter(): Promise<BambuPrinterResponse> {
+  return fetchJson<BambuPrinterResponse>("/api/bambu/printer");
 }
 
 /** 掃除カード用。場所ごとの次にやる日まで計算済みで返る */

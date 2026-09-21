@@ -63,6 +63,11 @@
    */
   --bill-color: #2f9e8f;
   --bill-surface: rgba(47, 158, 143, 0.13);
+  /*
+   * 3Dプリンター（#436）。温度の青・湿度の緑・気圧の紫・アンバー2つ・料金のティールの
+   * どれとも重ならない色相のローズ。印刷中の進捗バーと状態の点にだけ使う
+   */
+  --printer-color: #c8446a;
   --chart-grid: rgba(0, 0, 0, 0.05);
   --chart-line: rgba(0, 0, 0, 0.1);
 }
@@ -91,6 +96,7 @@
   --remote-color: #f0b556;
   --bill-color: #43b8a7;
   --bill-surface: rgba(67, 184, 167, 0.2);
+  --printer-color: #ef86a3;
   --chart-grid: rgba(255, 255, 255, 0.05);
   --chart-line: rgba(255, 255, 255, 0.2);
 }

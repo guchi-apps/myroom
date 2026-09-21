@@ -12,6 +12,7 @@ import {
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
   LIFE_CARDS,
+  PRINTER_CARD_KEY,
   REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 
@@ -29,6 +30,7 @@ describe("life-card-order", () => {
         REMOTE_CARD_KEY,
         ENERGY_CARD_KEY,
         BILL_CARD_KEY,
+        PRINTER_CARD_KEY,
       ])
     ).toEqual([
       CLEANING_CARD_KEY,
@@ -36,6 +38,7 @@ describe("life-card-order", () => {
       REMOTE_CARD_KEY,
       ENERGY_CARD_KEY,
       BILL_CARD_KEY,
+      PRINTER_CARD_KEY,
     ]);
   });
 

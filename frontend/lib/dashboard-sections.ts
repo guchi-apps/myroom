@@ -55,6 +55,7 @@ export const ENERGY_CARD_KEY = "energy";
 export const REMOTE_CARD_KEY = "remote";
 export const BILL_CARD_KEY = "bill";
 export const CLEANING_CARD_KEY = "cleaning";
+export const PRINTER_CARD_KEY = "printer";
 
 /**
  * 「電気の操作」だけは押すためのカードで、他は読むためのカード。
@@ -66,6 +67,9 @@ export const CLEANING_CARD_KEY = "cleaning";
  * 掃除は末尾。押すためのカードだが、ゴミの日のように日付が決まっているわけではなく
  * 「そろそろやる」を思い出すためのものなので、毎日見る値より後ろでよい。
  *
+ * 3Dプリンターは掃除のさらに後ろ（#436）。読むだけのカードで、印刷していない時間のほうが長く、
+ * 押して何かをするカードでもないため。
+ *
  * これは**並べ替えるまでの既定**で、画面から変えた順は `life_card_order` に入る（#283）。
  */
 export const LIFE_CARDS: readonly LifeCardDefinition[] = [
@@ -74,6 +78,7 @@ export const LIFE_CARDS: readonly LifeCardDefinition[] = [
   { key: ENERGY_CARD_KEY, label: "消費電力", accentVar: "--energy-color" },
   { key: BILL_CARD_KEY, label: "電気・ガス料金", accentVar: "--bill-color" },
   { key: CLEANING_CARD_KEY, label: "掃除" },
+  { key: PRINTER_CARD_KEY, label: "3Dプリンター", accentVar: "--printer-color" },
 ];
 
 export function getLifeCardLabel(key: string): string {
