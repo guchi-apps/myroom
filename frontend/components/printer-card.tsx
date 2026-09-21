@@ -3,7 +3,6 @@
 import { ChevronRight, Printer } from "lucide-react";
 import { LevelBar, SpoolSwatch } from "@/components/filament-parts";
 import {
-  buildFilamentView,
   collectBambuErrors,
   describeLastKnown,
   formatFinishAt,
@@ -16,7 +15,6 @@ import {
   getBambuStatusPill,
   hasJobProgress,
   resolveBambuView,
-  type BambuFilamentView,
   type BambuPrinterResponse,
   type BambuSnapshot,
   type BambuStatusPill,
@@ -97,65 +95,6 @@ function TemperatureCell({
           °C{targetText ? ` / 目標 ${targetText}°C` : ""}
         </span>
       </p>
-    </div>
-  );
-}
-
-/** 1つのスプール。色の丸・材料・残量（残量が読めないときは出さない） */
-function FilamentDot({
-  color,
-  active,
-  empty,
-}: {
-  color: string | null;
-  active: boolean;
-  empty: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "block size-[26px] shrink-0 rounded-full",
-        empty
-          ? "border-[1.5px] border-dashed border-border"
-          : "ring-1 ring-inset ring-black/20 dark:ring-white/30",
-        active && "outline outline-2 outline-offset-2 outline-[color:var(--printer-color)]"
-      )}
-      style={!empty && color ? { backgroundColor: color } : undefined}
-    />
-  );
-}
-
-function FilamentSection({ view }: { view: BambuFilamentView }) {
-  const isAms = view.source === "ams";
-  const activeHint = view.slots.some((slot) => slot.active);
-  return (
-    <div className="mt-3.5 border-t border-border pt-3">
-      <div className="mb-2.5 flex justify-between gap-2 text-[11px] tracking-wider text-muted-foreground">
-        <span>{isAms ? "フィラメント（AMS Lite）" : "フィラメント"}</span>
-        {isAms && activeHint && <span>輪＝使用中</span>}
-      </div>
-      {isAms ? (
-        <div className="grid grid-cols-4 gap-1.5">
-          {view.slots.map(({ tray, active }, index) => (
-            <div
-              key={tray.slot ?? index}
-              className="flex flex-col items-center gap-1 text-[11px] leading-snug tabular-nums text-muted-foreground"
-            >
-              <FilamentDot color={tray.color} active={active} empty={tray.empty} />
-              <b className="text-xs font-bold text-foreground">{tray.empty ? "空" : (tray.material ?? "--")}</b>
-              <span>{tray.remainPercent != null ? `${tray.remainPercent}%` : "―"}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        view.slots.map(({ tray, active }) => (
-          <div key="external" className="flex items-center gap-2.5">
-            <FilamentDot color={tray.color} active={active} empty={tray.empty} />
-            <span className="text-sm font-bold text-foreground">{tray.material ?? "--"}</span>
-            <span className="text-xs text-muted-foreground">外付けスプール</span>
-          </div>
-        ))
-      )}
     </div>
   );
 }
@@ -392,7 +331,6 @@ function CurrentBody({
   printer: BambuPrinterResponse;
   stock: FilamentPayload | null;
 }) {
-  const filament = buildFilamentView(snapshot);
   const updatedAt = formatClock(printer.lastUpdateAt);
   return (
     <>
@@ -416,7 +354,6 @@ function CurrentBody({
           target={snapshot.bed.target}
         />
       </div>
-      {filament && <FilamentSection view={filament} />}
       <JobFilamentUse snapshot={snapshot} filament={stock} />
       {updatedAt && (
         <p className="mt-3 text-[11.5px] tabular-nums text-muted-foreground">{updatedAt} 時点</p>
