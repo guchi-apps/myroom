@@ -123,6 +123,14 @@ envファイルに入っていない。** 別ポートで立てるなら
 確認は `npm run build` 後に `grep -o "Googleでログイン" out/index.html` が空になることで足りる
 （開発サーバーの `curl http://localhost:13250/` でも同じHTMLが返る）。
 
+**ログアウト・401時のセッション破棄は `lib/auth.ts` の `signOutThisApp()` を通す**（#426）。
+Supabase は共有プロジェクトで、`signOut()` を引数なしで呼ぶと既定 scope の `global` になり、
+**同じユーザーの他アプリ・他端末の refresh token まで失効する**（このアプリでログアウトしただけで
+他アプリがログイン画面へ戻る）。`signOutThisApp()` は `{ scope: "local" }` を渡してこのアプリの
+セッションだけを破棄する。`supabase.auth.signOut` を直接呼ばないこと（`lib/auth.test.ts` が
+ソースを走査して、`lib/auth.ts` 以外の呼び出しを落とす）。アカウント削除の操作は無いので、
+全セッションを終了する経路は持っていない。
+
 起動直後の画面（読み込み中・ログイン）は `components/app-entry-screen.tsx` の
 `AppEntryScreen` にアイコン・アプリ名・説明文の配置を固定し、下段のブロックだけを差し替える。
 片方だけ余白を変えると、切り替わった瞬間に要素が飛び跳ねる。

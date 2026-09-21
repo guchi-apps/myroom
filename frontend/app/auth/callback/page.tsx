@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AppLoadingScreen } from "@/components/app-loading-screen";
-import { authHeaders } from "@/lib/auth";
+import { authHeaders, signOutThisApp } from "@/lib/auth";
 import { notifyLogin } from "@/lib/api";
 import { supabase } from "@/lib/supabase-client";
 
@@ -27,7 +27,7 @@ export default function AuthCallbackPage() {
 
       const res = await fetch("/api/auth/me", { headers: await authHeaders() });
       if (!res.ok) {
-        await supabase.auth.signOut();
+        await signOutThisApp();
         router.replace("/?authError=forbidden");
         return;
       }
