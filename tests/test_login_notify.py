@@ -32,8 +32,8 @@ def test_login_notify_sends_signaly_notification(authed_client, captured_posts):
     url, payload = captured_posts[0]
     assert url == "https://signaly.example/webhook/login"
     # 全アプリ共通のチャンネルへ集約しているため、送信元が無いとどのアプリか分からない
-    assert payload["source"] == "MyRoom"
-    assert payload["title"] == "🔐 MyRoom ログイン"
+    assert payload["source"] == "kurashio"
+    assert payload["title"] == "🔐 kurashio ログイン"
 
     values = {field["name"]: field["value"] for field in payload["fields"]}
     assert values["メール"] == "test@example.com"
