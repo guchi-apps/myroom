@@ -20,6 +20,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-header-band: var(--header-band);
+  --color-header-band-border: var(--header-band-border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) - 4px);
@@ -46,6 +48,10 @@
   --accent-foreground: #333333;
   --destructive: oklch(0.577 0.245 27.325);
   --border: #eeeeee;
+  /* ヘッダーの帯（#457）。ロゴのタイル（kurashio-brand.png の実測 #e9fbf2 前後）と同じ色にして、
+     タイルの四角い縁が見えないよう溶かす。本文の背景（--background）は変えない */
+  --header-band: #e9fbf2;
+  --header-band-border: #cde9db;
   --input: #eeeeee;
   --ring: #cccccc;
   --temp-color: #3498db;
@@ -89,6 +95,8 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
+  --header-band: #12261e;
+  --header-band-border: #23423a;
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.72 0.17 155);
   --energy-color: #f5b041;

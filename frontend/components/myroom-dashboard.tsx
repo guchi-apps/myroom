@@ -1125,8 +1125,95 @@ export function MyRoomDashboard() {
     : null;
 
   return (
-    <div className="mx-auto w-full max-w-[480px] pb-10 lg:max-w-[1040px]">
-      <div className="space-y-6 px-5 pt-8 lg:px-8">
+    <div className="w-full pb-10">
+      {/*
+        ヘッダーは「いつのデータか」と「アプリの操作」がまとまる場所（#277）。右の3つは
+        左から データを取り直す・部屋のようす・アプリ全体の設定。フッターは設定シートへ畳んだ。
+        フッターが無いので、ヘッダーの下に引く線が本文との区切りになる。
+
+        薄緑の帯にして1段へ詰めた（#457）。ブランド画像のタイルが薄緑で、ヘッダーが本文と
+        同じ灰色だとタイルだけが浮いて見えたため、帯をタイルと同じ色にして溶かす（色は
+        `globals.css` の `--header-band`）。それまでは上余白32pt＋右側2段で約100ptあり、
+        最初の画面の3割近くを取っていた。**帯は画面の端まで伸ばし、中身だけ本文と同じ最大幅**に
+        揃える（PC・iPad は本文が中央に寄るので、帯まで寄せると端が切れて見える）。
+        本文の背景（`--background`）は変えていない。
+
+        左はブランド画像、右は「最終更新」と操作ボタン（#447）。ブランド画像は元の素材が
+        PNGしか無いため、ロゴ文字を明るく塗り替えたダーク版を別に持ち、テーマで出し分ける
+        （`scripts/generate-icons.mjs` が両方を書き出す）。最終更新は390px以上ならボタンの
+        左横に置いて1段にし、それより狭い端末（375pt幅など）では横幅が足りないので
+        ボタン列の下へ右寄せで回す。
+      */}
+      <header className="border-b border-header-band-border bg-header-band">
+        <div className="mx-auto w-full max-w-[480px] px-5 py-2.5 lg:max-w-[1040px] lg:px-8">
+          <div className="flex items-center justify-between gap-3 px-0.5">
+            <h1 className="shrink-0">
+              {/* 表示サイズ固定のローカル画像で、`output: "export"`では最適化も効かないため素の<img>で出す */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/kurashio-brand.png"
+                alt="kurashio"
+                width={469}
+                height={144}
+                className="h-9 w-auto dark:hidden sm:h-10"
+              />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/kurashio-brand-dark.png"
+                alt="kurashio"
+                width={469}
+                height={144}
+                className="hidden h-9 w-auto dark:block sm:h-10"
+              />
+            </h1>
+            <div className="flex min-w-0 flex-col-reverse items-end gap-1 min-[390px]:flex-row min-[390px]:items-center min-[390px]:gap-3">
+              <p className="whitespace-nowrap text-right text-[11px] leading-tight text-muted-foreground sm:text-[11.5px]">
+                最終更新 {lastUpdated}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isOfflineMode) return;
+                    fetchData({ showChartLoading: true });
+                    void refreshLatest();
+                  }}
+                  disabled={isOfflineMode}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="データを更新"
+                  title="データを更新"
+                >
+                  <RefreshCw
+                    className={`size-[18px] ${refreshing ? "animate-spin" : ""}`}
+                    strokeWidth={1.75}
+                  />
+                </button>
+                {/*
+                  部屋のようす（#399）。3Dは縦に大きく取りたいので、ダッシュボードの
+                  カードにはせず独立した画面にしてある。設定の歯車と並ぶが、こちらは
+                  設定ではなく別の見かたへの入口なので `SettingsIconButton` は使わない。
+                */}
+                <Link
+                  href="/room"
+                  aria-label="部屋のようす"
+                  title="部屋のようす"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Box className="size-[18px]" strokeWidth={1.75} />
+                </Link>
+                <SettingsIconButton
+                  label="設定"
+                  tone="header"
+                  onClick={() => setAppSettingsOpen(true)}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* 帯の下は、これまでどおり本文の幅・余白（バナーもここから並ぶ） */}
+      <div className="mx-auto w-full max-w-[480px] space-y-6 px-5 pt-5 lg:max-w-[1040px] lg:px-8">
         {isOfflineMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
             オフライン表示中
@@ -1147,81 +1234,6 @@ export function MyRoomDashboard() {
             </button>
           </div>
         )}
-        {/*
-          ヘッダーは「いつのデータか」と「アプリの操作」がまとまる場所（#277）。
-          下に区切り線を1本引き、そこから中身が始まる形にする。右の2つは
-          左＝データを取り直す、右＝アプリ全体の設定。フッターはこの設定シートへ畳んだ。
-        */}
-        {/*
-          左はブランド画像、右は「最終更新」と操作ボタン（#447）。ブランド画像は元の素材が
-          PNGしか無いため、ロゴ文字を明るく塗り替えたダーク版を別に持ち、テーマで出し分ける
-          （`scripts/generate-icons.mjs` が両方を書き出す）。スマホ幅では最終更新を
-          ボタン列の下へ右寄せで回し、ブランド画像と横に並べない。
-        */}
-        <header className="flex items-center justify-between gap-3 border-b px-0.5 pb-3.5">
-          <h1 className="shrink-0">
-            {/* 表示サイズ固定のローカル画像で、`output: "export"`では最適化も効かないため素の<img>で出す */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/kurashio-brand.png"
-              alt="kurashio"
-              width={469}
-              height={144}
-              className="h-9 w-auto dark:hidden sm:h-10"
-            />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/kurashio-brand-dark.png"
-              alt="kurashio"
-              width={469}
-              height={144}
-              className="hidden h-9 w-auto dark:block sm:h-10"
-            />
-          </h1>
-          <div className="flex min-w-0 flex-col-reverse items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
-            <p className="text-right text-[11px] leading-tight text-muted-foreground sm:text-[11.5px]">
-              最終更新 {lastUpdated}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isOfflineMode) return;
-                  fetchData({ showChartLoading: true });
-                  void refreshLatest();
-                }}
-                disabled={isOfflineMode}
-                className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="データを更新"
-                title="データを更新"
-              >
-                <RefreshCw
-                  className={`size-[18px] ${refreshing ? "animate-spin" : ""}`}
-                  strokeWidth={1.75}
-                />
-              </button>
-              {/*
-                部屋のようす（#399）。3Dは縦に大きく取りたいので、ダッシュボードの
-                カードにはせず独立した画面にしてある。設定の歯車と並ぶが、こちらは
-                設定ではなく別の見かたへの入口なので `SettingsIconButton` は使わない。
-              */}
-              <Link
-                href="/room"
-                aria-label="部屋のようす"
-                title="部屋のようす"
-                className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Box className="size-[18px]" strokeWidth={1.75} />
-              </Link>
-              <SettingsIconButton
-                label="設定"
-                tone="header"
-                onClick={() => setAppSettingsOpen(true)}
-              />
-            </div>
-          </div>
-        </header>
-
         {/*
           上段に「いまの環境」、下段に暮らし。センサーの計測値を2つへ絞ってカードが
           低くなったため、いまの状態をひと目で見せる位置へ上げた（#226）。
