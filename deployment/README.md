@@ -49,7 +49,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://myroom.gucchii.com/api/internal
 # 401 … 設定はされている（トークン不一致。今回はトークン無しで叩いているので401が正常）
 ```
 
-照明などを操作する内部API（`/api/internal/remote/…`・#419）は**別のトークン**
+照明・エアコンを操作する内部API（`/api/internal/remote/…`・#419、`/api/internal/aircon/…`・#439）は**別のトークン**
 `INTERNAL_CONTROL_API_KEY` を見る。切り分けは同じで、こちらも未設定なら常に 503。
 
 ```bash

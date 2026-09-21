@@ -457,6 +457,35 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
 `useState`の初期値で作れば増えない（`components/outdoor-location-sheet.tsx`と
 `device-visibility-page.tsx`の呼び出し）。
 
+## サーバー間の内部API（操作用トークン）は書き込みを2種類に絞る
+
+**`INTERNAL_CONTROL_API_KEY` の Bearer でだけ通る口で書き込めるのは、次の2つだけ**（#419・#439）。
+ユーザーJWTを介さない経路なので、口が増えるほど「ログインしていない誰かが叩ける操作」が増える。
+
+1. **登録済みボタンを押す**（`POST /api/internal/remote/buttons/{id}/send`）。受け取るのはボタンIDだけで、
+   signal ID・appliance ID は受けない
+2. **エアコンの運転指示**（`POST /api/internal/aircon/units/{ac_id}/control`）。受け取るのは
+   `power` / `mode` / `target_temperature` / `fan_speed` の4つだけ
+
+以前は `send_internal_remote_button` の docstring に「エアコンの操作はここに足さないこと」と書いて
+いた（#419）が、#439 で「上の2つ」へ広げた。**3つ目の書き込み（名前の変更・ボタンの登録・設定の書き換え
+など）を足すときは、同じ判断（範囲を広げてよいか）をやり直すこと。**
+
+- **エアコンの内部APIは画面用と同じ処理を通す。** `main.py` の `_read_aircon_state()` /
+  `_apply_aircon_command()` を画面用（ユーザーJWT）と内部API（操作用トークン）の両方が呼ぶ。
+  検証・現在値との混合（`aircon_control.merge_command`）・失敗のステータスと文言（404・422・429 と
+  `Retry-After`・502・503）を片方だけ変えて食い違わせないための形。**内部API側に検証を書き足さない**
+- **`fan_swing` は受けない。** `InternalAirconControlCommand` は `extra="forbid"` で、余計な項目は
+  黙って捨てずに 422 で返す（捨てると呼ぶ側には「送れたのに変わらない」に見える）。画面用の
+  `AirconControlCommand` には `fan_swing` を残している
+- **温度の意味は呼ぶ側で解釈させない。** 自動運転の `target_temperature` は設定温度ではなくシフト量で、
+  モードを切り替えたときの扱いも含めて `merge_command()` が現在の状態と突き合わせる
+- **状態の取得（GET）も操作用トークン。** 読み取りだが白くまくんのクラウドを叩く経路なので、読み取り用の
+  `INTERNAL_API_KEY`（`room-state` 専用）では通さない。AIDE は「ルート自体が無い404
+  （`detail: "Not Found"`）」と「未登録の `ac_id` の404」を `detail` で見分けている
+- モックモードでは `room_temperature` が時刻で動く。テストで状態を比べるときは、この項目を外さないと
+  呼び出しのあいだにずれて不安定になる（`tests/test_aircon_control.py` の `_without_room_temperature`）
+
 ## 3Dプリンター（Bambu Lab A1 mini）の状態は「最新の1件」だけを持つ
 
 **ローカルMQTTの購読はサブPCの常駐プロセス（`collectors/bambu_to_myroom.py`）が持ち、myroom は

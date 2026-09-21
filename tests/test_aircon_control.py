@@ -410,3 +410,230 @@ def test_is_configured_follows_credentials(monkeypatch):
     monkeypatch.setenv("AIRCON_EMAIL", "a@example.com")
     monkeypatch.setenv("AIRCON_PASSWORD", "pw")
     assert aircon_control.is_configured() is True
+
+
+# --- サーバー間の内部API（AIDE 連携 / #439） --------------------------------
+
+
+def _without_room_temperature(state):
+    """モックの室温は時刻で動くので、呼び出しのあいだにずれる。比べるときは外す。"""
+    return {key: value for key, value in state.items() if key != "room_temperature"}
+
+
+@pytest.fixture
+def internal_aircon(internal_control_api_key):
+    """操作用トークンつきのヘッダー。"""
+    return {"Authorization": f"Bearer {internal_control_api_key}"}
+
+
+def test_internal_aircon_requires_configured_key(client, no_internal_control_api_key):
+    """INTERNAL_CONTROL_API_KEY が未設定なら 503。401（値が違う）と切り分けられること。"""
+    headers = {"Authorization": "Bearer anything"}
+    assert client.get("/api/internal/aircon/units/1/state", headers=headers).status_code == 503
+    assert (
+        client.post(
+            "/api/internal/aircon/units/1/control", json={"power": "OFF"}, headers=headers
+        ).status_code
+        == 503
+    )
+
+
+def test_internal_aircon_rejects_missing_and_wrong_token(client, internal_control_api_key):
+    for headers in ({}, {"Authorization": "Bearer wrong-token"}):
+        assert (
+            client.get("/api/internal/aircon/units/1/state", headers=headers).status_code == 401
+        )
+        assert (
+            client.post(
+                "/api/internal/aircon/units/1/control", json={"power": "OFF"}, headers=headers
+            ).status_code
+            == 401
+        )
+
+
+def test_internal_aircon_does_not_accept_read_only_key(
+    client, internal_api_key, internal_control_api_key
+):
+    """読み取り用の INTERNAL_API_KEY では操作も状態の取得もできない。"""
+    headers = {"Authorization": f"Bearer {internal_api_key}"}
+    assert client.get("/api/internal/aircon/units/1/state", headers=headers).status_code == 401
+    response = client.post(
+        "/api/internal/aircon/units/1/control", json={"power": "OFF"}, headers=headers
+    )
+    assert response.status_code == 401
+    # 送られていない
+    assert aircon_control.get_state(1)["power"] == "ON"
+
+
+def test_internal_aircon_does_not_accept_login_session(authed_client, internal_control_api_key):
+    """ログインセッションでは通さない（サーバー間専用）。"""
+    assert authed_client.get("/api/internal/aircon/units/1/state").status_code == 401
+    assert (
+        authed_client.post(
+            "/api/internal/aircon/units/1/control", json={"power": "OFF"}
+        ).status_code
+        == 401
+    )
+    assert aircon_control.get_state(1)["power"] == "ON"
+
+
+def test_internal_aircon_token_does_not_open_screen_api(client, internal_control_api_key):
+    """逆向きも同じ。操作用トークンで画面用の口は通らない。"""
+    headers = {"Authorization": f"Bearer {internal_control_api_key}"}
+    assert client.get("/api/aircon/units/1/state", headers=headers).status_code == 401
+    assert (
+        client.post(
+            "/api/aircon/units/1/control", json={"power": "OFF"}, headers=headers
+        ).status_code
+        == 401
+    )
+
+
+def test_internal_aircon_state_matches_the_screen_api(client, authed_client, internal_aircon):
+    internal = client.get("/api/internal/aircon/units/1/state", headers=internal_aircon)
+    assert internal.status_code == 200
+    assert _without_room_temperature(internal.json()) == _without_room_temperature(
+        authed_client.get("/api/aircon/units/1/state").json()
+    )
+
+
+def test_internal_aircon_state_reflects_the_display_name(client, internal_aircon, monkeypatch):
+    monkeypatch.setattr(
+        "backend.main.aircon_config.get_display_name", lambda ac_id, name, db=None: "寝室"
+    )
+    response = client.get("/api/internal/aircon/units/1/state", headers=internal_aircon)
+    assert response.json()["name"] == "寝室"
+
+
+def test_internal_aircon_state_rejects_invalid_ac_id(client, internal_aircon):
+    response = client.get("/api/internal/aircon/units/0/state", headers=internal_aircon)
+    assert response.status_code == 400
+
+
+def test_internal_aircon_control_applies_and_returns_new_state(
+    client, authed_client, internal_aircon
+):
+    response = client.post(
+        "/api/internal/aircon/units/1/control",
+        json={"power": "OFF", "fan_speed": "LV3"},
+        headers=internal_aircon,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["power"] == "OFF"
+    assert data["fan_speed"] == "LV3"
+    # 送ったあとの状態が、画面用の読み取りにも見える
+    assert _without_room_temperature(
+        authed_client.get("/api/aircon/units/1/state").json()
+    ) == _without_room_temperature(data)
+
+
+def test_internal_aircon_control_matches_the_screen_api(client, authed_client, internal_aircon):
+    """同じ入力なら画面用と同じ応答になる（検証・現在値との混合を共有している）。"""
+    command = {"mode": "HEATING", "target_temperature": 22}
+    internal = client.post(
+        "/api/internal/aircon/units/1/control", json=command, headers=internal_aircon
+    )
+    database.clear_mock_aircon_overrides()
+    screen = authed_client.post("/api/aircon/units/1/control", json=command)
+    assert internal.status_code == screen.status_code == 200
+    assert _without_room_temperature(internal.json()) == _without_room_temperature(
+        screen.json()
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        {"target_temperature": 40},
+        {"power": "SLEEP"},
+        {"fan_speed": "LV9"},
+        {},
+    ],
+)
+def test_internal_aircon_control_rejects_invalid_command(client, internal_aircon, command):
+    response = client.post(
+        "/api/internal/aircon/units/1/control", json=command, headers=internal_aircon
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]
+    assert aircon_control.get_state(1)["power"] == "ON"
+
+
+def test_internal_aircon_control_does_not_accept_fan_swing(client, internal_aircon):
+    """風向は受けない。黙って捨てず 422 で返し、エアコンへも送らない。"""
+    before = aircon_control.get_state(1)
+    response = client.post(
+        "/api/internal/aircon/units/1/control",
+        json={"fan_swing": "AUTO"},
+        headers=internal_aircon,
+    )
+    assert response.status_code == 422
+    # ほかの項目と一緒でも、丸ごと弾く
+    response = client.post(
+        "/api/internal/aircon/units/1/control",
+        json={"power": "OFF", "fan_swing": "AUTO"},
+        headers=internal_aircon,
+    )
+    assert response.status_code == 422
+    assert _without_room_temperature(aircon_control.get_state(1)) == _without_room_temperature(
+        before
+    )
+
+
+def test_internal_aircon_control_rejects_invalid_ac_id(client, internal_aircon):
+    response = client.post(
+        "/api/internal/aircon/units/0/control", json={"power": "OFF"}, headers=internal_aircon
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "error,status,headers",
+    [
+        (aircon_control.AirconUnitNotFound("そのエアコンは登録されていません"), 404, {}),
+        (aircon_control.AirconControlNotConfigured("白くまくんのログイン情報が未設定です"), 503, {}),
+        (
+            aircon_control.AirconControlRateLimited(90),
+            429,
+            {"retry-after": "90"},
+        ),
+        (aircon_control.AirconControlError("つながりません"), 502, {}),
+    ],
+)
+def test_internal_aircon_returns_the_same_error_as_the_screen_api(
+    client, authed_client, internal_aircon, monkeypatch, error, status, headers
+):
+    """失敗のステータス・利用者向けの文言・Retry-After は画面用と同じ。"""
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(aircon_control, "get_state", fail)
+    monkeypatch.setattr(aircon_control, "apply_command", fail)
+
+    for internal, screen in (
+        (
+            client.get("/api/internal/aircon/units/1/state", headers=internal_aircon),
+            authed_client.get("/api/aircon/units/1/state"),
+        ),
+        (
+            client.post(
+                "/api/internal/aircon/units/1/control",
+                json={"power": "OFF"},
+                headers=internal_aircon,
+            ),
+            authed_client.post("/api/aircon/units/1/control", json={"power": "OFF"}),
+        ),
+    ):
+        assert internal.status_code == screen.status_code == status
+        assert internal.json() == screen.json() == {"detail": str(error)}
+        for key, value in headers.items():
+            assert internal.headers[key] == screen.headers[key] == value
+
+
+def test_internal_aircon_unknown_route_is_distinguishable(client, internal_aircon):
+    """ルート自体が無い 404 は `Not Found`。ac_id が無い 404 とは detail で見分けられる。"""
+    response = client.get("/api/internal/aircon/no-such-route", headers=internal_aircon)
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
