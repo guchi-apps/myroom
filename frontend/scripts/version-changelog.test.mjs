@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  CHANGELOG_PLACEHOLDER,
   insertChangelogEntry,
   parseReleaseChangelog,
 } from "./version-changelog.mjs";
@@ -19,7 +18,8 @@ describe("insertChangelogEntry", () => {
     const { content, inserted } = insertChangelogEntry(
       sample,
       "2.3.0",
-      "2026-06-19"
+      "2026-06-19",
+      ["在庫の並び順を変更"]
     );
     expect(inserted).toBe(true);
     expect(content.indexOf('version: "2.3.0"')).toBeLessThan(
@@ -33,19 +33,43 @@ describe("insertChangelogEntry", () => {
     expect(inserted).toBe(false);
   });
 
-  it("falls back to the placeholder when no changes are given", () => {
-    const { content } = insertChangelogEntry(sample, "2.3.0", "2026-06-19");
-    expect(content).toContain(`"${CHANGELOG_PLACEHOLDER}"`);
+  it("does not create an entry when no changes are given", () => {
+    for (const changes of [undefined, []]) {
+      const result = insertChangelogEntry(
+        sample,
+        "2.3.0",
+        "2026-06-19",
+        changes
+      );
+      expect(result.inserted).toBe(false);
+      expect(result.content).toBe(sample);
+    }
   });
 
-  it("writes the given changes instead of the placeholder", () => {
+  it("does not leave a placeholder entry behind", () => {
+    const { content } = insertChangelogEntry(sample, "2.3.0", "2026-06-19");
+    expect(content).not.toContain("追記してください");
+    expect(content).not.toContain('version: "2.3.0"');
+  });
+
+  it("still fails when the marker is missing, even with no changes", () => {
+    expect(() =>
+      insertChangelogEntry("export const OTHER = [];\n", "2.3.0", "2026-06-19")
+    ).toThrow("APP_CHANGELOG marker not found");
+    expect(() =>
+      insertChangelogEntry("export const OTHER = [];\n", "2.3.0", "2026-06-19", [
+        "変更",
+      ])
+    ).toThrow("APP_CHANGELOG marker not found");
+  });
+
+  it("writes the given changes", () => {
     const { content } = insertChangelogEntry(sample, "2.3.0", "2026-06-19", [
       "在庫の並び順を変更",
       "検索の不具合を修正",
     ]);
     expect(content).toContain('"在庫の並び順を変更",');
     expect(content).toContain('"検索の不具合を修正",');
-    expect(content).not.toContain(CHANGELOG_PLACEHOLDER);
   });
 
   it("escapes characters that would break the TypeScript string literal", () => {
