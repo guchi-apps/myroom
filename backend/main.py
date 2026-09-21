@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bambu, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bambu, bills, cleaning, cleaning_notion, energy, filament, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_control_token, require_internal_token
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -208,7 +208,7 @@ async def lifespan(_app: FastAPI):
                 await task
 
 
-app = FastAPI(title="MyRoom API", lifespan=lifespan)
+app = FastAPI(title="kurashio API", lifespan=lifespan)
 
 # --- Models ---
 class SensorData(BaseModel):
@@ -361,6 +361,50 @@ class CleaningTasksUpdate(BaseModel):
 class CleaningDoneRequest(BaseModel):
     #: 実施日（YYYY-MM-DD）。省略時は今日（JST）
     date: Optional[str] = None
+
+
+class FilamentSpoolCreate(BaseModel):
+    """スプールを1本足す（#445）。重さの範囲や日付の検証は `filament.add_spool()` が行う。"""
+
+    name: str
+    material: str = "PLA"
+    color: Optional[str] = None
+    purchased_on: Optional[str] = None
+    #: 初期フィラメント量（g）。省略時は1000
+    net_g: Optional[float] = None
+    #: 空スプールの重さ（g）。計量に必要
+    tare_g: Optional[float] = None
+    #: 使いかけを登録するときの、いまの全体重量（g）。最初の計量として記録する
+    current_gross_g: Optional[float] = None
+
+
+class FilamentSpoolUpdate(BaseModel):
+    """送られた項目だけを直す（`exclude_unset`）。`tare_g: null` は空スプールの重さを外す。"""
+
+    name: Optional[str] = None
+    material: Optional[str] = None
+    color: Optional[str] = None
+    purchased_on: Optional[str] = None
+    net_g: Optional[float] = None
+    tare_g: Optional[float] = None
+    archived: Optional[bool] = None
+
+
+class FilamentActiveRequest(BaseModel):
+    spool_id: Optional[str] = None
+
+
+class FilamentWeighRequest(BaseModel):
+    gross_g: float
+    #: 計量した日（YYYY-MM-DD）。省略時は今日（JST）
+    date: Optional[str] = None
+
+
+class FilamentUsageRequest(BaseModel):
+    grams: float
+    #: 印刷した日（YYYY-MM-DD）。省略時は今日（JST）
+    date: Optional[str] = None
+    note: Optional[str] = None
 
 
 class RemoteConfigButton(BaseModel):
@@ -1036,6 +1080,114 @@ def delete_cleaning_done(
     if not removed:
         raise HTTPException(status_code=404, detail="指定された掃除の記録が見つかりません")
     return cleaning.build_payload(tasks)
+
+
+def _filament_response(action):
+    """フィラメントの操作を実行し、入力の誤りは400・対象なしは404で返す。応答は常に最新の一覧。"""
+    try:
+        document = action()
+    except filament.SpoolNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except filament.FilamentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return filament.build_payload(document)
+
+
+@app.get("/api/filament")
+def get_filament(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """フィラメントのスプール一覧と、残量（計量と使用量から計算済み）。"""
+    return filament.build_payload(filament.get_document(db))
+
+
+@app.post("/api/filament/spools")
+def create_filament_spool(
+    body: FilamentSpoolCreate,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    return _filament_response(lambda: filament.add_spool(body.model_dump(), db))
+
+
+@app.put("/api/filament/spools/{spool_id}")
+def update_filament_spool(
+    spool_id: str,
+    body: FilamentSpoolUpdate,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    return _filament_response(
+        lambda: filament.update_spool(spool_id, body.model_dump(exclude_unset=True), db)
+    )
+
+
+@app.delete("/api/filament/spools/{spool_id}")
+def delete_filament_spool(
+    spool_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    return _filament_response(lambda: filament.delete_spool(spool_id, db))
+
+
+@app.put("/api/filament/active")
+def update_filament_active(
+    body: FilamentActiveRequest,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """いま使っているスプールを選ぶ。`spool_id: null` で外す。"""
+    return _filament_response(lambda: filament.set_active(body.spool_id, db))
+
+
+@app.post("/api/filament/spools/{spool_id}/weigh")
+def weigh_filament_spool(
+    spool_id: str,
+    body: FilamentWeighRequest,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """秤で量った全体重量を記録する。以後の残量はこの値が基準になる。"""
+    return _filament_response(
+        lambda: filament.record_weighing(spool_id, body.gross_g, db, date=body.date)
+    )
+
+
+@app.delete("/api/filament/spools/{spool_id}/weigh/{weighing_id}")
+def delete_filament_weighing(
+    spool_id: str,
+    weighing_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    return _filament_response(lambda: filament.remove_weighing(spool_id, weighing_id, db))
+
+
+@app.post("/api/filament/spools/{spool_id}/usage")
+def record_filament_usage(
+    spool_id: str,
+    body: FilamentUsageRequest,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """印刷で使った量（スライサーが出すg数）を記録する。"""
+    return _filament_response(
+        lambda: filament.record_usage(
+            spool_id, body.grams, db, date=body.date, note=body.note
+        )
+    )
+
+
+@app.delete("/api/filament/spools/{spool_id}/usage/{usage_id}")
+def delete_filament_usage(
+    spool_id: str,
+    usage_id: str,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    return _filament_response(lambda: filament.remove_usage(spool_id, usage_id, db))
 
 
 def _remote_button_overrides(db: Session) -> Dict[str, Any]:

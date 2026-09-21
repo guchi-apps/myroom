@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.21.0",
+    date: "2026-09-21",
+    changes: [
+      "3Dプリンターのフィラメント残量を自動計算して表示できるようになりました。スプールを登録し、秤で量った重さや印刷で使った量を記録すると、残りのフィラメント量がひと目で分かります。また、アプリの表示名とアイコン・ロゴを「kurashio」に一新しました。",
+    ],
+  },
+  {
     version: "4.20.0",
     date: "2026-09-21",
     changes: [

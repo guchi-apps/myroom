@@ -2,7 +2,7 @@ const CACHE_NAME = "myroom-shell-v3-3-4";
 
 self.addEventListener("push", (event) => {
   let payload = {
-    title: "MyRoom",
+    title: "kurashio",
     body: "センサーに関する通知があります",
     tag: "myroom-sensor",
     url: "/",
@@ -23,8 +23,8 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(payload.title, {
       body: payload.body,
       tag: payload.tag,
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
+      icon: "/kurashio-icon-192.png",
+      badge: "/kurashio-icon-192.png",
       data: { url: payload.url || "/" },
     })
   );

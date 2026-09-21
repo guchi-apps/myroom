@@ -11,19 +11,19 @@ const notoSansJP = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "MyRoom",
-  description: "お部屋の環境データをモニタリング",
+  title: "kurashio",
+  description: "暮らしを、ひとつに整える。",
   manifest: "/manifest.json",
   icons: {
     icon: [
-      { url: "/favicon.png", sizes: "32x32", type: "image/png" },
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/kurashio-favicon.png", sizes: "32x32", type: "image/png" },
+      { url: "/kurashio-icon-192.png", sizes: "192x192", type: "image/png" },
     ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    apple: [{ url: "/kurashio-apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   appleWebApp: {
     capable: true,
-    title: "MyRoom",
+    title: "kurashio",
     statusBarStyle: "default",
   },
 };

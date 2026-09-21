@@ -349,24 +349,30 @@ Supabase は共有プロジェクトで、`signOut()` を引数なしで呼ぶ�
 `min >= max` のような組み合わせの不正はフロントで弾いてメッセージを出す——バックエンドに任せると
 「既定値へ戻る」という結果だけが返り、理由が画面に出ない。
 
-## アプリアイコン
+## アプリアイコン・ブランド画像
 
-**アイコンの正は `frontend/assets/app-icon-source.svg`。** ここを編集して
-`cd frontend && node scripts/generate-icons.mjs` を実行すると、`public/` の
-`icon-512.png` / `icon-192.png` / `apple-touch-icon.png` / `favicon.png` と
-`app/apple-icon.png` / `app/icon.png`、それに旧経路の入力である
-`assets/app-icon-source.png`（1024px）がまとめて書き出される。
+**表示名は `kurashio`（#447）。** 画面・manifest・通知・ログイン通知の `source` は kurashio だが、
+リポジトリ名・DB名・localStorage のキー（`myroom_*`）・イベント名（`myroom-*`）・`sw.js` の
+`CACHE_NAME`・コンポーネント名（`MyRoomDashboard`）は**内部識別子として `myroom` のまま残している。**
+キーを変えると保存済みの設定が読めなくなるので、名前を揃えるためだけに変えないこと。
 
-ラスタライズには **sharp** を使う。これは Next.js が連れてくる既存の依存なので、
-`npm ci` 済みなら追加インストールは要らない。
+**アイコンとブランド画像の正は `frontend/assets/` の2枚のPNG**（`kurashio-app-icon.png`・
+`kurashio-brand-source.png`。受け取った素材にSVGが無いため）。差し替えたら
+`cd frontend && node scripts/generate-icons.mjs` を実行すると、`public/kurashio-*.png` と
+`app/apple-icon.png` / `app/icon.png` がまとめて書き出される。ラスタライズには **sharp**
+（Next.js が連れてくる既存の依存）を使うので、`npm ci` 済みなら追加インストールは要らない。
 
-**`frontend/scripts/generate-icons.py` は旧経路。** PNG を入力に取る Pillow 版だが、
-**Pillow は `requirements.txt` にも `requirements-dev.txt` にも入っていない。**
-素の worktree では動かないので、アイコンを作り直すときは `.mjs` のほうを使う。
-
-**`manifest.json` の `icon-512.png` には `purpose: "maskable"` が付いている。**
-Android は中央80%の円で切り抜くため、絵柄は中心 (256,256)・半径 204.8 の円に収める。
-はみ出すと端が欠ける。
+- **アイコンのファイル名は変えるたびに付け替える。** iOS のホーム画面・ブラウザは同じURLの
+  アイコンをキャッシュし続けるため、中身だけ差し替えると旧アイコンが残る。`icon-192.png` から
+  `kurashio-icon-192.png` へ変えたのはこのため（`app/` の2つは Next.js がハッシュ付きURLにする）
+- **maskable は角をタイル色で塗った別ファイル**（`kurashio-icon-maskable-512.png`）。Android は
+  中央80%の円で切り抜くため、絵柄は中心から一辺の0.40以内に収める（今の絵は0.38）。
+  Apple Touch Icon も同じく塗りつぶし版（透明な角は iOS で黒くなる）
+- **ヘッダーのブランド画像は、元画像のタイルとロゴ文字だけを座標で切り出して並べ直している。**
+  キャッチコピーはヘッダーの高さでは読めないため使わない。元画像を差し替えたら
+  `BRAND_TILE`・`BRAND_WORDMARK` の座標を測り直すこと。白背景は色→透明で抜いている
+- **ダークテーマ用に、ロゴ文字だけ明るく塗った `kurashio-brand-dark.png` を別に持つ。**
+  元の文字は濃い紺で、ダークの背景では沈む。ヘッダーは `dark:hidden` / `dark:block` で出し分ける
 
 ## 本番DBのマイグレーション
 
@@ -525,6 +531,41 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
   `collectors/.env` にだけ置き、1Password・GitHub secret には置かない**（本体の画面から読み直せる）
 - AMS Lite の残量は `remain` が 1〜100 のときだけ返す（0・-1 は「不明」）。実機は AMS Lite なしの
   構成でしか確かめていない
+
+## フィラメント在庫は「最後の計量」を基準に、使用量を引く（#445）
+
+**Notionの「3Dプリンター フィラメント在庫」でやっていた計算（現在の全体重量 − 空スプール）をアプリへ
+移したもの。** 保存は `app_settings` の `filament_spools` 1行（DB_MOCK は `data/filament.json`）で、
+マイグレーションは1行も足していない。計算は `backend/filament.py` の `compute_remaining()` **だけ**が持ち、
+フロント（`lib/filament.ts`）は返ってきた `remaining_g` / `percent` / `level` を表示するだけ。
+両側に計算を持たせると、計量と使用量の前後の判定が食い違う。
+
+- **残量 ＝ （最後の計量の全体重量 − 空スプール）− 計量より後の使用量。** 計量が無ければ
+  「初期フィラメント量 − 使用量」。秤で量ったらその値が正で、それ以前の使用量は引かない
+  （誤差を溜めないため）。Notionのグレー（全体1011g・空スプール152g）の859g・86%を
+  `tests/test_filament.py` で再現している
+- **「計量より後」は `(date, recorded_at)` の組で比べる。** 計量のあとに、計量より前の日の印刷を
+  入れ忘れて登録しても数えない（量った重さにすでに含まれる）。印刷した時刻は持っていないので、
+  同じ日のうちに「印刷 → 計量 → 印刷の入力」の順で登録すると二重に引く。計量し直せば直る
+- **使用量はMQTTから取れない。** Bambuの `report` にはグラム数が無く、スライサーが出す
+  「フィラメント使用量」を印刷のあとに人が入れる。自動で取るなら、プリンターの3mfをFTPSで取って
+  `Metadata/slice_info.config` を読む経路になるが、実機で確かめていないので別の話（未実装）
+- **Notionの既存データは移していない。** 値が古く使い切りも混ざっているため。使いかけのスプールは
+  登録時に「いまの全体重量」を入れれば、それが最初の計量になる。**移行スクリプトは書かない**
+  （本番と手元で実行のタイミングが揃わない）
+- **空スプールの重さが未設定なら、計量は受けない**（残量を出せない）。使用量だけで管理はできる
+- 操作は1件ずつのAPI（`/api/filament/spools/{id}/usage`・`/weigh` など）で、応答は常に最新の一覧。
+  日付は端末の時計ではなく応答の `today`（JST）を使う
+- **保存する操作は必ず `filament._update()` を通す**（自動レビューで指摘された lost update・#445）。
+  スプール全部が1行のJSONに入っているので、**別のスプールへの操作同士でも**、読み込みから書き戻しの
+  間に割り込まれると片方が消える（`_load` → 加工 → `_write` と個別に呼ぶ形は禁止）。DB_MOCK は
+  `atomic_json.update_json`、本番は行ロック（`SELECT ... FOR UPDATE`）とプロセス内ロックで囲む。
+  入力の誤りで例外を投げるときは `rollback()` して行ロックを放す（残すと次の更新が止まる）。
+  テストは `tests/test_filament.py` の「並行する更新」。窓を広げるためロックの内側の `_new_id` を
+  遅くしてあり、無ロックの実装だと3件とも落ちる。**SQLite では `FOR UPDATE` が無視される**ので、
+  行ロックそのものはテストできていない（SQL文の生成をMySQL方言で確認しただけ）
+- **入口はプリンターカードの残量欄だけ。** カードを増やしていないので `LIFE_CARDS` と暮らしの
+  並び順設定は触っていない。プリンターがオフラインでも残量は出す（在庫はアプリの中の記録）
 
 ## 収集スクリプトの再送信を時系列データのポーリングに使う（電気代・時間ごと表示）
 

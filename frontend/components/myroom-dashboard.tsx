@@ -17,6 +17,7 @@ import { TrendPanel } from "@/components/trend-panel";
 import { BillCard } from "@/components/bill-card";
 import { CleaningCard } from "@/components/cleaning-card";
 import { PrinterCard } from "@/components/printer-card";
+import { FilamentSheet } from "@/components/filament-sheet";
 import {
   CleaningDetailPanel,
   CleaningSettingsPanel,
@@ -39,6 +40,7 @@ import {
   fetchDashboardData,
   fetchDevices,
   fetchEnergyBreakdown,
+  fetchFilament,
   fetchGarbageSchedule,
   fetchOutdoorLocations,
   fetchOutdoorLocationsWeather,
@@ -110,6 +112,7 @@ import {
   PRINTER_CARD_KEY,
 } from "@/lib/dashboard-sections";
 import type { BambuPrinterResponse } from "@/lib/bambu";
+import type { FilamentPayload } from "@/lib/filament";
 import type {
   CleaningSchedule,
   CleaningTask,
@@ -376,6 +379,9 @@ export function MyRoomDashboard() {
   const [cleaningSaveError, setCleaningSaveError] = useState<string | null>(null);
   const [bambuPrinter, setBambuPrinter] = useState<BambuPrinterResponse | null>(null);
   const [bambuError, setBambuError] = useState(false);
+  // フィラメント在庫（#445）。プリンターの接続とは別に取り、取れなかったときは欄を出さない
+  const [filament, setFilament] = useState<FilamentPayload | null>(null);
+  const [filamentOpen, setFilamentOpen] = useState(false);
   const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
   const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
@@ -790,6 +796,7 @@ export function MyRoomDashboard() {
           bills,
           cleaning,
           bambu,
+          filamentData,
           outdoorList,
           outdoorWeathers,
         ] = await Promise.all([
@@ -801,6 +808,7 @@ export function MyRoomDashboard() {
           fetchBillsSummary().catch(() => null),
           fetchCleaningSchedule().catch(() => null),
           fetchBambuPrinter().catch(() => null),
+          fetchFilament().catch(() => null),
           fetchOutdoorLocations().catch(() => null),
           fetchOutdoorLocationsWeather().catch(() => null),
         ]);
@@ -829,6 +837,7 @@ export function MyRoomDashboard() {
         setCleaningError(cleaning == null);
         if (bambu) setBambuPrinter(bambu);
         setBambuError(bambu == null);
+        if (filamentData) setFilament(filamentData);
         // 地点そのものは `/devices` からしか変わらないので、取れなかったときは前回を残す
         if (outdoorList) setOutdoorLocations(outdoorList);
         if (outdoorWeathers) {
@@ -1143,51 +1152,73 @@ export function MyRoomDashboard() {
           下に区切り線を1本引き、そこから中身が始まる形にする。右の2つは
           左＝データを取り直す、右＝アプリ全体の設定。フッターはこの設定シートへ畳んだ。
         */}
+        {/*
+          左はブランド画像、右は「最終更新」と操作ボタン（#447）。ブランド画像は元の素材が
+          PNGしか無いため、ロゴ文字を明るく塗り替えたダーク版を別に持ち、テーマで出し分ける
+          （`scripts/generate-icons.mjs` が両方を書き出す）。スマホ幅では最終更新を
+          ボタン列の下へ右寄せで回し、ブランド画像と横に並べない。
+        */}
         <header className="flex items-center justify-between gap-3 border-b px-0.5 pb-3.5">
-          <div>
-            <h1 className="text-[26px] font-bold leading-tight tracking-tight text-foreground">
-              MyRoom
-            </h1>
-            <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+          <h1 className="shrink-0">
+            {/* 表示サイズ固定のローカル画像で、`output: "export"`では最適化も効かないため素の<img>で出す */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/kurashio-brand.png"
+              alt="kurashio"
+              width={469}
+              height={144}
+              className="h-9 w-auto dark:hidden sm:h-10"
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/kurashio-brand-dark.png"
+              alt="kurashio"
+              width={469}
+              height={144}
+              className="hidden h-9 w-auto dark:block sm:h-10"
+            />
+          </h1>
+          <div className="flex min-w-0 flex-col-reverse items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
+            <p className="text-right text-[11px] leading-tight text-muted-foreground sm:text-[11.5px]">
               最終更新 {lastUpdated}
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (isOfflineMode) return;
-                fetchData({ showChartLoading: true });
-                void refreshLatest();
-              }}
-              disabled={isOfflineMode}
-              className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="データを更新"
-              title="データを更新"
-            >
-              <RefreshCw
-                className={`size-[18px] ${refreshing ? "animate-spin" : ""}`}
-                strokeWidth={1.75}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isOfflineMode) return;
+                  fetchData({ showChartLoading: true });
+                  void refreshLatest();
+                }}
+                disabled={isOfflineMode}
+                className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="データを更新"
+                title="データを更新"
+              >
+                <RefreshCw
+                  className={`size-[18px] ${refreshing ? "animate-spin" : ""}`}
+                  strokeWidth={1.75}
+                />
+              </button>
+              {/*
+                部屋のようす（#399）。3Dは縦に大きく取りたいので、ダッシュボードの
+                カードにはせず独立した画面にしてある。設定の歯車と並ぶが、こちらは
+                設定ではなく別の見かたへの入口なので `SettingsIconButton` は使わない。
+              */}
+              <Link
+                href="/room"
+                aria-label="部屋のようす"
+                title="部屋のようす"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <Box className="size-[18px]" strokeWidth={1.75} />
+              </Link>
+              <SettingsIconButton
+                label="設定"
+                tone="header"
+                onClick={() => setAppSettingsOpen(true)}
               />
-            </button>
-            {/*
-              部屋のようす（#399）。3Dは縦に大きく取りたいので、ダッシュボードの
-              カードにはせず独立した画面にしてある。設定の歯車と並ぶが、こちらは
-              設定ではなく別の見かたへの入口なので `SettingsIconButton` は使わない。
-            */}
-            <Link
-              href="/room"
-              aria-label="部屋のようす"
-              title="部屋のようす"
-              className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <Box className="size-[18px]" strokeWidth={1.75} />
-            </Link>
-            <SettingsIconButton
-              label="設定"
-              tone="header"
-              onClick={() => setAppSettingsOpen(true)}
-            />
+            </div>
           </div>
         </header>
 
@@ -1452,6 +1483,8 @@ export function MyRoomDashboard() {
                         printer={bambuPrinter}
                         loading={!dashboardDataLoaded && bambuPrinter == null}
                         error={bambuError && bambuPrinter == null}
+                        filament={filament}
+                        onOpenFilament={() => setFilamentOpen(true)}
                       />
                     );
                   }
@@ -1486,7 +1519,7 @@ export function MyRoomDashboard() {
           末尾に残すのは、いま動いているのがどのビルドかを見分けるための一行だけ。
         */}
         <p className="pt-2 text-center text-[11.5px] text-muted-foreground/70">
-          MyRoom v{APP_VERSION}
+          kurashio v{APP_VERSION}
         </p>
       </div>
 
@@ -1655,6 +1688,19 @@ export function MyRoomDashboard() {
           onSave={(tasks) => {
             void handleSaveCleaningTasks(tasks);
           }}
+        />
+      )}
+
+      {filamentOpen && filament && (
+        <FilamentSheet
+          payload={filament}
+          suggestedNote={
+            bambuPrinter?.printer?.state === "finished"
+              ? (bambuPrinter.printer.job.name ?? null)
+              : null
+          }
+          onChange={setFilament}
+          onClose={() => setFilamentOpen(false)}
         />
       )}
 

@@ -1,21 +1,21 @@
 {
-  "short_name": "MyRoom",
-  "name": "MyRoom",
+  "short_name": "kurashio",
+  "name": "kurashio",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/kurashio-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/kurashio-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/kurashio-icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

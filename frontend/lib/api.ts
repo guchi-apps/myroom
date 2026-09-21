@@ -36,6 +36,11 @@ import {
 } from "@/lib/types";
 import type { BambuPrinterResponse } from "@/lib/bambu";
 import type { CleaningSchedule, CleaningTaskInput } from "@/lib/cleaning";
+import type {
+  FilamentPayload,
+  FilamentSpoolInput,
+  FilamentSpoolPatch,
+} from "@/lib/filament";
 import type { GarbageSchedule } from "@/lib/garbage";
 import type {
   RemoteButtons,
@@ -633,6 +638,87 @@ export async function deleteCleaningDone(
     throw new Error(body?.detail || `Request failed: ${res.status}`);
   }
   return res.json() as Promise<CleaningSchedule>;
+}
+
+/** フィラメント在庫。残量は計量と使用量からサーバーが計算して返す（#445） */
+export async function fetchFilament(): Promise<FilamentPayload> {
+  return fetchJson<FilamentPayload>("/api/filament");
+}
+
+/** 操作は応答に最新の一覧が入る。失敗の理由（detail）はそのまま画面へ出す */
+async function sendFilament(
+  url: string,
+  method: "POST" | "PUT" | "DELETE",
+  body?: unknown
+): Promise<FilamentPayload> {
+  const res = await fetchWithAuth(
+    url,
+    body === undefined
+      ? { method }
+      : { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+  );
+  if (!res.ok) {
+    const error = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+    throw new Error(
+      typeof error?.detail === "string" ? error.detail : `Request failed: ${res.status}`
+    );
+  }
+  return res.json() as Promise<FilamentPayload>;
+}
+
+const spoolUrl = (spoolId: string) => `/api/filament/spools/${encodeURIComponent(spoolId)}`;
+
+export function createFilamentSpool(input: FilamentSpoolInput): Promise<FilamentPayload> {
+  return sendFilament("/api/filament/spools", "POST", input);
+}
+
+export function updateFilamentSpool(
+  spoolId: string,
+  patch: FilamentSpoolPatch
+): Promise<FilamentPayload> {
+  return sendFilament(spoolUrl(spoolId), "PUT", patch);
+}
+
+export function deleteFilamentSpool(spoolId: string): Promise<FilamentPayload> {
+  return sendFilament(spoolUrl(spoolId), "DELETE");
+}
+
+/** いま使っているスプールを選ぶ。null で外す */
+export function setActiveFilamentSpool(spoolId: string | null): Promise<FilamentPayload> {
+  return sendFilament("/api/filament/active", "PUT", { spool_id: spoolId });
+}
+
+/** 秤で量った全体重量（スプール込み・g）を記録する。以後の残量はこの値が基準になる */
+export function recordFilamentWeighing(
+  spoolId: string,
+  grossG: number,
+  date: string
+): Promise<FilamentPayload> {
+  return sendFilament(`${spoolUrl(spoolId)}/weigh`, "POST", { gross_g: grossG, date });
+}
+
+export function deleteFilamentWeighing(
+  spoolId: string,
+  weighingId: string
+): Promise<FilamentPayload> {
+  return sendFilament(`${spoolUrl(spoolId)}/weigh/${encodeURIComponent(weighingId)}`, "DELETE");
+}
+
+/** 印刷で使った量（スライサーが出すg数）を記録する */
+export function recordFilamentUsage(
+  spoolId: string,
+  grams: number,
+  date: string,
+  note: string
+): Promise<FilamentPayload> {
+  return sendFilament(`${spoolUrl(spoolId)}/usage`, "POST", { grams, date, note });
+}
+
+export function deleteFilamentUsage(
+  spoolId: string,
+  usageId: string
+): Promise<FilamentPayload> {
+  return sendFilament(`${spoolUrl(spoolId)}/usage/${encodeURIComponent(usageId)}`, "DELETE");
 }
 
 /** 電気の操作カード用。押せるボタンの一覧だけを取る（Nature Remo は叩かない） */
