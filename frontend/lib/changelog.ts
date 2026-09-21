@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.22.1",
+    date: "2026-09-22",
+    changes: [
+      "iPhoneでホーム画面に追加して開いたときの、画面いちばん上（ステータスバー周辺）の表示を見やすく整えました。",
+    ],
+  },
+  {
     version: "4.22.0",
     date: "2026-09-21",
     changes: [
