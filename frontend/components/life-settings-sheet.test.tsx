@@ -52,7 +52,7 @@ describe("LifeSettingsSheet", () => {
     const html = render({ order: buildDefaultLifeCardOrder() });
     expect(html).toContain('aria-label="電気の操作を上へ"');
     expect(html).toMatch(/disabled=""[^>]*aria-label="電気の操作を上へ"/);
-    expect(html).toMatch(/disabled=""[^>]*aria-label="掃除を下へ"/);
+    expect(html).toMatch(/disabled=""[^>]*aria-label="3Dプリンターを下へ"/);
     expect(html).not.toMatch(/disabled=""[^>]*aria-label="電気の操作を下へ"/);
   });
 

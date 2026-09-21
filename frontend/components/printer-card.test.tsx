@@ -1,0 +1,229 @@
+import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { PrinterCard } from "@/components/printer-card";
+import type { BambuPrinterResponse, BambuSnapshot } from "@/lib/bambu";
+
+function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
+  return {
+    state: "printing",
+    rawState: "RUNNING",
+    job: {
+      name: "cable-clip_v3",
+      progressPercent: 62,
+      layer: 142,
+      totalLayers: 230,
+      remainingMinutes: 84,
+      estimatedFinishAt: "2026-09-21T14:52:00+09:00",
+    },
+    nozzle: { temperature: 218.4, target: 220 },
+    bed: { temperature: 59.6, target: 60 },
+    speed: { level: 2, mode: "standard" },
+    ams: { connected: false, units: [], activeSource: "none", activeSlot: null, externalSpool: null },
+    errors: { printError: null, hms: [] },
+    ...overrides,
+  };
+}
+
+function response(overrides: Partial<BambuPrinterResponse> = {}): BambuPrinterResponse {
+  return {
+    fetchedAt: "2026-09-21T13:28:30+09:00",
+    configured: true,
+    connection: "online",
+    online: true,
+    stale: false,
+    staleThresholdSeconds: 180,
+    lastUpdateAt: "2026-09-21T13:28:00+09:00",
+    lastMessageAt: "2026-09-21T13:28:00+09:00",
+    printer: snapshot(),
+    lastKnown: null,
+    ...overrides,
+  };
+}
+
+function render(
+  printer: BambuPrinterResponse | null,
+  extra?: { loading?: boolean; error?: boolean }
+) {
+  return renderToStaticMarkup(
+    <PrinterCard printer={printer} loading={extra?.loading ?? false} error={extra?.error ?? false} />
+  );
+}
+
+describe("PrinterCard", () => {
+  it("印刷中は進捗・残り時間・完了予定・層・温度・時点を出す", () => {
+    const html = render(response());
+    expect(html).toContain("3Dプリンター");
+    expect(html).toContain("印刷中");
+    expect(html).toContain("cable-clip_v3");
+    expect(html).toContain('aria-valuenow="62"');
+    expect(html).toContain("残り 1時間24分");
+    expect(html).toContain("14:52 ごろ完了");
+    expect(html).toContain("142 / 230 層");
+    expect(html).toContain("速度 標準");
+    // ノズル・ベッドの現在値（四捨五入）と目標
+    expect(html).toContain("218");
+    expect(html).toContain("/ 目標 220°C");
+    expect(html).toContain("60");
+    expect(html).toContain("13:28 時点");
+  });
+
+  it("待機中は「印刷していません」と温度だけ出し、進捗バーは出さない", () => {
+    const html = render(
+      response({
+        printer: snapshot({
+          state: "idle",
+          rawState: "IDLE",
+          nozzle: { temperature: 24, target: 0 },
+          bed: { temperature: 23, target: 0 },
+        }),
+      })
+    );
+    expect(html).toContain("待機中");
+    expect(html).toContain("印刷していません");
+    expect(html).not.toContain("progressbar");
+    // 目標が0（加熱していない）のときは「目標」を出さない
+    expect(html).not.toContain("目標");
+  });
+
+  it("完了と停止のとき、ピルと文言が変わる", () => {
+    const finished = render(
+      response({ printer: snapshot({ state: "finished", job: { ...snapshot().job, progressPercent: 100, remainingMinutes: null, estimatedFinishAt: null } }) })
+    );
+    expect(finished).toContain("完了");
+    expect(finished).toContain("印刷が終わりました");
+    expect(finished).not.toContain("ごろ完了");
+
+    const failed = render(
+      response({
+        printer: snapshot({
+          state: "failed",
+          errors: {
+            printError: { code: "0300_4001", raw: 50348033 },
+            hms: [{ code: "HMS_0700_2000_0002_0001", severity: "serious" }],
+          },
+        }),
+      })
+    );
+    expect(failed).toContain("停止");
+    expect(failed).toContain("印刷が止まりました");
+    expect(failed).toContain("0300_4001");
+    expect(failed).toContain("HMS_0700_2000_0002_0001");
+    expect(failed).toContain("（重大）");
+  });
+
+  it("一時停止のとき、完了予定は出さない", () => {
+    const html = render(response({ printer: snapshot({ state: "paused", rawState: "PAUSE" }) }));
+    expect(html).toContain("一時停止");
+    expect(html).toContain("残り 1時間24分");
+    expect(html).not.toContain("ごろ完了");
+  });
+
+  it("プリンターに繋がっていないときは現在値を出さず、最後の状態を添える", () => {
+    const html = render(
+      response({
+        connection: "printer_offline",
+        online: false,
+        printer: null,
+        lastKnown: snapshot({ state: "finished", job: { ...snapshot().job, progressPercent: 100 } }),
+        lastMessageAt: "2026-09-20T21:40:00+09:00",
+      })
+    );
+    expect(html).toContain("オフライン");
+    expect(html).toContain("プリンターに繋がっていません");
+    expect(html).toContain("最後に確認した状態・昨日 21:40");
+    expect(html).toContain("cable-clip_v3　完了");
+    // 温度・進捗バーは「いま」の値として出さない
+    expect(html).not.toContain("ノズル");
+    expect(html).not.toContain("progressbar");
+  });
+
+  it("収集が止まっているときも現在値を出さず、閾値の分数を案内する", () => {
+    const html = render(
+      response({
+        connection: "collector_stale",
+        online: false,
+        stale: true,
+        printer: null,
+        lastKnown: snapshot(),
+        lastUpdateAt: "2026-09-21T13:04:00+09:00",
+      })
+    );
+    expect(html).toContain("情報が古い");
+    expect(html).toContain("3分以上、プリンターの状態が届いていません");
+    expect(html).toContain("最後に確認した状態・13:04");
+    expect(html).toContain("cable-clip_v3　印刷中 62%");
+    expect(html).not.toContain("ノズル");
+    expect(html).not.toContain("progressbar");
+  });
+
+  it("まだ何も届いていないときは案内だけ出す", () => {
+    const html = render(
+      response({ configured: false, connection: "no_data", online: false, printer: null })
+    );
+    expect(html).toContain("3Dプリンターの状態がまだ届いていません");
+    expect(html).not.toContain("最後に確認した状態");
+  });
+
+  it("読み込み中と取得失敗を出し分ける", () => {
+    expect(render(null, { loading: true })).toContain("読み込み中...");
+    expect(render(null, { error: true })).toContain("3Dプリンターの状態を読み込めませんでした");
+    // 読み込み中はピル（状態）を出さない
+    expect(render(response(), { loading: true })).not.toContain("印刷中");
+  });
+
+  it("AMS Lite のスロットは材料・残量・使用中の印を出し、空きは「空」にする", () => {
+    const tray = (slot: number, material: string, remain: number | null, empty = false) => ({
+      slot,
+      empty,
+      material: empty ? null : material,
+      brand: null,
+      color: empty ? null : "#2B2B2B",
+      remainPercent: remain,
+    });
+    const html = render(
+      response({
+        printer: snapshot({
+          ams: {
+            connected: true,
+            units: [{ id: 0, humidity: 4, slots: [tray(0, "PLA", 84), tray(1, "PETG", 62), tray(2, "", null, true)] }],
+            activeSource: "ams",
+            activeSlot: 1,
+            externalSpool: null,
+          },
+        }),
+      })
+    );
+    expect(html).toContain("フィラメント（AMS Lite）");
+    expect(html).toContain("PETG");
+    expect(html).toContain("62%");
+    expect(html).toContain("輪＝使用中");
+    expect(html).toContain("空");
+  });
+
+  // 実機は AMS Lite なしの構成。外付けスプールの残量は読めない（null）
+  it("AMS が無いときは外付けスプールだけを出す", () => {
+    const html = render(
+      response({
+        printer: snapshot({
+          ams: {
+            connected: false,
+            units: [],
+            activeSource: "external",
+            activeSlot: null,
+            externalSpool: {
+              slot: 254,
+              empty: false,
+              material: "PLA",
+              brand: null,
+              color: "#BCBCBC",
+              remainPercent: null,
+            },
+          },
+        }),
+      })
+    );
+    expect(html).toContain("外付けスプール");
+    expect(html).toContain("PLA");
+    expect(html).not.toContain("AMS Lite");
+  });
+});

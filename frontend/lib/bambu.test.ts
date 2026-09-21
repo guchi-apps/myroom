@@ -1,0 +1,229 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildFilamentView,
+  collectBambuErrors,
+  describeLastKnown,
+  formatFinishAt,
+  formatObservedAt,
+  formatRemaining,
+  formatTargetTemperature,
+  formatTemperature,
+  getBambuStatusPill,
+  resolveBambuView,
+  type BambuPrinterResponse,
+  type BambuSnapshot,
+  type BambuTray,
+} from "@/lib/bambu";
+
+function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
+  return {
+    state: "printing",
+    rawState: "RUNNING",
+    job: {
+      name: "cable-clip_v3",
+      progressPercent: 62,
+      layer: 142,
+      totalLayers: 230,
+      remainingMinutes: 84,
+      estimatedFinishAt: "2026-09-21T14:52:00+09:00",
+    },
+    nozzle: { temperature: 218.4, target: 220 },
+    bed: { temperature: 60, target: 60 },
+    speed: { level: 2, mode: "standard" },
+    ams: { connected: false, units: [], activeSource: "none", activeSlot: null, externalSpool: null },
+    errors: { printError: null, hms: [] },
+    ...overrides,
+  };
+}
+
+function response(overrides: Partial<BambuPrinterResponse> = {}): BambuPrinterResponse {
+  return {
+    fetchedAt: "2026-09-21T13:28:30+09:00",
+    configured: true,
+    connection: "online",
+    online: true,
+    stale: false,
+    staleThresholdSeconds: 180,
+    lastUpdateAt: "2026-09-21T13:28:00+09:00",
+    lastMessageAt: "2026-09-21T13:28:00+09:00",
+    printer: snapshot(),
+    lastKnown: null,
+    ...overrides,
+  };
+}
+
+function tray(overrides: Partial<BambuTray> = {}): BambuTray {
+  return {
+    slot: 0,
+    empty: false,
+    material: "PLA",
+    brand: null,
+    color: "#ECECEC",
+    remainPercent: 84,
+    ...overrides,
+  };
+}
+
+const NOW = "2026-09-21T13:28:30+09:00";
+
+describe("時刻の整形", () => {
+  it("同じ日は時刻だけ、前後1日は昨日・明日、それ以外は月/日を付ける", () => {
+    expect(formatObservedAt("2026-09-21T13:04:00+09:00", NOW)).toBe("13:04");
+    expect(formatObservedAt("2026-09-20T21:40:00+09:00", NOW)).toBe("昨日 21:40");
+    expect(formatObservedAt("2026-09-22T02:10:00+09:00", NOW)).toBe("明日 02:10");
+    expect(formatObservedAt("2026-09-19T21:40:00+09:00", NOW)).toBe("9/19 21:40");
+    expect(formatObservedAt(null, NOW)).toBeNull();
+  });
+
+  it("完了予定は「ごろ完了」を付け、予測が無ければ null", () => {
+    expect(formatFinishAt("2026-09-21T14:52:00+09:00", NOW)).toBe("14:52 ごろ完了");
+    expect(formatFinishAt("2026-09-22T02:10:00+09:00", NOW)).toBe("明日 02:10 ごろ完了");
+    expect(formatFinishAt(null, NOW)).toBeNull();
+  });
+
+  // 端末のタイムゾーンで解釈し直すと日付がずれる。文字列のまま切り出していること
+  it("オフセット付きの文字列を端末の時計で解釈し直さない", () => {
+    expect(formatObservedAt("2026-09-21T00:05:00+09:00", "2026-09-21T23:50:00+09:00")).toBe("00:05");
+  });
+
+  it("残り時間を時間と分で出す", () => {
+    expect(formatRemaining(84)).toBe("1時間24分");
+    expect(formatRemaining(24)).toBe("24分");
+    expect(formatRemaining(120)).toBe("2時間");
+    expect(formatRemaining(0)).toBe("0分");
+  });
+});
+
+describe("温度の整形", () => {
+  it("整数で出し、読めなければ -- にする", () => {
+    expect(formatTemperature(218.4)).toBe("218");
+    expect(formatTemperature(null)).toBe("--");
+  });
+
+  it("目標は加熱しているときだけ出す（0・不明は出さない）", () => {
+    expect(formatTargetTemperature(220)).toBe("220");
+    expect(formatTargetTemperature(0)).toBeNull();
+    expect(formatTargetTemperature(null)).toBeNull();
+  });
+});
+
+describe("resolveBambuView", () => {
+  it("online のときだけ現在値を返す", () => {
+    expect(resolveBambuView(response()).kind).toBe("current");
+  });
+
+  // 古い値を「いま」として出さない。lastKnown は現在値にならない
+  it("接続なし・収集停止では lastKnown を現在値にしない", () => {
+    const last = snapshot();
+    const offline = resolveBambuView(
+      response({ connection: "printer_offline", online: false, printer: null, lastKnown: last })
+    );
+    expect(offline).toEqual({ kind: "offline", lastKnown: last });
+    const stale = resolveBambuView(
+      response({ connection: "collector_stale", online: false, stale: true, printer: null, lastKnown: last })
+    );
+    expect(stale).toEqual({ kind: "stale", lastKnown: last });
+  });
+
+  it("何も届いていなければ no_data", () => {
+    expect(
+      resolveBambuView(
+        response({ configured: false, connection: "no_data", online: false, printer: null })
+      ).kind
+    ).toBe("no_data");
+  });
+});
+
+describe("エラーと状態のピル", () => {
+  it("致命的・重大のHMSと印刷エラーだけを拾い、情報レベルは出さない", () => {
+    const errors = collectBambuErrors(
+      snapshot({
+        errors: {
+          printError: { code: "0300_4001", raw: 50348033 },
+          hms: [
+            { code: "HMS_0700_2000_0002_0001", severity: "serious" },
+            { code: "HMS_0500_0100_0003_0004", severity: "info" },
+            { code: "HMS_0300_0100_0001_0007", severity: "fatal" },
+          ],
+        },
+      })
+    );
+    expect(errors.map((item) => item.code)).toEqual([
+      "0300_4001",
+      "HMS_0700_2000_0002_0001",
+      "HMS_0300_0100_0001_0007",
+    ]);
+    expect(errors.map((item) => item.severityLabel)).toEqual([null, "重大", "致命的"]);
+  });
+
+  it("状態ごとのラベル", () => {
+    expect(getBambuStatusPill(snapshot()).label).toBe("印刷中");
+    expect(getBambuStatusPill(snapshot()).live).toBe(true);
+    expect(getBambuStatusPill(snapshot({ state: "paused" })).label).toBe("一時停止");
+    expect(getBambuStatusPill(snapshot({ state: "finished" })).label).toBe("完了");
+    expect(getBambuStatusPill(snapshot({ state: "failed" })).label).toBe("停止");
+    expect(getBambuStatusPill(snapshot({ state: "idle" })).label).toBe("待機中");
+    expect(getBambuStatusPill(snapshot({ state: "unknown" })).label).toBe("状態不明");
+  });
+
+  it("停止以外でもエラーが出ていれば「エラー」を優先する", () => {
+    const pill = getBambuStatusPill(
+      snapshot({ errors: { printError: { code: "0300_4001", raw: 1 }, hms: [] } })
+    );
+    expect(pill).toEqual({ label: "エラー", tone: "bad", live: false });
+  });
+});
+
+describe("最後に確認した状態", () => {
+  it("名前・状態・進捗を1行にする", () => {
+    expect(describeLastKnown(snapshot())).toBe("cable-clip_v3　印刷中 62%");
+    expect(describeLastKnown(snapshot({ state: "finished" }))).toBe("cable-clip_v3　完了");
+    expect(describeLastKnown(snapshot({ state: "idle" }))).toBe("待機中");
+  });
+});
+
+describe("buildFilamentView", () => {
+  it("AMS Lite があればスロットを並べ、使用中のスロットに印を付ける", () => {
+    const view = buildFilamentView(
+      snapshot({
+        ams: {
+          connected: true,
+          units: [
+            {
+              id: 0,
+              humidity: 4,
+              slots: [tray({ slot: 0 }), tray({ slot: 1, material: "PETG" }), tray({ slot: 2, empty: true, material: null, color: null, remainPercent: null })],
+            },
+          ],
+          activeSource: "ams",
+          activeSlot: 1,
+          externalSpool: null,
+        },
+      })
+    );
+    expect(view?.source).toBe("ams");
+    expect(view?.slots.map((slot) => slot.active)).toEqual([false, true, false]);
+  });
+
+  // 実機は AMS Lite なしの構成で確かめている。材料・色は外付けスプールにしか入らない
+  it("AMS が無ければ外付けスプールを1つだけ出す", () => {
+    const view = buildFilamentView(
+      snapshot({
+        ams: {
+          connected: false,
+          units: [],
+          activeSource: "external",
+          activeSlot: null,
+          externalSpool: tray({ slot: 254, remainPercent: null }),
+        },
+      })
+    );
+    expect(view?.source).toBe("external");
+    expect(view?.slots).toHaveLength(1);
+    expect(view?.slots[0].active).toBe(true);
+  });
+
+  it("どちらも無ければ null", () => {
+    expect(buildFilamentView(snapshot())).toBeNull();
+  });
+});
