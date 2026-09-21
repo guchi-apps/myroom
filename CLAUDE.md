@@ -449,6 +449,37 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
 `useState`の初期値で作れば増えない（`components/outdoor-location-sheet.tsx`と
 `device-visibility-page.tsx`の呼び出し）。
 
+## 3Dプリンター（Bambu Lab A1 mini）の状態は「最新の1件」だけを持つ
+
+**ローカルMQTTの購読はサブPCの常駐プロセス（`collectors/bambu_to_myroom.py`）が持ち、myroom は
+受け取って正規化・保存・返却するだけ**（#428）。バックエンドはMQTTへ繋がない（VPSはプリンターと
+別のLANにいる）。セットアップ・ログの見方は `collectors/README.md` の bambu の節。
+
+- **保存は `app_settings` の `bambu_printer_state` 1行。マイグレーションは1行も足していない。**
+  履歴（過去の印刷の一覧）は持たない。要るなら時系列で伸びるのでテーブルを足す別の話になる
+- **`GET /api/internal/bambu/printer` は現在値を `online` のときだけ返す。** 収集が止まった
+  （最後の受信から180秒超・`collector_stale`）ときも、プリンターに繋がっていない
+  （`printer_offline`）ときも `printer` は `null` で、最後の値は `lastKnown` に分ける。
+  **`online` を見ずに `lastKnown` を「いま」の値として使わないこと**
+- **収集は変化が無くても60秒ごとに送る。** 待機中は変化が無いので、これが無いと「収集が止まった」と
+  区別が付かない。間隔を伸ばすなら `BAMBU_STALE_SECONDS`（既定180）も合わせて見直す
+- **全状態を受け取るまで `connected: true` にしない。** 再接続直後は差分しか届かず、
+  マージ前の値を「いま」として見せてしまうため（`BambuMonitor.snapshot()`）
+- **`pushall` は5分以上あける。** P1/A1 系は短い間隔の要求へ応答しなくなることがある。接続のたびに
+  送らず、`BambuMonitor.pushall_allowed()` で間隔を守る（再接続が続く場合は全状態を待たせる）
+- **この経路から印刷を操作しない。** 内部APIは読み取り専用（`INTERNAL_API_KEY`）で、収集が送る
+  MQTTも `pushall` だけ。操作を足すなら `INTERNAL_CONTROL_API_KEY` の別の口として決め直す
+- **完了・停止・エラーの遷移は `backend/bambu.py` の `detect_transition_events()` が
+  `NotificationEvent` として組み立てるが、Push配信はしていない**（`main.py` の
+  `_handle_bambu_events()` はログに出すだけ）。AIDE側（guchi-apps/aide#378）と役割分担を決めてから
+  `notify_events.dispatch_push_event()` へ渡す。**前回が無い・古い（収集が止まっていた）ときは
+  比べない**——再開直後に完了済みのジョブを「いま完了した」と誤検出しないため
+- **収集の受け口（`POST /api/bambu/state`）は無認証**で、`/api/sensor`・`/api/energy` と同じ扱い
+  （#249）。**接続情報（`BAMBU_HOST`/`BAMBU_SERIAL`/`BAMBU_ACCESS_CODE`）はサブPCの
+  `collectors/.env` にだけ置き、1Password・GitHub secret には置かない**（本体の画面から読み直せる）
+- AMS Lite の残量は `remain` が 1〜100 のときだけ返す（0・-1 は「不明」）。実機は AMS Lite なしの
+  構成でしか確かめていない
+
 ## 収集スクリプトの再送信を時系列データのポーリングに使う（電気代・時間ごと表示）
 
 **「時間ごと」のような、より細かい粒度の表示が要るとき、収集スクリプト自体を変更しなくてよい

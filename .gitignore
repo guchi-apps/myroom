@@ -14,11 +14,15 @@ data/sensor_alert_state.json
 data/garbage_notify_state.json
 data/garbage_notion_state.json
 data/cleaning.json
+data/bambu_state.json
+data/bambu_state.json.lock
 __pycache__/
 *.pyc
 venv/
 # collectors/tapo_to_myroom.py 用の専用venv（python-kasa）
 collectors/.venv-tapo/
+# collectors/bambu_to_myroom.py 用の専用venv（paho-mqtt）
+collectors/.venv-bambu/
 .pytest_cache/
 .tools/
 .claude/
