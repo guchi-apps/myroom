@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import datetime
 import random
 from dotenv import load_dotenv
-from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
+from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bambu, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_control_token, require_internal_token
 from pydantic import BaseModel, model_validator
@@ -430,6 +431,24 @@ class UtilityBillItem(BaseModel):
 class UtilityBillPayload(BaseModel):
     records: List[UtilityBillItem]
 
+
+class BambuStatePayload(BaseModel):
+    """`collectors/bambu_to_myroom.py` からの送信（#428）。
+
+    `report` は差分で届く MQTT の `print` を収集側でマージした全状態。プリンターに繋がって
+    いないあいだは `report` を省き、`connected: false` だけを送る（保存済みの状態は残る）。
+    """
+
+    connected: bool
+    last_message_at: Optional[str] = None
+    report: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def report_is_not_oversized(self):
+        if self.report is not None and len(json.dumps(self.report)) > bambu.MAX_REPORT_BYTES:
+            raise ValueError("report is too large")
+        return self
+
 class AirconData(BaseModel):
     datetime: str
     ac_id: Optional[int] = 1
@@ -839,6 +858,21 @@ def get_internal_room_state(
     （`INTERNAL_CONTROL_API_KEY`）で通る `/api/internal/remote/…` に限る（#419）。
     """
     return _build_room_state_payload(db)
+
+
+@app.get("/api/internal/bambu/printer")
+def get_internal_bambu_printer(
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_token),
+):
+    """Bambu Lab A1 mini の正規化済みの状態を返す、サーバー間参照用の読み取りAPI（#428）。
+
+    現在値（`printer`）は `online` のときだけ入る。収集が止まっている・プリンターに繋がって
+    いないときは `printer` を `null` にし、最後に受け取った値は `lastKnown` へ分ける
+    （古い値を「いま」の値として読ませない）。`connection` が理由で、`ageSeconds` が
+    最後の受信からの経過。**印刷を操作する口はここに足さないこと**（第1段階は読み取りのみ）。
+    """
+    return bambu.build_response(bambu.get_record(db))
 
 
 @app.get("/api/garbage")
@@ -1751,6 +1785,43 @@ async def import_kepco_hourly_csv(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+def _handle_bambu_events(events: List[Any]) -> None:
+    """検出した状態遷移の受け渡し先。**いまはログに出すだけで、Push配信はしない**（#428）。
+
+    AIDE 側（guchi-apps/aide#378）との役割分担が決まったら、ここから
+    `notify_events.dispatch_push_event()` へ渡す。
+    """
+    for event in events:
+        logger.info("Bambu event: kind=%s title=%s", event.kind, event.title)
+
+
+@app.post("/api/bambu/state")
+def create_bambu_state(
+    payload: BambuStatePayload,
+    db: Session = Depends(database.get_db),
+):
+    """Bambu Lab A1 mini の最新の状態を受け取る（サブPCの `bambu_to_myroom.py` から）。
+
+    最新の1件だけを `app_settings` へ上書きする。履歴は持たない。
+
+    **認証は付けていない。** `/api/sensor`・`/api/energy`・`/api/bills` と同じ収集経路の
+    扱いで、付けるかどうかは収集経路全体でまとめて判断する（#249）。
+    """
+    try:
+        _, events = bambu.record_state(
+            connected=payload.connected,
+            report=payload.report,
+            last_message_at=payload.last_message_at,
+            db=db,
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _handle_bambu_events(events)
+    return {"status": "ok", "events": [event.kind for event in events]}
 
 
 @app.post("/api/bills")

@@ -1,0 +1,11 @@
+# collectors/bambu_to_myroom.py 専用の依存。
+#
+# Bambu Lab A1 mini の状態は LAN 内のローカル MQTT（TLS・8883）から読む。標準ライブラリに
+# MQTT クライアントは無いので paho-mqtt が要る。サブPCのシステムPythonには入っていないため、
+# 専用の venv を作って使う。
+#
+#   python3 -m venv collectors/.venv-bambu
+#   collectors/.venv-bambu/bin/pip install -r collectors/requirements-bambu.txt
+#
+# バックエンドの requirements.txt には入れない。VPS はプリンターと同じLANにいないため。
+paho-mqtt>=2.0

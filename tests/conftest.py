@@ -43,6 +43,11 @@ def data_dir(tmp_path, monkeypatch):
         "backend.garbage_notion.STATE_PATH",
         tmp_path / "garbage_notion_state.json",
     )
+    # Bambu の最新状態も DB_MOCK ではファイルに落ちる（本番は app_settings テーブル）
+    monkeypatch.setattr(
+        "backend.bambu.STATE_PATH",
+        tmp_path / "bambu_state.json",
+    )
     # 掃除の予定は DB_MOCK ではファイルに落ちる（本番は app_settings テーブル）
     monkeypatch.setattr(
         "backend.cleaning.CONFIG_PATH",
