@@ -477,6 +477,15 @@ DDLもデータの一括書き換えも要らず、本番の権限問題（上�
   送らず、`BambuMonitor.pushall_allowed()` で間隔を守る（再接続が続く場合は全状態を待たせる）
 - **この経路から印刷を操作しない。** 内部APIは読み取り専用（`INTERNAL_API_KEY`）で、収集が送る
   MQTTも `pushall` だけ。操作を足すなら `INTERNAL_CONTROL_API_KEY` の別の口として決め直す
+- **画面（「暮らし」末尾の3Dプリンターカード・#436）は `GET /api/bambu/printer`（ユーザーJWT）から読む。**
+  応答の形は内部APIと同じ（`bambu.build_response()`）で、内部APIのトークンをブラウザへ渡さないために
+  口だけ分けてある。`components/printer-card.tsx` は**現在値を `printer`（＝`online` のときだけ入る）
+  から読み、`lastKnown` は「最後に確認した状態」の1行にしか使わない**（温度・進捗の枠は出さない）。
+  時刻は `lib/bambu.ts` が文字列のまま切り出し、「いま」は端末の時計ではなく応答の `fetchedAt` を使う。
+  更新はダッシュボードの30秒更新に相乗りしている（専用のポーリングは持たない）
+- **AMS Lite が無い構成では、材料・色は `ams.externalSpool` にしか入らず残量も読めない。**
+  実機はこの構成なので、`buildFilamentView()` は `ams.units` が空なら外付けスプール1つだけを出す
+  （残量の欄は出さない）。AMS Lite ありの表示は実機で確かめていない
 - **完了・停止・エラーの遷移は `backend/bambu.py` の `detect_transition_events()` が
   `NotificationEvent` として組み立てるが、Push配信はしていない**（`main.py` の
   `_handle_bambu_events()` はログに出すだけ）。AIDE側（guchi-apps/aide#378）と役割分担を決めてから

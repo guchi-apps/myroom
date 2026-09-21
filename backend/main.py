@@ -875,6 +875,21 @@ def get_internal_bambu_printer(
     return bambu.build_response(bambu.get_record(db))
 
 
+@app.get("/api/bambu/printer")
+def get_bambu_printer(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """ダッシュボードの「3Dプリンター」カード用（#436）。
+
+    応答の形は `/api/internal/bambu/printer` と同じ（`bambu.build_response()`）。
+    ユーザーJWTで守るのは、画面から読む経路をサーバー間参照用の内部APIと分けるため
+    （内部APIのトークンをブラウザへ渡さない）。現在値は `online` のときだけ `printer` に入り、
+    収集停止・接続なしのときは `lastKnown` に分かれる。**読み取りだけで、印刷の操作は足さない。**
+    """
+    return bambu.build_response(bambu.get_record(db))
+
+
 @app.get("/api/garbage")
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""

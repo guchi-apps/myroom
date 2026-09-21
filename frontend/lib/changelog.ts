@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.19.0",
+    date: "2026-09-21",
+    changes: [
+      "「暮らし」に3Dプリンター（Bambu Lab A1 mini）の稼働状況を表示するカードを追加しました。印刷中の進捗や温度、待機中の状態などをひと目で確認できます。",
+    ],
+  },
+  {
     version: "4.18.1",
     date: "2026-09-21",
     changes: [

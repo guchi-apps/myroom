@@ -442,3 +442,49 @@ def test_internal_get_does_not_accept_control_token(client, internal_api_key, in
     )
 
     assert response.status_code == 401
+
+
+# --- 画面向けの読み取り口（#436） --------------------------------------------
+
+
+def test_app_get_requires_login(client):
+    """画面向けの口はユーザーJWTで守る（未ログインでは読めない）。"""
+    assert client.get("/api/bambu/printer").status_code in (401, 403)
+
+
+def test_app_get_without_data(authed_client):
+    body = authed_client.get("/api/bambu/printer").json()
+
+    assert body["configured"] is False
+    assert body["connection"] == "no_data"
+    assert body["printer"] is None
+
+
+def test_app_get_returns_same_shape_as_internal(authed_client, internal_api_key):
+    _post(
+        authed_client,
+        connected=True,
+        last_message_at=bambu.now_jst().isoformat(),
+        report=_report(gcode_state="RUNNING", mc_percent=42, mc_remaining_time=30),
+    )
+
+    body = authed_client.get("/api/bambu/printer").json()
+    internal = authed_client.get(
+        "/api/internal/bambu/printer", headers={"Authorization": f"Bearer {internal_api_key}"}
+    ).json()
+
+    assert body["online"] is True
+    assert body["printer"]["state"] == "printing"
+    assert body["printer"]["job"]["progressPercent"] == 42
+    assert set(body) == set(internal)
+
+
+def test_app_get_hides_current_values_when_printer_offline(authed_client):
+    _post(authed_client, connected=True, last_message_at=bambu.now_jst().isoformat(), report=_report())
+    _post(authed_client, connected=False)
+
+    body = authed_client.get("/api/bambu/printer").json()
+
+    assert body["online"] is False
+    assert body["printer"] is None
+    assert body["lastKnown"]["state"] == "finished"

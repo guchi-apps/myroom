@@ -16,6 +16,7 @@ import { METRIC_ICONS } from "@/components/current-readings";
 import { TrendPanel } from "@/components/trend-panel";
 import { BillCard } from "@/components/bill-card";
 import { CleaningCard } from "@/components/cleaning-card";
+import { PrinterCard } from "@/components/printer-card";
 import {
   CleaningDetailPanel,
   CleaningSettingsPanel,
@@ -33,6 +34,7 @@ import { AirconDetailPanel } from "@/components/aircon-detail-panel";
 import {
   deleteCleaningDone,
   fetchBillsSummary,
+  fetchBambuPrinter,
   fetchCleaningSchedule,
   fetchDashboardData,
   fetchDevices,
@@ -105,7 +107,9 @@ import {
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
   REMOTE_CARD_KEY,
+  PRINTER_CARD_KEY,
 } from "@/lib/dashboard-sections";
+import type { BambuPrinterResponse } from "@/lib/bambu";
 import type {
   CleaningSchedule,
   CleaningTask,
@@ -370,6 +374,8 @@ export function MyRoomDashboard() {
   const [cleaningBusyId, setCleaningBusyId] = useState<string | null>(null);
   const [cleaningSaving, setCleaningSaving] = useState(false);
   const [cleaningSaveError, setCleaningSaveError] = useState<string | null>(null);
+  const [bambuPrinter, setBambuPrinter] = useState<BambuPrinterResponse | null>(null);
+  const [bambuError, setBambuError] = useState(false);
   const [remoteButtons, setRemoteButtons] = useState<RemoteButtons | null>(null);
   const [remoteError, setRemoteError] = useState(false);
   const [energyBreakdown, setEnergyBreakdown] = useState<EnergyBreakdown | null>(null);
@@ -783,6 +789,7 @@ export function MyRoomDashboard() {
           remote,
           bills,
           cleaning,
+          bambu,
           outdoorList,
           outdoorWeathers,
         ] = await Promise.all([
@@ -793,6 +800,7 @@ export function MyRoomDashboard() {
           fetchRemoteButtons().catch(() => null),
           fetchBillsSummary().catch(() => null),
           fetchCleaningSchedule().catch(() => null),
+          fetchBambuPrinter().catch(() => null),
           fetchOutdoorLocations().catch(() => null),
           fetchOutdoorLocationsWeather().catch(() => null),
         ]);
@@ -819,6 +827,8 @@ export function MyRoomDashboard() {
         setBillError(bills == null);
         if (cleaning) setCleaningSchedule(cleaning);
         setCleaningError(cleaning == null);
+        if (bambu) setBambuPrinter(bambu);
+        setBambuError(bambu == null);
         // 地点そのものは `/devices` からしか変わらないので、取れなかったときは前回を残す
         if (outdoorList) setOutdoorLocations(outdoorList);
         if (outdoorWeathers) {
@@ -1432,6 +1442,16 @@ export function MyRoomDashboard() {
                         onMarkDone={(task) => {
                           void handleMarkCleaningDone(task);
                         }}
+                      />
+                    );
+                  }
+                  if (card.key === PRINTER_CARD_KEY) {
+                    return (
+                      <PrinterCard
+                        key={card.key}
+                        printer={bambuPrinter}
+                        loading={!dashboardDataLoaded && bambuPrinter == null}
+                        error={bambuError && bambuPrinter == null}
                       />
                     );
                   }

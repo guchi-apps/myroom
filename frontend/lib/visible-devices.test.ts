@@ -30,6 +30,7 @@ import {
   COMING_SOON_SECTION_KEY,
   ENERGY_CARD_KEY,
   GARBAGE_CARD_KEY,
+  PRINTER_CARD_KEY,
   REMOTE_CARD_KEY,
 } from "@/lib/dashboard-sections";
 
@@ -60,6 +61,7 @@ describe("visible-devices", () => {
         ENERGY_CARD_KEY,
         BILL_CARD_KEY,
         CLEANING_CARD_KEY,
+        PRINTER_CARD_KEY,
         COMING_SOON_SECTION_KEY,
       ].sort()
     );
