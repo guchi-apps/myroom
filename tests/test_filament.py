@@ -1,8 +1,12 @@
 import datetime
+import threading
+import time
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from backend import filament
+from backend import database, filament
 
 TODAY = datetime.date(2026, 9, 21)
 NOW = datetime.datetime(2026, 9, 21, 13, 30, tzinfo=filament.JST)
@@ -461,3 +465,155 @@ def test_api_update_can_clear_tare_with_null(authed_client):
     assert cleared["spools"][0]["tare_g"] is None
     untouched = authed_client.put(f"/api/filament/spools/{spool_id}", json={"name": "B"}).json()
     assert untouched["spools"][0]["tare_g"] is None
+
+
+# --- 並行する更新（lost update）-----------------------------------------------
+#
+# 1つのドキュメントに全スプールが入っているので、別のスプールへの操作同士でも、読み込みから
+# 書き戻しの間に割り込まれると片方が消える。窓を広げるため、ロックの内側で呼ばれる
+# `_new_id` を遅くして、ロックが無ければ確実に取りこぼす形にしてある。
+
+
+@pytest.fixture
+def slow_mutation(monkeypatch):
+    original = filament._new_id
+
+    def slow(prefix):
+        time.sleep(0.01)
+        return original(prefix)
+
+    monkeypatch.setattr(filament, "_new_id", slow)
+
+
+def _run_concurrently(jobs):
+    errors = []
+    barrier = threading.Barrier(len(jobs))
+
+    def run(job):
+        try:
+            barrier.wait()
+            job()
+        except BaseException as exc:  # pragma: no cover - 失敗を握り潰さずテストへ返す
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(job,)) for job in jobs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+
+def _assert_nothing_lost(read_document, ids, count):
+    spools = {item["id"]: item for item in read_document()["spools"]}
+    for spool_id in ids:
+        assert len(spools[spool_id]["usages"]) == count
+
+
+def test_concurrent_updates_do_not_lose_each_other_in_file_mode(store, slow_mutation):
+    ids = [add(name=f"S{index}")["spools"][-1]["id"] for index in range(4)]
+    per_spool = 5
+    jobs = [
+        (lambda spool_id=spool_id: filament.record_usage(spool_id, 1, today=TODAY, now=NOW))
+        for spool_id in ids
+        for _ in range(per_spool)
+    ]
+    _run_concurrently(jobs)
+    _assert_nothing_lost(filament.get_document, ids, per_spool)
+
+
+@pytest.fixture
+def sqlite_db(tmp_path, monkeypatch):
+    """本番のDB経路（`app_settings` の1行）を、SQLite のファイルで通す。スレッドごとに別の接続を使う。"""
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'filament.db'}", connect_args={"timeout": 30}
+    )
+    database.AppSetting.__table__.create(engine)
+    monkeypatch.setattr(database, "DB_MOCK", False)
+    factory = sessionmaker(bind=engine)
+    try:
+        yield factory
+    finally:
+        engine.dispose()
+
+
+def _in_session(factory, action):
+    session = factory()
+    try:
+        return action(session)
+    finally:
+        session.close()
+
+
+def test_concurrent_updates_do_not_lose_each_other_in_db_mode(sqlite_db, slow_mutation):
+    first = _in_session(sqlite_db, lambda db: filament.add_spool({"name": "S0"}, db, today=TODAY, now=NOW))
+    ids = [first["spools"][0]["id"]]
+    for index in range(1, 4):
+        document = _in_session(
+            sqlite_db, lambda db, index=index: filament.add_spool({"name": f"S{index}"}, db, today=TODAY, now=NOW)
+        )
+        ids.append(document["spools"][-1]["id"])
+
+    per_spool = 5
+    jobs = [
+        (
+            lambda spool_id=spool_id: _in_session(
+                sqlite_db,
+                lambda db: filament.record_usage(spool_id, 1, db, today=TODAY, now=NOW),
+            )
+        )
+        for spool_id in ids
+        for _ in range(per_spool)
+    ]
+    _run_concurrently(jobs)
+    _assert_nothing_lost(lambda: _in_session(sqlite_db, filament.get_document), ids, per_spool)
+
+
+def test_concurrent_first_writes_create_the_row_once(sqlite_db, slow_mutation):
+    """行がまだ無いうちに同時に追加しても、片方が主キー違反で落ちたり消えたりしない。"""
+    jobs = [
+        (
+            lambda index=index: _in_session(
+                sqlite_db,
+                lambda db: filament.add_spool({"name": f"S{index}"}, db, today=TODAY, now=NOW),
+            )
+        )
+        for index in range(4)
+    ]
+    _run_concurrently(jobs)
+    names = sorted(item["name"] for item in _in_session(sqlite_db, filament.get_document)["spools"])
+    assert names == ["S0", "S1", "S2", "S3"]
+
+
+def test_failed_update_in_db_mode_writes_nothing_and_releases_the_lock(sqlite_db):
+    _in_session(sqlite_db, lambda db: filament.add_spool({"name": "A"}, db, today=TODAY, now=NOW))
+
+    def failing(db):
+        with pytest.raises(filament.SpoolNotFound):
+            filament.record_usage("nope", 10, db, today=TODAY, now=NOW)
+
+    _in_session(sqlite_db, failing)
+    # ロックが残っていれば、次の更新が待たされて止まる（タイムアウトで落ちる）
+    document = _in_session(
+        sqlite_db,
+        lambda db: filament.set_active(None, db),
+    )
+    assert document["active_id"] is None
+    assert [item["name"] for item in document["spools"]] == ["A"]
+
+
+def test_db_mode_round_trip(sqlite_db):
+    document = _in_session(
+        sqlite_db,
+        lambda db: filament.add_spool(
+            {"name": "A", "tare_g": 152, "current_gross_g": 611}, db, today=TODAY, now=NOW
+        ),
+    )
+    spool_id = document["spools"][0]["id"]
+    _in_session(
+        sqlite_db,
+        lambda db: filament.record_usage(spool_id, 42, db, date="2026-09-21", today=TODAY, now=NOW + datetime.timedelta(hours=1)),
+    )
+    payload = filament.build_payload(_in_session(sqlite_db, filament.get_document))
+    assert payload["spools"][0]["remaining_g"] == 417
+

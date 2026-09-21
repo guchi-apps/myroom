@@ -27,6 +27,13 @@ DB_MOCK のときは `data/filament.json` へ書く（`cleaning.py` と同じ二
 **Notionの既存データは自動では移さない。** 値が古く使い切りも混ざっているため、画面から
 登録する。使用中のスプールは、登録時に「いまの全体重量」を入れればその値が最初の計量になる。
 
+排他
+----
+**保存する操作はすべて `_update()` を通す。** 読み込み・加工・書き戻しを別々に呼ぶと、別の
+リクエストの変更を古い内容で上書きして消す（lost update）。1つのドキュメントに全スプールが
+入っているので、別のスプールへの操作同士でも起きる。DB_MOCK は `atomic_json.update_json`、
+本番は行ロック（`SELECT ... FOR UPDATE`）とプロセス内のロックで囲む。
+
 使用量の履歴は各スプール直近 `MAX_USAGES` 件まで。溢れたときは、計量に含まれていて
 残量に影響しない古い記録から落とし、それでも溢れるなら追加を断る（残量が狂うため）。
 """
@@ -37,10 +44,12 @@ import datetime
 import json
 import re
 import secrets
+import threading
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import atomic_json, database
@@ -377,7 +386,45 @@ def build_payload(
 # --- 保存先 -------------------------------------------------------------------
 
 
-def _load(db: Optional[Session]) -> Dict[str, Any]:
+#: DB経路でプロセス内の並行リクエストを1本ずつにするロック。行ロック（`FOR UPDATE`）が効かない
+#: DB（テストのSQLite）でも、同じプロセスの中では読み→書きが重ならないようにする
+_db_lock = threading.Lock()
+
+
+def _parse_row(row: Optional[database.AppSetting]) -> Any:
+    if row is None:
+        return None
+    try:
+        return json.loads(row.setting_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lock_row(db: Session) -> database.AppSetting:
+    """`filament_spools` の行を書き込み用に確保する（`SELECT ... FOR UPDATE`）。
+
+    行がまだ無い最初の1回だけ、空の行を作ってから取り直す。同時に作ろうとして主キー違反に
+    なった側は、作り直さず相手が作った行を取りに行く。
+    """
+    query = (
+        db.query(database.AppSetting)
+        .filter(database.AppSetting.setting_key == SETTING_KEY)
+        .with_for_update()
+    )
+    row = query.first()
+    if row is None:
+        try:
+            db.add(database.AppSetting(setting_key=SETTING_KEY, setting_value="{}"))
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        row = query.first()
+    assert row is not None
+    return row
+
+
+def get_document(db: Optional[Session] = None) -> Dict[str, Any]:
+    """いまの内容を読む（書き込みはしないのでロックしない）。"""
     if database.DB_MOCK or db is None:
         return normalize_document(atomic_json.read_json(FILE_PATH, None))
     row = (
@@ -385,35 +432,41 @@ def _load(db: Optional[Session]) -> Dict[str, Any]:
         .filter(database.AppSetting.setting_key == SETTING_KEY)
         .first()
     )
-    if row is None:
-        return normalize_document(None)
-    try:
-        return normalize_document(json.loads(row.setting_value))
-    except (TypeError, ValueError):
-        return normalize_document(None)
+    return normalize_document(_parse_row(row))
 
 
-def _write(db: Optional[Session], document: Dict[str, Any]) -> Dict[str, Any]:
-    document = normalize_document(document)
+def _update(
+    db: Optional[Session], mutate: Callable[[Dict[str, Any]], None]
+) -> Dict[str, Any]:
+    """読み込み・加工・書き戻しを**1つの排他区間**で行い、保存後の内容を返す。
+
+    `mutate` は読み込んだ内容をその場で書き換える。入力の誤りは例外で返し、その場合は
+    何も書かない（ロックも放す）。読み込みと書き戻しを別々に呼ぶと、別のリクエストの変更を
+    古い内容で上書きして消す（lost update）。全操作をここへ通すのはそのため。
+
+    - DB_MOCK: `atomic_json.update_json`（プロセス内のロックと `.lock` ファイルの `flock`）
+    - 本番: プロセス内のロックと、行ロック（`FOR UPDATE`）で読み込みから `commit` までを囲む
+    """
+
+    def apply(raw: Any) -> Dict[str, Any]:
+        document = normalize_document(raw)
+        mutate(document)
+        return normalize_document(document)
+
     if database.DB_MOCK or db is None:
-        atomic_json.write_json(FILE_PATH, document)
-        return document
-    serialized = json.dumps(document, ensure_ascii=False)
-    row = (
-        db.query(database.AppSetting)
-        .filter(database.AppSetting.setting_key == SETTING_KEY)
-        .first()
-    )
-    if row is None:
-        db.add(database.AppSetting(setting_key=SETTING_KEY, setting_value=serialized))
-    else:
-        row.setting_value = serialized
-    db.commit()
-    return document
+        return atomic_json.update_json(FILE_PATH, None, apply)
 
-
-def get_document(db: Optional[Session] = None) -> Dict[str, Any]:
-    return _load(db)
+    with _db_lock:
+        try:
+            row = _lock_row(db)
+            document = apply(_parse_row(row))
+            row.setting_value = json.dumps(document, ensure_ascii=False)
+            db.commit()
+            return document
+        except BaseException:
+            # 例外のまま抜けると行ロックが残り、次のリクエストがロック待ちで止まる
+            db.rollback()
+            raise
 
 
 # --- 操作 ---------------------------------------------------------------------
@@ -468,10 +521,8 @@ def add_spool(
     """
     today = today or get_today_jst()
     now = now or get_now_jst()
-    document = _load(db)
-    if len(document["spools"]) >= MAX_SPOOLS:
-        raise FilamentError(f"スプールは{MAX_SPOOLS}本までです")
 
+    # 入力の検証は保存済みの内容に依らないので、ロックを取る前に済ませる
     name = _clean_text(fields.get("name"), MAX_NAME_LENGTH)
     if not name:
         raise FilamentError("名前を入力してください")
@@ -494,22 +545,26 @@ def add_spool(
     if fields.get("purchased_on"):
         purchased_on = _check_date(fields.get("purchased_on"), today)
 
-    spool = {
-        "id": _new_id("s"),
-        "name": name,
-        "material": _normalize_material(fields.get("material")),
-        "color": _normalize_color(fields.get("color")),
-        "purchased_on": purchased_on,
-        "net_g": net,
-        "tare_g": tare,
-        "archived": False,
-        "weighings": weighings,
-        "usages": [],
-    }
-    document["spools"].append(spool)
-    if document["active_id"] is None:
-        document["active_id"] = spool["id"]
-    return _write(db, document)
+    def mutate(document: Dict[str, Any]) -> None:
+        if len(document["spools"]) >= MAX_SPOOLS:
+            raise FilamentError(f"スプールは{MAX_SPOOLS}本までです")
+        spool = {
+            "id": _new_id("s"),
+            "name": name,
+            "material": _normalize_material(fields.get("material")),
+            "color": _normalize_color(fields.get("color")),
+            "purchased_on": purchased_on,
+            "net_g": net,
+            "tare_g": tare,
+            "archived": False,
+            "weighings": weighings,
+            "usages": [],
+        }
+        document["spools"].append(spool)
+        if document["active_id"] is None:
+            document["active_id"] = spool["id"]
+
+    return _update(db, mutate)
 
 
 def update_spool(
@@ -524,60 +579,66 @@ def update_spool(
     使い切り（`archived`）にしたスプールは使用中から外す。
     """
     today = today or get_today_jst()
-    document = _load(db)
-    spool = _find(document, spool_id)
 
-    if "name" in fields:
-        name = _clean_text(fields["name"], MAX_NAME_LENGTH)
-        if not name:
-            raise FilamentError("名前を入力してください")
-        spool["name"] = name
-    if "material" in fields:
-        spool["material"] = _normalize_material(fields["material"])
-    if "color" in fields:
-        spool["color"] = _normalize_color(fields["color"])
-    if "purchased_on" in fields:
-        spool["purchased_on"] = _check_date(fields["purchased_on"], today) if fields["purchased_on"] else None
-    if "net_g" in fields:
-        net = _number(fields["net_g"], 1, MAX_NET_G)
-        if net is None:
-            raise FilamentError(f"初期フィラメント量は1〜{int(MAX_NET_G)}gで入力してください")
-        spool["net_g"] = net
-    if "tare_g" in fields:
-        if fields["tare_g"] is None:
-            spool["tare_g"] = None
-        else:
-            tare = _number(fields["tare_g"], 0, MAX_TARE_G)
-            if tare is None:
-                raise FilamentError(f"空スプールの重さは0〜{int(MAX_TARE_G)}gで入力してください")
-            spool["tare_g"] = tare
-    if "archived" in fields:
-        spool["archived"] = bool(fields["archived"])
-        if spool["archived"] and document["active_id"] == spool["id"]:
-            document["active_id"] = None
-    return _write(db, document)
+    def mutate(document: Dict[str, Any]) -> None:
+        spool = _find(document, spool_id)
+        if "name" in fields:
+            name = _clean_text(fields["name"], MAX_NAME_LENGTH)
+            if not name:
+                raise FilamentError("名前を入力してください")
+            spool["name"] = name
+        if "material" in fields:
+            spool["material"] = _normalize_material(fields["material"])
+        if "color" in fields:
+            spool["color"] = _normalize_color(fields["color"])
+        if "purchased_on" in fields:
+            spool["purchased_on"] = (
+                _check_date(fields["purchased_on"], today) if fields["purchased_on"] else None
+            )
+        if "net_g" in fields:
+            net = _number(fields["net_g"], 1, MAX_NET_G)
+            if net is None:
+                raise FilamentError(f"初期フィラメント量は1〜{int(MAX_NET_G)}gで入力してください")
+            spool["net_g"] = net
+        if "tare_g" in fields:
+            if fields["tare_g"] is None:
+                spool["tare_g"] = None
+            else:
+                tare = _number(fields["tare_g"], 0, MAX_TARE_G)
+                if tare is None:
+                    raise FilamentError(f"空スプールの重さは0〜{int(MAX_TARE_G)}gで入力してください")
+                spool["tare_g"] = tare
+        if "archived" in fields:
+            spool["archived"] = bool(fields["archived"])
+            if spool["archived"] and document["active_id"] == spool["id"]:
+                document["active_id"] = None
+
+    return _update(db, mutate)
 
 
 def set_active(spool_id: Optional[str], db: Optional[Session] = None) -> Dict[str, Any]:
     """いま使っているスプールを選ぶ（None で外す）。使い切りは選べない。"""
-    document = _load(db)
-    if spool_id is None:
-        document["active_id"] = None
-        return _write(db, document)
-    spool = _find(document, spool_id)
-    if spool["archived"]:
-        raise FilamentError("使い切りのスプールは使用中にできません")
-    document["active_id"] = spool["id"]
-    return _write(db, document)
+
+    def mutate(document: Dict[str, Any]) -> None:
+        if spool_id is None:
+            document["active_id"] = None
+            return
+        spool = _find(document, spool_id)
+        if spool["archived"]:
+            raise FilamentError("使い切りのスプールは使用中にできません")
+        document["active_id"] = spool["id"]
+
+    return _update(db, mutate)
 
 
 def delete_spool(spool_id: str, db: Optional[Session] = None) -> Dict[str, Any]:
-    document = _load(db)
-    _find(document, spool_id)
-    document["spools"] = [spool for spool in document["spools"] if spool["id"] != spool_id]
-    if document["active_id"] == spool_id:
-        document["active_id"] = None
-    return _write(db, document)
+    def mutate(document: Dict[str, Any]) -> None:
+        _find(document, spool_id)
+        document["spools"] = [spool for spool in document["spools"] if spool["id"] != spool_id]
+        if document["active_id"] == spool_id:
+            document["active_id"] = None
+
+    return _update(db, mutate)
 
 
 def record_weighing(
@@ -592,23 +653,27 @@ def record_weighing(
     """秤で量った全体重量を記録する。以後の残量はこの値が基準になる。"""
     today = today or get_today_jst()
     now = now or get_now_jst()
-    document = _load(db)
-    spool = _find(document, spool_id)
-    if spool["tare_g"] is None:
-        raise FilamentError("計量には空スプールの重さが必要です。先にスプールの設定で入力してください")
-    entry = _weighing_entry(_require_gross(gross_g), _check_date(date, today), now)
-    spool["weighings"] = [*spool["weighings"], entry]
-    return _write(db, document)
+    gross = _require_gross(gross_g)
+    weighed_on = _check_date(date, today)
+
+    def mutate(document: Dict[str, Any]) -> None:
+        spool = _find(document, spool_id)
+        if spool["tare_g"] is None:
+            raise FilamentError("計量には空スプールの重さが必要です。先にスプールの設定で入力してください")
+        spool["weighings"] = [*spool["weighings"], _weighing_entry(gross, weighed_on, now)]
+
+    return _update(db, mutate)
 
 
 def remove_weighing(spool_id: str, weighing_id: str, db: Optional[Session] = None) -> Dict[str, Any]:
-    document = _load(db)
-    spool = _find(document, spool_id)
-    kept = [entry for entry in spool["weighings"] if entry["id"] != weighing_id]
-    if len(kept) == len(spool["weighings"]):
-        raise SpoolNotFound("指定された計量の記録が見つかりません")
-    spool["weighings"] = kept
-    return _write(db, document)
+    def mutate(document: Dict[str, Any]) -> None:
+        spool = _find(document, spool_id)
+        kept = [entry for entry in spool["weighings"] if entry["id"] != weighing_id]
+        if len(kept) == len(spool["weighings"]):
+            raise SpoolNotFound("指定された計量の記録が見つかりません")
+        spool["weighings"] = kept
+
+    return _update(db, mutate)
 
 
 def record_usage(
@@ -627,35 +692,40 @@ def record_usage(
     used = _number(grams, 0.1, MAX_USAGE_G)
     if used is None:
         raise FilamentError(f"使った量は0.1〜{int(MAX_USAGE_G)}gの数値で入力してください")
-    document = _load(db)
-    spool = _find(document, spool_id)
-    entry = {
-        "id": _new_id("u"),
-        "date": _check_date(date, today),
-        "grams": used,
-        "note": _clean_text(note, MAX_NOTE_LENGTH),
-        "recorded_at": now.isoformat(timespec="seconds"),
-    }
-    usages = [*spool["usages"], entry]
-    if len(usages) > MAX_USAGES:
-        # 計量に含まれていて残量に効かない古い記録から落とす。効く記録は落とせない
-        weighing = latest_weighing(spool)
-        droppable = [item for item in usages if not is_counted(item, weighing)]
-        overflow = len(usages) - MAX_USAGES
-        if len(droppable) < overflow:
-            raise FilamentError("使用量の記録が多すぎます。いちど計量して基準を取り直してください")
-        drop_ids = {item["id"] for item in droppable[:overflow]}
-        usages = [item for item in usages if item["id"] not in drop_ids]
-    spool["usages"] = usages
-    return _write(db, document)
+    used_on = _check_date(date, today)
+
+    def mutate(document: Dict[str, Any]) -> None:
+        spool = _find(document, spool_id)
+        entry = {
+            "id": _new_id("u"),
+            "date": used_on,
+            "grams": used,
+            "note": _clean_text(note, MAX_NOTE_LENGTH),
+            "recorded_at": now.isoformat(timespec="seconds"),
+        }
+        usages = [*spool["usages"], entry]
+        if len(usages) > MAX_USAGES:
+            # 計量に含まれていて残量に効かない古い記録から落とす。効く記録は落とせない
+            weighing = latest_weighing(spool)
+            droppable = [item for item in usages if not is_counted(item, weighing)]
+            overflow = len(usages) - MAX_USAGES
+            if len(droppable) < overflow:
+                raise FilamentError("使用量の記録が多すぎます。いちど計量して基準を取り直してください")
+            drop_ids = {item["id"] for item in droppable[:overflow]}
+            usages = [item for item in usages if item["id"] not in drop_ids]
+        spool["usages"] = usages
+
+    return _update(db, mutate)
 
 
 def remove_usage(spool_id: str, usage_id: str, db: Optional[Session] = None) -> Dict[str, Any]:
     """使用量の記録を1件取り消す。入力を間違えたときの直し方はこれ1つ（消して入れ直す）。"""
-    document = _load(db)
-    spool = _find(document, spool_id)
-    kept = [entry for entry in spool["usages"] if entry["id"] != usage_id]
-    if len(kept) == len(spool["usages"]):
-        raise SpoolNotFound("指定された使用量の記録が見つかりません")
-    spool["usages"] = kept
-    return _write(db, document)
+
+    def mutate(document: Dict[str, Any]) -> None:
+        spool = _find(document, spool_id)
+        kept = [entry for entry in spool["usages"] if entry["id"] != usage_id]
+        if len(kept) == len(spool["usages"]):
+            raise SpoolNotFound("指定された使用量の記録が見つかりません")
+        spool["usages"] = kept
+
+    return _update(db, mutate)
