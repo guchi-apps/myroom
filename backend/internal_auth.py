@@ -11,7 +11,7 @@ ops-dashboard の `OPS_API_TOKEN`（`requireSessionOrApiToken`）と同じ形。
 トークンは用途ごとに分けている（DaySpan の `INTERNAL_EVENTS_API_KEY` と同じ分け方）。
 
 - `INTERNAL_API_KEY` … 読み取り専用（`GET /api/internal/room-state`）
-- `INTERNAL_CONTROL_API_KEY` … 操作専用（`/api/internal/remote/…`・#419）
+- `INTERNAL_CONTROL_API_KEY` … 操作専用（`/api/internal/remote/…`・#419、`/api/internal/aircon/…`・#439）
 
 **片方のトークンでもう片方の経路は通らない。** 読み取り用が漏れても操作の口は塞がったままに
 するための分け方なので、1つの依存にまとめて「どちらでも通す」形にしないこと。

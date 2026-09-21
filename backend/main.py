@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from . import database, weather, outdoor_config, device_config, aircon_config, aircon_control, bambu, bills, cleaning, cleaning_notion, energy, garbage, garbage_notify, garbage_notion, kepco_import, light_history, login_notify, push_notify, push_subscriptions, remote, signaly_notify, sensor_monitor, ui_settings
 from .auth import get_current_user
 from .internal_auth import require_internal_control_token, require_internal_token
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 load_dotenv()
 
@@ -268,6 +268,22 @@ class AirconControlCommand(BaseModel):
     target_temperature: Optional[float] = None
     fan_speed: Optional[str] = None
     fan_swing: Optional[str] = None
+
+
+class InternalAirconControlCommand(BaseModel):
+    """サーバー間（AIDE）からのエアコンの運転指示。
+
+    受け取るのは電源・モード・設定温度・風量の4つだけ。**風向（`fan_swing`）は受けない。**
+    黙って捨てると「送れたのに変わらない」に見えるので、余計な項目は 422 で返す（#439）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    power: Optional[str] = None
+    mode: Optional[str] = None
+    target_temperature: Optional[float] = None
+    fan_speed: Optional[str] = None
+
 
 class BulkDeleteRecordsRequest(BaseModel):
     device: int
@@ -1084,8 +1100,10 @@ def send_internal_remote_button(
     status（404 未登録・429 送信回数の上限・502 Nature Remo の失敗・503 トークン未設定）と
     利用者向けの文言をそのまま返す。
 
-    **エアコンの操作・設定の変更はここに足さないこと。** ユーザーJWTを介さない書き込みの口なので、
-    範囲は「登録済みボタンを押す」だけに絞っている。
+    **この口で押せるのは「登録済みボタン」だけ。** ユーザーJWTを介さない書き込みの口なので、
+    signal ID・appliance ID を直接受ける口は作らない。エアコンの運転指示（電源・モード・設定温度・
+    風量）は別の口（`/api/internal/aircon/units/{ac_id}/control`・#439）で、範囲は
+    「登録済みボタンを押す」と「エアコンの運転指示」の2つまで。それ以外の書き込みは足さないこと。
     """
     try:
         return remote.press(button_id, _remote_button_overrides(db), db)
@@ -1385,17 +1403,8 @@ def _aircon_control_error(exc: aircon_control.AirconControlError) -> HTTPExcepti
     return HTTPException(status_code=502, detail=str(exc))
 
 
-@app.get("/api/aircon/units/{ac_id}/state")
-def get_aircon_control_state(
-    ac_id: int,
-    db: Session = Depends(database.get_db),
-    _: dict = Depends(get_current_user),
-):
-    """操作パネルが開くときの状態。
-
-    **DBの最新記録ではなく、エアコンから直接読む。** DBへ入るのはラズパイの5分ごとの
-    取り込み待ちで、操作の直後は必ず古い。
-    """
+def _read_aircon_state(ac_id: int, db: Session) -> dict:
+    """エアコンから直接読んだ状態（表示名は画面の設定を反映）。画面用と内部APIで共通。"""
     if ac_id < 1:
         raise HTTPException(status_code=400, detail="ac id must be >= 1")
     try:
@@ -1407,6 +1416,36 @@ def get_aircon_control_state(
     return state
 
 
+def _apply_aircon_command(ac_id: int, command: dict, db: Session) -> dict:
+    """運転指示を送り、送信後の状態を返す。検証と現在値との混合は `aircon_control` に任せる。"""
+    if ac_id < 1:
+        raise HTTPException(status_code=400, detail="ac id must be >= 1")
+
+    try:
+        state = aircon_control.apply_command(ac_id, command)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except aircon_control.AirconControlError as e:
+        raise _aircon_control_error(e) from e
+
+    state["name"] = aircon_config.get_display_name(ac_id, state.get("name"), db=db)
+    return state
+
+
+@app.get("/api/aircon/units/{ac_id}/state")
+def get_aircon_control_state(
+    ac_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """操作パネルが開くときの状態。
+
+    **DBの最新記録ではなく、エアコンから直接読む。** DBへ入るのはラズパイの5分ごとの
+    取り込み待ちで、操作の直後は必ず古い。
+    """
+    return _read_aircon_state(ac_id, db)
+
+
 @app.post("/api/aircon/units/{ac_id}/control")
 def control_aircon_unit(
     ac_id: int,
@@ -1415,18 +1454,41 @@ def control_aircon_unit(
     _: dict = Depends(get_current_user),
 ):
     """運転指示を送る。返すのは送信後の状態。"""
-    if ac_id < 1:
-        raise HTTPException(status_code=400, detail="ac id must be >= 1")
+    return _apply_aircon_command(ac_id, body.model_dump(exclude_none=True), db)
 
-    try:
-        state = aircon_control.apply_command(ac_id, body.model_dump(exclude_none=True))
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    except aircon_control.AirconControlError as e:
-        raise _aircon_control_error(e) from e
 
-    state["name"] = aircon_config.get_display_name(ac_id, state.get("name"), db=db)
-    return state
+@app.get("/api/internal/aircon/units/{ac_id}/state")
+def get_internal_aircon_state(
+    ac_id: int,
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_control_token),
+):
+    """エアコンの今の状態。AIDE が操作の前後に読むためのサーバー間用（#439）。
+
+    `GET /api/aircon/units/{ac_id}/state` と同じ応答（白くまくんから直接読む・表示名つき）。
+    ログインセッションでも読み取り用の `INTERNAL_API_KEY` でも通らない
+    （`INTERNAL_CONTROL_API_KEY` の Bearer トークン専用）。読み取りだが白くまくんのクラウドを
+    叩く経路なので、操作用トークンの側に置いている。
+    """
+    return _read_aircon_state(ac_id, db)
+
+
+@app.post("/api/internal/aircon/units/{ac_id}/control")
+def control_internal_aircon_unit(
+    ac_id: int,
+    body: InternalAirconControlCommand,
+    db: Session = Depends(database.get_db),
+    _: None = Depends(require_internal_control_token),
+):
+    """エアコンの運転指示を送る、サーバー間用の操作API（#439）。返すのは送信後の状態。
+
+    検証・現在値との混合（`aircon_control.merge_command`）・失敗のステータスと文言は
+    画面用の `POST /api/aircon/units/{ac_id}/control` と同じ。**温度の意味（自動運転は
+    シフト量）は呼ぶ側で解釈させない**——数値をそのまま渡し、ここで現在のモードと突き合わせる。
+    受け取るのは `power` / `mode` / `target_temperature` / `fan_speed` の4つだけで、
+    風向は受けない。範囲は「運転指示」に絞り、名前の変更・登録の変更などはここに足さないこと。
+    """
+    return _apply_aircon_command(ac_id, body.model_dump(exclude_none=True), db)
 
 
 @app.put("/api/aircon/units/{ac_id}")
