@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.18.1",
+    date: "2026-09-21",
+    changes: [
+      "（変更内容を追記してください）",
+    ],
+  },
+  {
     version: "4.18.0",
     date: "2026-09-21",
     changes: [
