@@ -1,6 +1,7 @@
 "use client";
 
-import { Printer } from "lucide-react";
+import { ChevronRight, Printer } from "lucide-react";
+import { LevelBar, SpoolSwatch } from "@/components/filament-parts";
 import {
   buildFilamentView,
   collectBambuErrors,
@@ -21,12 +22,25 @@ import {
   type BambuStatusPill,
   type BambuTone,
 } from "@/lib/bambu";
+import {
+  LEVEL_TEXT_CLASS,
+  describeBasis,
+  formatGrams,
+  formatLevelHint,
+  formatStockSummary,
+  getActiveSpool,
+  type FilamentPayload,
+} from "@/lib/filament";
 import { cn } from "@/lib/utils";
 
 interface PrinterCardProps {
   printer: BambuPrinterResponse | null;
   loading: boolean;
   error: boolean;
+  /** フィラメント在庫（#445）。プリンターの接続とは別に取るので、無ければ欄ごと出さない */
+  filament?: FilamentPayload | null;
+  /** 残量の欄を押したときに在庫シートを開く */
+  onOpenFilament?: () => void;
 }
 
 /** 状態の色。`--pc` に入れて、ピルの文字・背景と進捗バーがそこから読む */
@@ -140,6 +154,81 @@ function FilamentSection({ view }: { view: BambuFilamentView }) {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+/**
+ * 使用中スプールの残量と、在庫シートへの入口（#445）。
+ *
+ * **プリンターの接続状態とは関係なく出す。** 在庫はアプリの中の記録で、プリンターがオフラインでも
+ * 残量は変わらず、こういうときこそ買い足す判断に使う。
+ */
+function FilamentStock({
+  filament,
+  onOpen,
+}: {
+  filament: FilamentPayload;
+  onOpen: () => void;
+}) {
+  const active = getActiveSpool(filament);
+  const hint = active ? formatLevelHint(active) : null;
+  return (
+    <div className="mt-3.5 border-t border-border pt-3">
+      <p className="mb-2 text-[11px] tracking-wider text-muted-foreground">フィラメント残量</p>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label="フィラメント在庫を開く"
+        className="block w-full rounded-2xl bg-muted px-3 py-2.5 text-left transition-colors hover:bg-accent"
+      >
+        {!filament.configured ? (
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            スプールを登録すると、残量を計算します
+            <ChevronRight className="ml-auto size-4 shrink-0" />
+          </span>
+        ) : (
+          <>
+            {active ? (
+              <>
+                <span className="flex items-center gap-2.5">
+                  <SpoolSwatch color={active.color} className="size-[26px]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold leading-snug text-foreground">
+                      {active.name}
+                    </span>
+                    <span className="block truncate text-[11.5px] text-muted-foreground">
+                      {describeBasis(active)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
+                    <b className={cn("text-2xl leading-none", LEVEL_TEXT_CLASS[active.level])}>
+                      {formatGrams(active.remaining_g)}
+                    </b>
+                    {" g / "}
+                    {active.percent}%
+                    {hint && <span className="block text-[11px] font-bold">{hint}</span>}
+                  </span>
+                </span>
+                <span className="mt-2 block">
+                  <LevelBar spool={active} label={`${active.name}の残量`} />
+                </span>
+              </>
+            ) : (
+              <span className="block text-sm text-muted-foreground">
+                使用中のスプールが選ばれていません
+              </span>
+            )}
+            <span className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+              <span>{formatStockSummary(filament)}</span>
+              <span className="flex items-center font-bold text-[color:var(--printer-color)]">
+                在庫を開く
+                <ChevronRight className="size-3.5" />
+              </span>
+            </span>
+          </>
+        )}
+      </button>
     </div>
   );
 }
@@ -286,7 +375,13 @@ function CurrentBody({
  * 出さず**、最後に受け取った状態を「最後に確認した状態」として添えるだけにする
  * （古い温度や進捗を「いま」として見せない）。
  */
-export function PrinterCard({ printer, loading, error }: PrinterCardProps) {
+export function PrinterCard({
+  printer,
+  loading,
+  error,
+  filament = null,
+  onOpenFilament,
+}: PrinterCardProps) {
   const view = printer ? resolveBambuView(printer) : null;
 
   let pill: BambuStatusPill | null = null;
@@ -349,6 +444,10 @@ export function PrinterCard({ printer, loading, error }: PrinterCardProps) {
         <PrinterMessage>
           3Dプリンターの状態がまだ届いていません（サブPCの収集を起動すると、ここに出ます）
         </PrinterMessage>
+      )}
+
+      {!loading && filament && onOpenFilament && (
+        <FilamentStock filament={filament} onOpen={onOpenFilament} />
       )}
     </div>
   );
