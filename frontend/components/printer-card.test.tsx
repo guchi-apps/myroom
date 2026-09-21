@@ -300,3 +300,61 @@ describe("PrinterCard", () => {
     });
   });
 });
+
+
+describe("この造形の使用量（#454）", () => {
+  const jobKey = "cable-clip_v3@2026-09-21T12:00:00+09:00";
+  const withFilament = (state: BambuSnapshot["state"] = "printing") =>
+    snapshot({
+      state,
+      job: {
+        ...snapshot().job,
+        filament: {
+          jobKey,
+          name: "cable-clip_v3",
+          totalGrams: 24.4,
+          filaments: [{ slot: 1, material: "PLA", color: "#BCBCBC", usedGrams: 24.41 }],
+        },
+      },
+    });
+
+  it("印刷中は、完了したらどのスプールから引くかを予告する", () => {
+    const html = render(response({ printer: withFilament() }), {
+      filament: makePayload(),
+      onOpenFilament: () => {},
+    });
+    expect(html).toContain("この造形で使う量（予定）");
+    expect(html).toContain("完了すると「ELEGOO PLA (ホワイト)」から差し引きます");
+    expect(html).toContain("24.4");
+  });
+
+  it("完了後は、在庫に記録された使用量を「差し引きました」として出す", () => {
+    const base = makeSpool();
+    const spool = makeSpool({
+      usages: [
+        {
+          id: "ua",
+          date: "2026-09-21",
+          grams: 24.4,
+          note: "cable-clip_v3",
+          recorded_at: "2026-09-21T13:30:00+09:00",
+          counted: true,
+          source: "auto",
+          job_key: jobKey,
+        },
+        ...base.usages,
+      ],
+    });
+    const html = render(response({ printer: withFilament("finished") }), {
+      filament: makePayload([spool]),
+      onOpenFilament: () => {},
+    });
+    expect(html).toContain("使用量を差し引きました");
+    expect(html).toContain("−24.4");
+  });
+
+  it("使用量が読めていない造形には、この行を出さない", () => {
+    const html = render(response(), { filament: makePayload(), onOpenFilament: () => {} });
+    expect(html).not.toContain("この造形で使う量");
+  });
+});

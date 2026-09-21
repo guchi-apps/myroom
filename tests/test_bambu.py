@@ -308,7 +308,7 @@ class TestRecordState:
         bambu.record_state(
             connected=True, report=_report(), last_message_at=NOW.isoformat(), now=NOW
         )
-        record, _ = bambu.record_state(
+        record, _, _ = bambu.record_state(
             connected=False,
             report=None,
             last_message_at=None,
@@ -324,7 +324,7 @@ class TestRecordState:
             connected=True, report=_report(gcode_state="RUNNING"),
             last_message_at=NOW.isoformat(), now=NOW,
         )
-        _, events = bambu.record_state(
+        _, events, _ = bambu.record_state(
             connected=True, report=_report(gcode_state="FINISH"),
             last_message_at=None, now=NOW + datetime.timedelta(seconds=30),
         )
@@ -337,7 +337,7 @@ class TestRecordState:
             connected=True, report=_report(gcode_state="RUNNING"),
             last_message_at=NOW.isoformat(), now=NOW,
         )
-        _, events = bambu.record_state(
+        _, events, _ = bambu.record_state(
             connected=True, report=_report(gcode_state="FINISH"),
             last_message_at=None,
             now=NOW + datetime.timedelta(seconds=bambu.DEFAULT_STALE_SECONDS + 1),
@@ -346,11 +346,177 @@ class TestRecordState:
         assert events == []
 
     def test_first_post_produces_no_events(self, data_dir):
-        _, events = bambu.record_state(
+        _, events, _ = bambu.record_state(
             connected=True, report=_report(), last_message_at=NOW.isoformat(), now=NOW
         )
 
         assert events == []
+
+
+def _job_filament(name="benchy", grams=24.41, **overrides):
+    """収集が3mfから読んだ使用量（`job_filament`）。1色。"""
+    value = {
+        "job_key": f"{name}@2026-09-21T11:20:00+09:00",
+        "name": name,
+        "filaments": [{"id": 1, "type": "PLA", "color": "#BCBCBC", "used_g": grams}],
+    }
+    value.update(overrides)
+    return value
+
+
+class TestJobFilament:
+    def _snap(self, job_filament=None, **overrides):
+        return bambu.build_snapshot(_report(**overrides), NOW, job_filament)
+
+    def test_normalized_into_the_job(self):
+        filament = self._snap(_job_filament())["job"]["filament"]
+
+        assert filament["totalGrams"] == 24.4
+        assert filament["name"] == "benchy"
+        assert filament["jobKey"] == "benchy@2026-09-21T11:20:00+09:00"
+        # 3mf の色は `#` 付き。MQTT の tray_color と同じ形（#RRGGBB）へ揃う
+        assert filament["filaments"] == [
+            {"slot": 1, "material": "PLA", "color": "#BCBCBC", "usedGrams": 24.41}
+        ]
+
+    def test_absent_when_not_sent(self):
+        assert self._snap()["job"]["filament"] is None
+
+    def test_dropped_when_it_belongs_to_another_job(self):
+        """前のジョブの値を、次のジョブの使用量として見せない。"""
+        snapshot = self._snap(_job_filament(name="old-job"), gcode_state="RUNNING")
+
+        assert snapshot["job"]["filament"] is None
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not a dict",
+            {"name": "benchy", "filaments": [{"used_g": 5}]},  # job_key が無い
+            {"job_key": "k", "name": "benchy", "filaments": []},
+            {"job_key": "k", "name": "benchy", "filaments": [{"used_g": 0}]},
+            {"job_key": "k", "name": "benchy", "filaments": [{"used_g": -3}]},
+            {"job_key": "k", "name": "benchy", "filaments": [{"used_g": 999999}]},
+            {"job_key": "k", "name": "benchy", "filaments": [{"used_g": True}]},
+            {"job_key": "k" * 500, "name": "benchy", "filaments": [{"used_g": 5}]},
+        ],
+    )
+    def test_rejects_unusable_values(self, raw):
+        assert self._snap(raw)["job"]["filament"] is None
+
+
+class TestFilamentUsage:
+    def _snap(self, job_filament=None, **overrides):
+        return bambu.build_snapshot(_report(**overrides), NOW, job_filament)
+
+    def test_finish_returns_the_planned_grams(self):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING"),
+            self._snap(_job_filament(), gcode_state="FINISH"),
+        )
+
+        assert usage == {
+            "job_key": "benchy@2026-09-21T11:20:00+09:00",
+            "name": "benchy",
+            "grams": 24.4,
+            "estimated": False,
+            "percent": 100,
+        }
+
+    @pytest.mark.parametrize("name", ["benchy.3mf", "benchy.gcode.3mf", "benchy"])
+    def test_file_extension_is_dropped_from_the_name(self, name):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING", subtask_name=name),
+            self._snap(_job_filament(name=name), gcode_state="FINISH", subtask_name=name),
+        )
+
+        assert usage["name"] == "benchy"
+
+    def test_failed_is_prorated_by_progress_and_marked_estimated(self):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING"),
+            self._snap(_job_filament(grams=50), gcode_state="FAILED", mc_percent=42),
+        )
+
+        assert usage["grams"] == 21.0
+        assert usage["estimated"] is True
+        assert usage["percent"] == 42
+
+    @pytest.mark.parametrize("percent", [0, None])
+    def test_failed_before_anything_was_printed_returns_nothing(self, percent):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING"),
+            self._snap(_job_filament(), gcode_state="FAILED", mc_percent=percent),
+        )
+
+        assert usage is None
+
+    def test_multi_color_job_is_not_deducted(self):
+        """複数色は、どのスプールから何g引くかを決められない。"""
+        two = _job_filament()
+        two["filaments"].append({"id": 2, "type": "PLA", "color": "#FF0000", "used_g": 3.0})
+
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING"), self._snap(two, gcode_state="FINISH")
+        )
+
+        assert usage is None
+
+    def test_without_filament_information_nothing_is_returned(self):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state="RUNNING"), self._snap(gcode_state="FINISH")
+        )
+
+        assert usage is None
+
+    @pytest.mark.parametrize("before", ["IDLE", "FINISH", "FAILED"])
+    def test_only_from_an_active_state(self, before):
+        usage = bambu.detect_filament_usage(
+            self._snap(gcode_state=before), self._snap(_job_filament(), gcode_state="FINISH")
+        )
+
+        assert usage is None
+
+    def test_no_previous_means_nothing(self):
+        assert (
+            bambu.detect_filament_usage(None, self._snap(_job_filament(), gcode_state="FINISH"))
+            is None
+        )
+
+    def test_record_state_returns_the_usage_once(self, data_dir):
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="RUNNING"),
+            last_message_at=NOW.isoformat(), now=NOW, job_filament=_job_filament(),
+        )
+        _, _, usage = bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=None, now=NOW + datetime.timedelta(seconds=30),
+            job_filament=_job_filament(),
+        )
+        # 同じ FINISH の再送では、もう遷移ではない
+        _, _, again = bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=None, now=NOW + datetime.timedelta(seconds=90),
+            job_filament=_job_filament(),
+        )
+
+        assert usage is not None and usage["grams"] == 24.4
+        assert again is None
+
+    def test_record_state_ignores_a_stale_previous_state(self, data_dir):
+        """収集が止まっていた間に終わった造形は、再開直後に引かない（引くかどうかは手入力に任せる）。"""
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="RUNNING"),
+            last_message_at=NOW.isoformat(), now=NOW, job_filament=_job_filament(),
+        )
+        _, _, usage = bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=None,
+            now=NOW + datetime.timedelta(seconds=bambu.DEFAULT_STALE_SECONDS + 1),
+            job_filament=_job_filament(),
+        )
+
+        assert usage is None
 
 
 # --- API ---------------------------------------------------------------------
@@ -488,3 +654,118 @@ def test_app_get_hides_current_values_when_printer_offline(authed_client):
     assert body["online"] is False
     assert body["printer"] is None
     assert body["lastKnown"]["state"] == "finished"
+
+
+# --- 使用量の自動記録（#454）-----------------------------------------------------
+
+
+def _finish_a_print(client, *, job_filament=None, state="FINISH", percent=100):
+    """使用中のスプールがある状態で「印刷中 → 終了」の2回を送る。"""
+    _post(
+        client,
+        connected=True,
+        last_message_at=bambu.now_jst().isoformat(),
+        report=_report(gcode_state="RUNNING", mc_percent=50),
+        job_filament=job_filament,
+    )
+    return _post(
+        client,
+        connected=True,
+        last_message_at=bambu.now_jst().isoformat(),
+        report=_report(gcode_state=state, mc_percent=percent),
+        job_filament=job_filament,
+    )
+
+
+def _spool_usages(authed_client):
+    return authed_client.get("/api/filament").json()["spools"][0]["usages"]
+
+
+def test_finished_print_is_deducted_from_the_active_spool(authed_client):
+    authed_client.post(
+        "/api/filament/spools",
+        json={"name": "PLA グレー", "tare_g": 152, "current_gross_g": 762},
+    )
+
+    response = _finish_a_print(authed_client, job_filament=_job_filament())
+
+    assert response.json()["filament"] == "recorded"
+    payload = authed_client.get("/api/filament").json()
+    view = payload["spools"][0]
+    assert view["remaining_g"] == 585.6  # 610 - 24.4
+    assert [(u["grams"], u["source"], u["note"]) for u in view["usages"]] == [
+        (24.4, "auto", "benchy")
+    ]
+
+
+def test_failed_print_records_an_estimate(authed_client):
+    authed_client.post("/api/filament/spools", json={"name": "PLA グレー", "tare_g": 152})
+
+    response = _finish_a_print(
+        authed_client, job_filament=_job_filament(grams=50), state="FAILED", percent=40
+    )
+
+    assert response.json()["filament"] == "recorded"
+    usages = _spool_usages(authed_client)
+    assert [(u["grams"], u["source"]) for u in usages] == [(20.0, "auto_estimate")]
+
+
+def test_without_an_active_spool_nothing_is_recorded(authed_client):
+    response = _finish_a_print(authed_client, job_filament=_job_filament())
+
+    assert response.status_code == 200
+    assert response.json()["filament"] == "no_active_spool"
+    assert authed_client.get("/api/filament").json()["spools"] == []
+
+
+def test_the_same_job_is_not_deducted_twice(authed_client):
+    authed_client.post("/api/filament/spools", json={"name": "PLA グレー", "tare_g": 152})
+    _finish_a_print(authed_client, job_filament=_job_filament())
+
+    # 収集が再起動して、同じジョブが「印刷中 → 終了」として届き直した場合
+    second = _finish_a_print(authed_client, job_filament=_job_filament())
+
+    assert second.json()["filament"] == "duplicate"
+    assert len(_spool_usages(authed_client)) == 1
+
+
+def test_a_reprint_of_the_same_file_is_a_different_job(authed_client):
+    authed_client.post("/api/filament/spools", json={"name": "PLA グレー", "tare_g": 152})
+    _finish_a_print(authed_client, job_filament=_job_filament())
+
+    _finish_a_print(
+        authed_client,
+        job_filament=_job_filament(job_key="benchy@2026-09-21T15:00:00+09:00"),
+    )
+
+    assert len(_spool_usages(authed_client)) == 2
+
+
+def test_no_deduction_without_job_filament(authed_client):
+    authed_client.post("/api/filament/spools", json={"name": "PLA グレー", "tare_g": 152})
+
+    response = _finish_a_print(authed_client)
+
+    assert "filament" not in response.json()
+    assert _spool_usages(authed_client) == []
+
+
+def test_state_is_saved_even_when_recording_the_usage_fails(authed_client, monkeypatch):
+    from backend import filament
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(filament, "record_auto_usage", boom)
+
+    response = _finish_a_print(authed_client, job_filament=_job_filament())
+
+    assert response.status_code == 200
+    assert response.json()["filament"] == "error"
+
+
+def test_oversized_job_filament_is_rejected(client):
+    huge = _job_filament()
+    huge["filaments"] = [{"used_g": 1.0, "type": "x" * 100} for _ in range(400)]
+
+    assert _post(client, connected=True, report=_report(), job_filament=huge).status_code == 422

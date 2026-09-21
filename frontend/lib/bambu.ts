@@ -46,6 +46,20 @@ export interface BambuHmsEntry {
   severity: "fatal" | "serious" | "common" | "info" | null;
 }
 
+/** この造形で使うフィラメント（スライサーの予定値）。複数色なら `filaments` が2件以上 */
+export interface BambuJobFilament {
+  /** 造形1回ごとの識別子。在庫の使用量の記録（`job_key`）と突き合わせる */
+  jobKey: string;
+  name: string;
+  totalGrams: number;
+  filaments: {
+    slot: number | null;
+    material: string | null;
+    color: string | null;
+    usedGrams: number;
+  }[];
+}
+
 export interface BambuSnapshot {
   state: BambuState;
   rawState: string | null;
@@ -56,6 +70,8 @@ export interface BambuSnapshot {
     totalLayers: number | null;
     remainingMinutes: number | null;
     estimatedFinishAt: string | null;
+    /** 3mf から読んだこの造形の使用量（予定値・#454）。読めていないときは null／省略 */
+    filament?: BambuJobFilament | null;
   };
   nozzle: { temperature: number | null; target: number | null };
   bed: { temperature: number | null; target: number | null };

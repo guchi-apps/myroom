@@ -603,6 +603,18 @@ function SpoolDetail({
                 </span>
                 <span className={cn("min-w-0 flex-1 truncate", row.settled && "text-muted-foreground")}>
                   {row.label}
+                  {row.badge && (
+                    <span
+                      className={cn(
+                        "ml-1.5 rounded-full px-1.5 align-[1px] text-[10.5px] font-bold",
+                        row.badge === "estimate"
+                          ? "bg-[#a86200]/15 text-[#a86200] dark:bg-[#f0b556]/15 dark:text-[#f0b556]"
+                          : "bg-[color:var(--printer-color)]/15 text-[color:var(--printer-color)]"
+                      )}
+                    >
+                      {row.badge === "estimate" ? "自動・概算" : "自動"}
+                    </span>
+                  )}
                   {row.settled && (
                     <span className="ml-1.5 text-[10.5px]">計量に反映済み</span>
                   )}
