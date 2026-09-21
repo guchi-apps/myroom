@@ -1,0 +1,27 @@
+[Unit]
+# Bambu Lab A1 mini の状態をローカル MQTT から読み、MyRoom へ送る。
+# 読み取りのみで、印刷の操作はしない（状態の再要求の pushall だけを送る）。
+#
+# 他の収集（timer による周期実行）と違い、MQTT の購読は常時接続なので、timer ではなく
+# service を常駐させる。ラズパイではなくサブPCで動かす理由は Tapo と同じ。
+Description=MyRoom: Bambu Lab A1 mini の状態を購読して送る
+Documentation=https://github.com/guchi-apps/myroom
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# **専用の venv を使う。** paho-mqtt はサブPCのシステムPythonには入っていない。
+# リポジトリの venv/ はメインPCのpyenv向けで動かない。
+WorkingDirectory=%h/apps/myroom
+ExecStart=%h/apps/myroom/collectors/.venv-bambu/bin/python %h/apps/myroom/collectors/bambu_to_myroom.py
+Nice=10
+
+# プリンターの電源断・LAN断・アクセスコード変更では、スクリプト自身がバックオフしながら
+# 再接続する。ここで再起動するのは、プロセスそのものが落ちたとき（想定外の例外など）だけ。
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -45,8 +45,7 @@ import type {
 import { processHistoryData, processAirconHistoryData } from "@/lib/chart-utils";
 import { toApiDateTime, type AirconHistoryPoint } from "@/lib/history-loader";
 import { expandDeviceIdsForHistory } from "@/lib/device-inheritance";
-import { authHeaders, AuthError } from "@/lib/auth";
-import { supabase } from "@/lib/supabase-client";
+import { authHeaders, AuthError, signOutThisApp } from "@/lib/auth";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -63,7 +62,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new TypeError(`${message} (${url})`);
   }
   if (res.status === 401) {
-    await supabase.auth.signOut();
+    await signOutThisApp();
     throw new AuthError();
   }
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -79,7 +78,7 @@ async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response>
     },
   });
   if (res.status === 401) {
-    await supabase.auth.signOut();
+    await signOutThisApp();
     throw new AuthError();
   }
   return res;

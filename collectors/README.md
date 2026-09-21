@@ -24,6 +24,7 @@ AirCloud Home (白くまくんアプリ)        はぴeみる電のお知らせ�
 | SwitchBot の CO2・温湿度 | ラズパイ（`guchi-apps/pi0w_260719`） | BLE のアドバタイズを拾うため、センサーの近くに居る必要がある |
 | エアコンの運転状態（5分ごと） | ラズパイ（同上） | すでに動いており、移す理由が無い |
 | **エアコンの日別使用量（1時間ごと）** | **サブPC（ここ）** | クラウドAPI同士で完結し、ラズパイである必然性が無い |
+| **Bambu Lab A1 mini の状態（常時購読）** | **サブPC（ここ）** | LAN内のローカルMQTT（TLS）へ繋ぐ。Python 3.11 以上と `cryptography` が要り、armv6 の Pi Zero W では導入が現実的でない |
 
 エアコン関係が2箇所に分かれるため、AirCloud Home のクライアント実装もラズパイ側と
 このディレクトリの2つある。**このディレクトリのクライアントは電気代の取得だけを持ち、
@@ -220,6 +221,94 @@ python3 collectors/kepco_bill_to_myroom.py
   画面では月ごとに合算して出す
 - 本文の文字コードは **ISO-2022-JP**
 
+## bambu_to_myroom.py
+
+Bambu Lab A1 mini の状態を**LAN内のローカルMQTT**（TLS・8883）から読み、`POST /api/bambu/state`
+へ送る（#428）。MyRoom は正規化して `app_settings` の `bambu_printer_state` に**最新の1件だけ**を
+持ち、`GET /api/internal/bambu/printer`（`INTERNAL_API_KEY` の Bearer）で返す。
+
+**読み取りのみ。印刷を操作するコマンドは送らない。** 例外は状態の再要求（`pushing.pushall`）だけ。
+
+```
+A1 mini ──MQTT/TLS 8883──▶ サブPC（常駐 service）──HTTPS──▶ /api/bambu/state
+  device/<serial>/report      差分を全状態へマージ            └ app_settings（最新1件）
+                                                              ▼
+                                        GET /api/internal/bambu/printer（AIDE が読む）
+```
+
+- **常駐させる。** 他の収集は timer の周期実行だが、購読は常時接続なので service（`Type=simple`・
+  `Restart=always`）で持つ。プリンターの電源断・LAN断・アクセスコード変更ではスクリプト自身が
+  バックオフしながら再接続する（2秒から倍々で最大120秒）
+- **LAN Only Mode は有効にしない。** クラウドへ紐付けたまま、`bblp` ＋ LANアクセスコードで
+  ローカルMQTTへ繋がる。有効にすると Bambu アカウントとの紐付けが切れる（Bambu Handy・
+  クラウド経由の送信・MakerWorld 連携が使えなくなる）
+- **`report` は差分で届く。** 購読するだけでは初期状態が埋まらないので、接続直後に `pushall` を
+  1回要求して全状態（約65項目）を受け取り、以降の差分を重ねる。**P1/A1 系は更新値のみを送る
+  作りなので `pushall` は5分以上あける**（再接続が続いても割らない）
+- **古い値を現在値として返さない。** 収集は変化のたびと、変化が無くても60秒ごとに送る。
+  MyRoom は最後の受信から180秒（`BAMBU_STALE_SECONDS`）を超えると `connection: "collector_stale"`、
+  プリンターに繋がっていないと `"printer_offline"` にし、どちらも現在値（`printer`）を `null`
+  にして最後の値を `lastKnown` へ分ける
+- 証明書は BBL CA による自己署名。プリンター自身の証明書を信頼の起点にして、ホスト名の検証だけを省く
+- **A1 mini に AMS Lite が繋がっていない構成では `ams.units` は空で、外付けスプール
+  （`externalSpool`）だけが入る。** 実機（AMS Lite なし）でしか確認できていないので、AMS Lite を
+  繋いだときのスロット・残量の値は、繋いだ最初に `--dry-run -v` と内部APIの応答で確かめること
+
+### 依存
+
+**`paho-mqtt` だけで、専用の venv に入れる**（バックエンドの `requirements.txt` には入れない。
+VPS はプリンターと同じLANにいないため。Tapo の `python-kasa` と同じ分け方）。
+
+```bash
+python3 -m venv collectors/.venv-bambu
+collectors/.venv-bambu/bin/pip install -r collectors/requirements-bambu.txt
+```
+
+### 設定
+
+`bambu.env.example` の3項目を `collectors/.env` へ追記する（`BAMBU_HOST` / `BAMBU_SERIAL` /
+`BAMBU_ACCESS_CODE`）。**1Password・GitHub secret には置かない**——3つとも
+プリンター本体からいつでも読み直せる値のため。
+
+- **IP アドレス** — ルーターで固定割り当て（DHCP予約）にしておく。変わると
+  「接続できません（プリンターの電源・BAMBU_HOST の IP アドレスを確認）」がログに出る
+- **LAN アクセスコード** — プリンター本体の画面（設定の WLAN の項目。機種・ファームウェアで
+  メニュー名が違うことがある）に表示される8桁。
+  **再生成すると変わる**ので、変えたら `collectors/.env` を直して service を再起動する。
+  古いままだと「MQTT の接続が拒否されました…アクセスコードが変わった可能性があります」が出続ける
+- **シリアル番号** — 本体のラベル、または Bambu Handy / Bambu Studio のデバイス情報
+
+**シリアル番号とアクセスコードはログに出ない**（`MaskingFormatter` が最終出力を伏せる）。
+Issue・PR・チャットへ貼るときも実値を含めないこと。
+
+### 動作確認
+
+```bash
+# 15秒だけ繋いで、受け取った全状態の要約を出す（POSTしない）
+collectors/.venv-bambu/bin/python collectors/bambu_to_myroom.py --dry-run --once 15 -v
+
+# ローカルのバックエンド（DB_MOCK）へ送って、内部APIまで通す
+MYROOM_BAMBU_API_URL=http://localhost:8000/api/bambu/state \
+  collectors/.venv-bambu/bin/python collectors/bambu_to_myroom.py --once 15
+curl -s -H "Authorization: Bearer $INTERNAL_API_KEY" http://localhost:8000/api/internal/bambu/printer
+```
+
+`connected=True ... （65項目）` が出れば、接続・TLS・アクセスコード・`pushall` の応答まで通っている。
+
+### ファームウェア更新で変わったときの見つけ方
+
+次のログ（WARNING）が出たら、項目や接続条件が変わった合図。**同じ内容は1度しか出ない**ので、
+`journalctl --user -u myroom-bambu.service | grep WARNING` でさかのぼって探す。
+
+| ログ | 意味 |
+|---|---|
+| `既知のリストに無い項目が届きました` | `print` に新しい項目が増えた。`KNOWN_PRINT_KEYS`（`bambu_to_myroom.py`）へ足すか、必要なら正規化（`backend/bambu.py`）へ取り込む |
+| `全状態に想定している項目がありません` | 項目名が変わった。正規化がその項目を `null` で返し続けるので、`EXPECTED_KEYS`（両方）と `build_snapshot()` を直す |
+| `未知の gcode_state を受け取りました` | 状態が増えた（MyRoom 側のログ）。`STATE_MAP`（`backend/bambu.py`）へ足す。それまで `state` は `"unknown"` |
+| `print 以外の種別のメッセージ` | `report` に `print` 以外（`info`・`system` など）が流れ始めた |
+| `pushall に…応答がありません` | 要求の間隔が短すぎる、または `pushall` の仕様が変わった |
+| `TLS の証明書検証に失敗しました` | 繋ぎ先がプリンターではない、または証明書が変わった |
+
 ## 定期実行
 
 ユニットは [`systemd/`](systemd/) にある。`aide` と同じく
@@ -237,3 +326,15 @@ journalctl --user -u myroom-aircon-energy.service -n 50
 
 Tapo ぶん（5分ごと）も同じ手順で、ユニット名を `myroom-tapo-energy` に読み替える。
 はぴeみる電ぶん（1日1回）は `myroom-kepco-bill` に読み替える。
+
+**Bambu ぶんだけは timer ではなく常駐 service**（`myroom-bambu.service`）。`enable --now` するのは
+service 本体で、timer は無い。venv（`collectors/.venv-bambu`）を先に作っておくこと。
+
+```bash
+cp collectors/systemd/myroom-bambu.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now myroom-bambu.service
+
+systemctl --user status myroom-bambu.service
+journalctl --user -u myroom-bambu.service -f
+```
