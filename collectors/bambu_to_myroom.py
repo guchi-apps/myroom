@@ -60,16 +60,21 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import ftplib
+import io
 import json
 import logging
 import os
 import random
 import signal
+import socket
 import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ElementTree
+import zipfile
 from typing import Any, Callable, Dict, Optional, Sequence
 
 try:
@@ -106,6 +111,19 @@ FULL_REPORT_MIN_KEYS = 20
 MIN_POST_INTERVAL = 10
 #: 変化が無くても送る間隔。MyRoom 側の「収集が止まっている」判定（既定180秒）の1/3
 HEARTBEAT_INTERVAL = 60
+
+#: 3mf（この造形の使用量）を読む FTPS。プリンターは 990 番の暗黙的TLSで、`bblp` ＋ アクセスコード
+FTPS_PORT = 990
+FTPS_TIMEOUT = 20
+#: 3mf 1件の大きさの上限。実機のファイルは数百KB〜十数MB
+MAX_3MF_BYTES = 100 * 1024 * 1024
+#: 読めなかったときの再試行までの待ち（秒）。すべて外れたらその造形は諦める（手入力で直せる）
+FETCH_RETRY_DELAYS = (5.0, 30.0, 120.0)
+#: 造形の最中と見なす `gcode_state`
+ACTIVE_GCODE_STATES = frozenset({"INIT", "SLICING", "PREPARE", "RUNNING", "PAUSE"})
+#: 3mf の置き場所（プリンターSD）の候補。`subtask_name` は実機で `<名前>.3mf`、
+#: 古い「送信して印刷」の経路では `<名前>.gcode.3mf` がルートに置かれる
+THREEMF_DIRECTORIES = ("/cache", "")
 
 #: 再接続の待ち時間（秒）。失敗のたびに倍にして上限で止める
 BACKOFF_BASE = 2.0
@@ -308,6 +326,7 @@ def build_payload(
     connected: bool,
     report: Optional[Dict[str, Any]],
     last_message_at: Optional[datetime.datetime],
+    job_filament: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "connected": connected,
@@ -318,6 +337,9 @@ def build_payload(
     # 繋がっていないときは古い全状態を載せない（MyRoom は保存済みの状態を残す）
     if connected and report is not None:
         payload["report"] = report
+        # 3mf から読めたときだけ（#454）。読めていないときは項目ごと省く
+        if job_filament is not None:
+            payload["job_filament"] = job_filament
     return payload
 
 
@@ -359,6 +381,12 @@ class BambuMonitor:
         self.last_pushall_at: Optional[float] = None
         self._sent_view: Optional[str] = None
         self._warned: set = set()
+        #: いまの（直近の）造形。開始を検出するたびに作り直す（#454）
+        self._job: Optional[Dict[str, Any]] = None
+        self._job_active = False
+        #: 3mf から読めたこの造形の使用量。読めるまで、また造形が変わるまでは None
+        self.job_filament: Optional[Dict[str, Any]] = None
+        self._sent_job_filament: Optional[Dict[str, Any]] = None
 
     def new_session(self) -> None:
         """接続し直したとき。全状態はもう一度 pushall で受け取り直す。"""
@@ -418,6 +446,7 @@ class BambuMonitor:
         with self._lock:
             self.report = merge_report(self.report, update)
             self.last_message_at = datetime.datetime.now(JST)
+            self._track_job_locked()
             if len(update) >= FULL_REPORT_MIN_KEYS and not self.full_received:
                 self.full_received = True
                 missing = [key for key in EXPECTED_KEYS if key not in self.report]
@@ -433,17 +462,90 @@ class BambuMonitor:
     def has_change(self) -> bool:
         """最後に送った内容から、送るに値する変化があるか。"""
         with self._lock:
-            return self.full_received and significant_view(self.report) != self._sent_view
+            return self.full_received and (
+                significant_view(self.report) != self._sent_view
+                or self.job_filament != self._sent_job_filament
+            )
 
     def snapshot(self, mqtt_connected: bool) -> Dict[str, Any]:
         """いま送るペイロード。全状態を受け取るまでは connected を false にする。"""
         with self._lock:
             connected = mqtt_connected and self.full_received
-            return build_payload(connected, dict(self.report), self.last_message_at)
+            return build_payload(
+                connected, dict(self.report), self.last_message_at, self.job_filament
+            )
 
     def mark_sent(self) -> None:
         with self._lock:
             self._sent_view = significant_view(self.report)
+            self._sent_job_filament = self.job_filament
+
+    # ---- 造形ごとの使用量（3mf）
+
+    def _track_job_locked(self) -> None:
+        """造形の開始を検出する。**開始のたびに新しい `key` を作る**（同じファイルの再印刷も別の造形）。
+
+        名前（`subtask_name`）が届く前は始めない。接続直後の差分には状態だけが来て名前が無いことがある。
+        造形が終わっても `job_filament` は消さない（完了の瞬間に MyRoom へ渡すのに要る）。
+        次の造形が始まったときに作り直す。
+        """
+        active = self.report.get("gcode_state") in ACTIVE_GCODE_STATES
+        if not active:
+            self._job_active = False
+            return
+        raw_name = self.report.get("subtask_name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name:
+            return
+        if self._job_active and self._job is not None and self._job["name"] == name:
+            return
+        self._job_active = True
+        started = datetime.datetime.fromtimestamp(self._now(), JST).isoformat(timespec="seconds")
+        self._job = {
+            "key": f"{name}@{started}",
+            "name": name,
+            "attempts": 0,
+            "next_at": 0.0,
+            "fetching": False,
+            "done": False,
+        }
+        self.job_filament = None
+
+    def take_fetch_request(self) -> Optional[Dict[str, str]]:
+        """3mf を読みに行くべきなら、その造形の `key` と `name` を返す（読み込み中は返さない）。"""
+        with self._lock:
+            job = self._job
+            if job is None or job["done"] or job["fetching"] or self._now() < job["next_at"]:
+                return None
+            job["fetching"] = True
+            return {"key": job["key"], "name": job["name"]}
+
+    def finish_fetch(self, key: str, filaments: Optional[list]) -> bool:
+        """3mf の読み込みの結果を受け取る。**この造形の結果として受け取れたら True。**
+
+        読めなかったときは間隔を空けて再試行し、`FETCH_RETRY_DELAYS` を使い切ったら諦める。
+        そのあいだに造形が変わっていたら（`key` が違う）捨てる。
+        """
+        with self._lock:
+            job = self._job
+            if job is None or job["key"] != key:
+                return False
+            job["fetching"] = False
+            if filaments:
+                job["done"] = True
+                self.job_filament = {"job_key": job["key"], "name": job["name"], "filaments": filaments}
+                return True
+            job["attempts"] += 1
+            if job["attempts"] > len(FETCH_RETRY_DELAYS):
+                job["done"] = True
+                self._warn_once(
+                    "3mf-giveup:" + job["key"],
+                    "Bambu: 3mf から使用量を読めませんでした（この造形は在庫へ自動では引かれません）: %s",
+                    job["name"],
+                )
+            else:
+                job["next_at"] = self._now() + FETCH_RETRY_DELAYS[job["attempts"] - 1]
+            return False
 
 
 # ---------------------------------------------------------------- 送信
@@ -483,6 +585,8 @@ class Poster:
                 report.get("bed_target_temper"),
                 len(report),
             )
+            if payload.get("job_filament"):
+                LOGGER.info("[dry-run] job_filament=%s", json.dumps(payload["job_filament"], ensure_ascii=False))
             return True
         try:
             post_payload(self._api_url, payload)
@@ -495,6 +599,147 @@ class Poster:
             LOGGER.info("MyRoom への送信が回復しました")
         self._failing = False
         return True
+
+
+# ---------------------------------------------------------------- 3mf（造形の使用量）
+
+
+class ImplicitFTPTLS(ftplib.FTP_TLS):
+    """暗黙的TLS（接続した瞬間からTLS）の FTPS。プリンターは 990 番でこの形。
+
+    標準の `FTP_TLS` は明示的（`AUTH TLS`）しか話せないので、接続とデータ接続を差し替える。
+    """
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):  # type: ignore[override]
+        if host:
+            self.host = host
+        if port:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.af = self.sock.family
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+        self.file = self.sock.makefile("r", encoding=self.encoding)
+        self.welcome = self.getresp()
+        return self.welcome
+
+    def ntransfercmd(self, cmd, rest=None):  # type: ignore[override]
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(
+                conn, server_hostname=self.host, session=self.sock.session
+            )
+        return conn, size
+
+
+def threemf_paths(name: str) -> list:
+    """`subtask_name` から、プリンターSDの3mfの置き場所の候補を作る。
+
+    ファイル名として使えない名前（ディレクトリを抜ける・制御文字）は候補にしない。
+    プリンターから届いた文字列をそのままFTPのコマンドへ入れないため。
+    """
+    if not name or name.startswith(".") or any(c in name for c in '/\\\r\n\x00'):
+        return []
+    names = [name]
+    if name.endswith(".3mf"):
+        if not name.endswith(".gcode.3mf"):
+            names.append(name[: -len(".3mf")] + ".gcode.3mf")
+    else:
+        names += [name + ".3mf", name + ".gcode.3mf"]
+    return [f"{directory}/{candidate}" for directory in THREEMF_DIRECTORIES for candidate in names]
+
+
+def parse_slice_info(text: str) -> Optional[list]:
+    """`Metadata/slice_info.config`（XML）から、使うフィラメントの一覧を取る。
+
+    `<filament id="1" type="PLA" color="#BCBCBC" used_g="24.41" .../>`。**プレートが1つでないときは
+    None**（どのプレートを印刷したのか分からない。送信のときは1プレートだけが入る）。
+    """
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        return None
+    plates = root.findall("plate")
+    if len(plates) != 1:
+        return None
+    filaments = []
+    for item in plates[0].findall("filament"):
+        try:
+            used = float(item.get("used_g", ""))
+        except ValueError:
+            continue
+        if used <= 0 or used != used:
+            continue
+        try:
+            slot = int(item.get("id", ""))
+        except ValueError:
+            slot = None
+        filaments.append(
+            {"id": slot, "type": item.get("type"), "color": item.get("color"), "used_g": used}
+        )
+    return filaments or None
+
+
+def read_filaments_from_3mf(data: bytes) -> Optional[list]:
+    """3mf（zip）の `Metadata/slice_info.config` を読む。壊れた zip・中身が無いときは None。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            info = archive.getinfo("Metadata/slice_info.config")
+            if info.file_size > 1024 * 1024:
+                return None
+            return parse_slice_info(archive.read(info).decode("utf-8", "replace"))
+    except (zipfile.BadZipFile, KeyError):
+        return None
+
+
+def download_3mf(host: str, access_code: str, paths: Sequence[str]) -> Optional[bytes]:
+    """プリンターSDから3mfを読む（**読み取りのみ**）。候補の順に試し、最初に見つかったものを返す。"""
+    context = build_tls_context(fetch_printer_certificate(host, FTPS_PORT))
+    ftp = ImplicitFTPTLS(context=context)
+    try:
+        ftp.connect(host, FTPS_PORT, timeout=FTPS_TIMEOUT)
+        ftp.login(MQTT_USERNAME, access_code)
+        ftp.prot_p()
+        for path in paths:
+            buffer = io.BytesIO()
+
+            def receive(chunk: bytes) -> None:
+                if buffer.tell() + len(chunk) > MAX_3MF_BYTES:
+                    raise ValueError("3mf が大きすぎます")
+                buffer.write(chunk)
+
+            try:
+                ftp.retrbinary(f"RETR {path}", receive)
+            except ftplib.error_perm:  # 550: その場所には無い
+                continue
+            return buffer.getvalue()
+        return None
+    finally:
+        try:
+            ftp.quit()
+        except Exception:  # すでに切れている
+            ftp.close()
+
+
+def fetch_job_filaments(config: Dict[str, str], name: str) -> Optional[list]:
+    """この造形の使用量を、プリンターSDの3mfから読む。読めなければ None（理由はログへ）。"""
+    paths = threemf_paths(name)
+    if not paths:
+        LOGGER.warning("Bambu: 3mf のファイル名として使えない名前です（読みません）")
+        return None
+    try:
+        data = download_3mf(config["host"], config["access_code"], paths)
+    except (OSError, ftplib.Error, ValueError) as exc:
+        LOGGER.info("Bambu: 3mf を読めませんでした: %s", classify_connect_error(exc))
+        return None
+    if data is None:
+        LOGGER.info("Bambu: プリンターSDに 3mf が見つかりませんでした（クラウド経由の印刷など）")
+        return None
+    filaments = read_filaments_from_3mf(data)
+    if filaments is None:
+        LOGGER.info("Bambu: 3mf から使用量を読めませんでした（複数プレート・フィラメント情報なし）")
+    return filaments
 
 
 # ---------------------------------------------------------------- MQTT
@@ -587,6 +832,30 @@ class Session:
         self._pushall_warned = False
         self._pushall_requested = True
 
+    def _start_job_filament_fetch(self) -> None:
+        """造形が始まっていて使用量をまだ読めていなければ、別スレッドで3mfを読みに行く（#454）。
+
+        FTPS は数秒かかり得るので、状態の送信（ハートビート）を止めないよう別スレッドにする。
+        """
+        request = self._monitor.take_fetch_request()
+        if request is None:
+            return
+
+        def work() -> None:
+            filaments: Optional[list] = None
+            try:
+                filaments = fetch_job_filaments(self._config, request["name"])
+            except Exception:  # 使用量が読めないだけで、状態の収集は止めない
+                LOGGER.exception("Bambu: 3mf の読み込みで想定外のエラーが起きました")
+            if self._monitor.finish_fetch(request["key"], filaments):
+                LOGGER.info(
+                    "Bambu: 造形の使用量を読みました（%.1f g）: %s",
+                    sum(item["used_g"] for item in filaments or []),
+                    request["name"],
+                )
+
+        threading.Thread(target=work, name="bambu-3mf", daemon=True).start()
+
     def run(self, once_seconds: Optional[float] = None) -> str:
         """接続して、切れる・止められるまで回す。戻り値は終了の理由。"""
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
@@ -634,6 +903,8 @@ class Session:
                         "（要求の間隔が短すぎる／ファームウェアの仕様変更の可能性）",
                         PUSHALL_RESPONSE_TIMEOUT,
                     )
+
+                self._start_job_filament_fetch()
 
                 due_heartbeat = now - last_post >= HEARTBEAT_INTERVAL
                 due_change = (

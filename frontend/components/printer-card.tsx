@@ -26,9 +26,11 @@ import {
   formatGrams,
   formatLevelHint,
   formatStockSummary,
+  formatUsageGrams,
   getActiveSpool,
   type FilamentPayload,
 } from "@/lib/filament";
+import { buildJobFilamentView, type JobFilamentTone } from "@/lib/job-filament";
 import { cn } from "@/lib/utils";
 
 interface PrinterCardProps {
@@ -172,6 +174,58 @@ function FilamentStock({
   );
 }
 
+/** 使用量の行の色。`--jc` に入れて、背景の薄い色付けと金額の文字がそこから読む */
+const JOB_FILAMENT_TONE_CLASSES: Record<JobFilamentTone, string> = {
+  pending: "[--jc:var(--printer-color)]",
+  done: "[--jc:#24864f] dark:[--jc:#5fcf8b]",
+  estimate: "[--jc:#a86200] dark:[--jc:#f0b556]",
+  muted: "[--jc:var(--muted-foreground)]",
+};
+
+/**
+ * この造形の使用量（#454）。印刷中は「完了したらここから引く」の予告、終わったあとは
+ * 「引いた／引いていない」の結果。引くのはバックエンドで、ここは在庫の記録と突き合わせて出すだけ。
+ */
+function JobFilamentUse({
+  snapshot,
+  filament,
+}: {
+  snapshot: BambuSnapshot;
+  filament: FilamentPayload | null;
+}) {
+  const view = buildJobFilamentView(snapshot, filament);
+  if (!view) return null;
+  return (
+    <div
+      className={cn(
+        "mt-3 flex items-center gap-2.5 rounded-[14px] px-3 py-2.5",
+        "bg-[color-mix(in_srgb,var(--jc)_10%,var(--muted))]",
+        JOB_FILAMENT_TONE_CLASSES[view.tone]
+      )}
+    >
+      <SpoolSwatch color={view.swatchColor} className="size-[26px]" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-bold leading-snug text-foreground">
+          {view.title}
+        </span>
+        <span className="block text-[11.5px] leading-normal text-muted-foreground">
+          {view.detail}
+        </span>
+      </span>
+      <span
+        className={cn(
+          "shrink-0 whitespace-nowrap text-[22px] font-bold leading-none tabular-nums",
+          view.tone === "done" || view.tone === "estimate" ? "text-[color:var(--jc)]" : "text-foreground"
+        )}
+      >
+        {view.deducted ? "−" : ""}
+        {formatUsageGrams(view.grams)}
+        <span className="ml-0.5 text-xs text-muted-foreground"> g</span>
+      </span>
+    </div>
+  );
+}
+
 function ErrorAlert({ snapshot }: { snapshot: BambuSnapshot }) {
   const errors = collectBambuErrors(snapshot);
   if (errors.length === 0) return null;
@@ -271,9 +325,11 @@ function LastKnown({
 function CurrentBody({
   snapshot,
   printer,
+  stock,
 }: {
   snapshot: BambuSnapshot;
   printer: BambuPrinterResponse;
+  stock: FilamentPayload | null;
 }) {
   const updatedAt = formatClock(printer.lastUpdateAt);
   return (
@@ -298,6 +354,7 @@ function CurrentBody({
           target={snapshot.bed.target}
         />
       </div>
+      <JobFilamentUse snapshot={snapshot} filament={stock} />
       {updatedAt && (
         <p className="mt-3 text-[11.5px] tabular-nums text-muted-foreground">{updatedAt} 時点</p>
       )}
@@ -349,7 +406,7 @@ export function PrinterCard({
       )}
 
       {!loading && !error && printer && view?.kind === "current" && (
-        <CurrentBody snapshot={view.snapshot} printer={printer} />
+        <CurrentBody snapshot={view.snapshot} printer={printer} stock={filament} />
       )}
 
       {!loading && !error && printer && view?.kind === "offline" && (

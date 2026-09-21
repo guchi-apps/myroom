@@ -617,3 +617,101 @@ def test_db_mode_round_trip(sqlite_db):
     payload = filament.build_payload(_in_session(sqlite_db, filament.get_document))
     assert payload["spools"][0]["remaining_g"] == 417
 
+
+
+# --- 造形の完了・停止で自動記録する（#454）---------------------------------------
+
+
+def _auto(**overrides):
+    args = {"grams": 24.4, "job_key": "benchy@1", "job_name": "benchy", "today": TODAY, "now": NOW}
+    args.update(overrides)
+    return filament.record_auto_usage(
+        args.pop("grams"), args.pop("job_key"), args.pop("job_name"), **args
+    )
+
+
+def test_auto_usage_goes_to_the_active_spool_with_its_source(store):
+    add()
+    other = add(name="ブラック")
+    assert other["active_id"] == other["spools"][0]["id"]
+
+    assert _auto() == "recorded"
+
+    document = filament.get_document()
+    first, second = document["spools"]
+    assert second["usages"] == []
+    assert [(u["grams"], u["source"], u["job_key"], u["note"], u["date"]) for u in first["usages"]] == [
+        (24.4, "auto", "benchy@1", "benchy", "2026-09-21")
+    ]
+
+
+def test_estimated_usage_is_marked(store):
+    add()
+
+    _auto(estimated=True)
+
+    assert filament.get_document()["spools"][0]["usages"][0]["source"] == "auto_estimate"
+
+
+def test_auto_usage_is_not_recorded_twice_for_the_same_job(store):
+    add()
+    _auto()
+
+    assert _auto() == "duplicate"
+    assert len(filament.get_document()["spools"][0]["usages"]) == 1
+
+
+def test_duplicate_is_found_even_after_the_active_spool_changed(store):
+    add()
+    second = add(name="ブラック")
+    _auto()
+    filament.set_active(second["spools"][1]["id"])
+
+    assert _auto() == "duplicate"
+    assert filament.get_document()["spools"][1]["usages"] == []
+
+
+def test_auto_usage_without_an_active_spool_does_nothing(store):
+    add()
+    filament.set_active(None)
+
+    assert _auto() == "no_active_spool"
+    assert filament.get_document()["spools"][0]["usages"] == []
+
+
+@pytest.mark.parametrize("grams", [0, -1, 99999, "abc", None, True])
+def test_auto_usage_rejects_out_of_range_grams(store, grams):
+    add()
+
+    assert _auto(grams=grams) == "invalid"
+    assert filament.get_document()["spools"][0]["usages"] == []
+
+
+def test_auto_usage_counts_toward_the_remaining_amount(store):
+    add(current_gross_g=762)  # 762 - 152 = 610
+
+    _auto(grams=24.4)
+
+    spool = filament.build_payload(filament.get_document(), TODAY)["spools"][0]
+    assert spool["remaining_g"] == 585.6
+    assert spool["usages"][0]["source"] == "auto"
+
+
+def test_old_usages_without_a_source_read_as_manual(store):
+    document = filament.normalize_document(
+        {"spools": [{"id": "s1", "name": "A", "usages": [usage("2026-09-18", 10)]}]}
+    )
+
+    entry = document["spools"][0]["usages"][0]
+    assert entry["source"] == "manual"
+    assert entry["job_key"] is None
+
+
+def test_auto_usage_refuses_when_no_record_can_be_dropped(store, monkeypatch):
+    monkeypatch.setattr(filament, "MAX_USAGES", 2)
+    add(current_gross_g=None)
+    filament.record_usage(filament.get_document()["spools"][0]["id"], 1, today=TODAY, now=NOW)
+    filament.record_usage(filament.get_document()["spools"][0]["id"], 1, today=TODAY, now=NOW)
+
+    assert _auto() == "too_many_usages"
+    assert len(filament.get_document()["spools"][0]["usages"]) == 2

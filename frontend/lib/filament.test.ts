@@ -101,6 +101,28 @@ describe("履歴", () => {
   it("件数の上限で切る", () => {
     expect(buildHistory(makeSpool(), 2)).toHaveLength(2);
   });
+
+  it("自動で記録したものだけ印を付ける（手入力・計量・出どころが無い古い記録には付けない）", () => {
+    const base = makeSpool();
+    const usage = (id: string, source?: "manual" | "auto" | "auto_estimate") => ({
+      ...base.usages[0],
+      id,
+      source,
+    });
+    const rows = buildHistory(
+      makeSpool({
+        usages: [usage("a", "auto"), usage("b", "auto_estimate"), usage("c", "manual"), usage("d")],
+      })
+    );
+    const badge = (id: string) => rows.find((row) => row.id === id)?.badge;
+    expect([badge("a"), badge("b"), badge("c"), badge("d"), badge("w1")]).toEqual([
+      "auto",
+      "estimate",
+      null,
+      null,
+      null,
+    ]);
+  });
 });
 
 describe("在庫の集計", () => {

@@ -35,7 +35,16 @@ export interface FilamentUsage {
   recorded_at: string;
   /** 残量から引いているか。基準の計量より前のものは、量った重さに含まれているので false */
   counted: boolean;
+  /**
+   * 記録の出どころ（#454）。manual=手入力 / auto=造形の完了で自動 / auto_estimate=途中停止の概算。
+   * 古いレスポンス（オフラインキャッシュ）には無いので、無ければ手入力として読む
+   */
+  source?: FilamentUsageSource;
+  /** 自動記録のときの造形の識別子（プリンターカードが「差し引いた」と突き合わせる） */
+  job_key?: string | null;
 }
+
+export type FilamentUsageSource = "manual" | "auto" | "auto_estimate";
 
 export interface FilamentBase {
   /** weighing=最後の計量が基準 / initial=まだ計量が無く、初期フィラメント量が基準 */
@@ -234,6 +243,8 @@ export interface HistoryRow {
   value: string;
   /** 使用量のうち、計量に含まれていて残量から引いていないもの */
   settled: boolean;
+  /** 自動で記録したもの。手入力・計量は null */
+  badge: "auto" | "estimate" | null;
 }
 
 /** 使用量と計量を1本の履歴へ。日付の新しい順で、同じ日は登録の新しい順 */
@@ -248,6 +259,8 @@ export function buildHistory(spool: FilamentSpool, limit = 8): HistoryRow[] {
       label: usage.note || "使用",
       value: `−${formatUsageGrams(usage.grams)} g`,
       settled: !usage.counted,
+      badge:
+        usage.source === "auto" ? "auto" : usage.source === "auto_estimate" ? "estimate" : null,
     })),
     ...spool.weighings.map<HistoryRow>((weighing) => ({
       key: `w:${weighing.id}`,
@@ -258,6 +271,7 @@ export function buildHistory(spool: FilamentSpool, limit = 8): HistoryRow[] {
       label: `計量（全体 ${formatUsageGrams(weighing.gross_g)} g）`,
       value: weighing.net_g != null ? `${formatGrams(weighing.net_g)} g` : "",
       settled: false,
+      badge: null,
     })),
   ];
   rows.sort((a, b) =>
