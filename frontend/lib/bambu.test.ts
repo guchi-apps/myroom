@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildFilamentView,
   collectBambuErrors,
   describeLastKnown,
   formatFinishAt,
@@ -12,7 +11,6 @@ import {
   resolveBambuView,
   type BambuPrinterResponse,
   type BambuSnapshot,
-  type BambuTray,
 } from "@/lib/bambu";
 
 function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
@@ -48,18 +46,6 @@ function response(overrides: Partial<BambuPrinterResponse> = {}): BambuPrinterRe
     lastMessageAt: "2026-09-21T13:28:00+09:00",
     printer: snapshot(),
     lastKnown: null,
-    ...overrides,
-  };
-}
-
-function tray(overrides: Partial<BambuTray> = {}): BambuTray {
-  return {
-    slot: 0,
-    empty: false,
-    material: "PLA",
-    brand: null,
-    color: "#ECECEC",
-    remainPercent: 84,
     ...overrides,
   };
 }
@@ -179,51 +165,5 @@ describe("最後に確認した状態", () => {
     expect(describeLastKnown(snapshot())).toBe("cable-clip_v3　印刷中 62%");
     expect(describeLastKnown(snapshot({ state: "finished" }))).toBe("cable-clip_v3　完了");
     expect(describeLastKnown(snapshot({ state: "idle" }))).toBe("待機中");
-  });
-});
-
-describe("buildFilamentView", () => {
-  it("AMS Lite があればスロットを並べ、使用中のスロットに印を付ける", () => {
-    const view = buildFilamentView(
-      snapshot({
-        ams: {
-          connected: true,
-          units: [
-            {
-              id: 0,
-              humidity: 4,
-              slots: [tray({ slot: 0 }), tray({ slot: 1, material: "PETG" }), tray({ slot: 2, empty: true, material: null, color: null, remainPercent: null })],
-            },
-          ],
-          activeSource: "ams",
-          activeSlot: 1,
-          externalSpool: null,
-        },
-      })
-    );
-    expect(view?.source).toBe("ams");
-    expect(view?.slots.map((slot) => slot.active)).toEqual([false, true, false]);
-  });
-
-  // 実機は AMS Lite なしの構成で確かめている。材料・色は外付けスプールにしか入らない
-  it("AMS が無ければ外付けスプールを1つだけ出す", () => {
-    const view = buildFilamentView(
-      snapshot({
-        ams: {
-          connected: false,
-          units: [],
-          activeSource: "external",
-          activeSlot: null,
-          externalSpool: tray({ slot: 254, remainPercent: null }),
-        },
-      })
-    );
-    expect(view?.source).toBe("external");
-    expect(view?.slots).toHaveLength(1);
-    expect(view?.slots[0].active).toBe(true);
-  });
-
-  it("どちらも無ければ null", () => {
-    expect(buildFilamentView(snapshot())).toBeNull();
   });
 });
