@@ -184,21 +184,22 @@ describe("PrinterCard", () => {
     expect(render(response(), { loading: true })).not.toContain("印刷中");
   });
 
-  it("AMS Lite のスロットは材料・残量・使用中の印を出し、空きは「空」にする", () => {
-    const tray = (slot: number, material: string, remain: number | null, empty = false) => ({
+  // 自動で取れる材料・色は実物のスプールと合わないことが多いので、カードには出さない（#453）
+  it("プリンターから取れる材料・色（AMS Lite・外付けスプール）は出さない", () => {
+    const tray = (slot: number, material: string) => ({
       slot,
-      empty,
-      material: empty ? null : material,
+      empty: false,
+      material,
       brand: null,
-      color: empty ? null : "#2B2B2B",
-      remainPercent: remain,
+      color: "#2B2B2B",
+      remainPercent: 62,
     });
-    const html = render(
+    const withAms = render(
       response({
         printer: snapshot({
           ams: {
             connected: true,
-            units: [{ id: 0, humidity: 4, slots: [tray(0, "PLA", 84), tray(1, "PETG", 62), tray(2, "", null, true)] }],
+            units: [{ id: 0, humidity: 4, slots: [tray(0, "PLA"), tray(1, "PETG")] }],
             activeSource: "ams",
             activeSlot: 1,
             externalSpool: null,
@@ -206,16 +207,7 @@ describe("PrinterCard", () => {
         }),
       })
     );
-    expect(html).toContain("フィラメント（AMS Lite）");
-    expect(html).toContain("PETG");
-    expect(html).toContain("62%");
-    expect(html).toContain("輪＝使用中");
-    expect(html).toContain("空");
-  });
-
-  // 実機は AMS Lite なしの構成。外付けスプールの残量は読めない（null）
-  it("AMS が無いときは外付けスプールだけを出す", () => {
-    const html = render(
+    const withExternal = render(
       response({
         printer: snapshot({
           ams: {
@@ -223,21 +215,19 @@ describe("PrinterCard", () => {
             units: [],
             activeSource: "external",
             activeSlot: null,
-            externalSpool: {
-              slot: 254,
-              empty: false,
-              material: "PLA",
-              brand: null,
-              color: "#BCBCBC",
-              remainPercent: null,
-            },
+            externalSpool: tray(254, "PLA"),
           },
         }),
       })
     );
-    expect(html).toContain("外付けスプール");
-    expect(html).toContain("PLA");
-    expect(html).not.toContain("AMS Lite");
+    for (const html of [withAms, withExternal]) {
+      expect(html).not.toContain("フィラメント");
+      expect(html).not.toContain("外付けスプール");
+      expect(html).not.toContain("PETG");
+      // 温度と更新時刻は今までどおり出す
+      expect(html).toContain("ノズル");
+      expect(html).toContain("13:28 時点");
+    }
   });
 
   describe("フィラメント残量（#445）", () => {
