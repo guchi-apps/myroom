@@ -31,6 +31,14 @@ FTPS で読み、`job_filament` として一緒に送ってくる（`normalize_j
 完了・停止・エラーの遷移は `detect_transition_events()` が `NotificationEvent` として組み立てる。
 **この段階ではPush配信までは行わない**（AIDE側 guchi-apps/aide#378 との役割分担が決まってから
 `notify_events.dispatch_push_event()` へ渡す）。
+
+印刷完了後の「取り出した」（#464）
+--------------------------------
+完了（finished）・停止（failed）のまま次の印刷を始めるまで、カードの進捗表示が張り付く問題への
+対応。レコードに `acknowledged` フラグを持たせ、`acknowledge_finished()`（ユーザーの「取り出した」
+操作）がこれを立てる。**新しい印刷が始まった（`ACTIVE_STATES` へ遷移した）瞬間に
+`record_state()` が自動でFalseへリセットする**ので、同じジョブ名で繰り返し印刷しても、
+毎回の完了で改めてボタンが出る。識別子を持たせて比較する形にしなかったのはこのため。
 """
 
 from __future__ import annotations
@@ -581,6 +589,26 @@ def get_record(db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
     return _load_record(db)
 
 
+def acknowledge_finished(db: Optional[Session] = None) -> Optional[Dict[str, Any]]:
+    """「取り出した」操作（#464）。現在の状態が完了・停止のときだけ確認済みにする。
+
+    印刷中・待機中など対象外の状態で呼ばれても何も変えず、現在のレコードをそのまま返す
+    （ボタンは対象の状態でしか出ないが、念のため）。**排他制御は無い。** 収集プロセスの
+    定期POSTと稀に競合しうるが、`record_state()` と同じくロック無しの読み込み→書き戻しで
+    十分とする（実害は「ボタンの効果が次のポーリングまで反映されない」程度）。
+    """
+    record = _load_record(db)
+    if record is None:
+        return None
+    snapshot = record.get("snapshot")
+    state = snapshot.get("state") if snapshot else None
+    if state not in ("finished", "failed"):
+        return record
+    updated = {**record, "acknowledged": True}
+    _write_record(db, updated)
+    return updated
+
+
 def record_state(
     *,
     connected: bool,
@@ -616,11 +644,19 @@ def record_state(
     else:
         snapshot = previous_snapshot
 
+    # 新しい印刷が始まったら「取り出した」の確認状態をリセットする（#464）。report が無い
+    # （プリンターに繋がっていない）ときは snapshot が変わらないので、確認状態も維持する
+    if report is not None and snapshot is not None and snapshot.get("state") in ACTIVE_STATES:
+        acknowledged = False
+    else:
+        acknowledged = bool((previous or {}).get("acknowledged"))
+
     record = {
         "received_at": _iso(now),
         "connected": bool(connected),
         "last_message_at": _iso(message_at) if report is not None else (previous or {}).get("last_message_at"),
         "snapshot": snapshot,
+        "acknowledged": acknowledged,
     }
     _write_record(db, record)
 
@@ -680,6 +716,8 @@ def build_response(
     online = connection == "online"
 
     snapshot = record.get("snapshot")
+    if snapshot is not None:
+        snapshot = {**snapshot, "acknowledged": bool(record.get("acknowledged"))}
     return {
         **base,
         "configured": True,

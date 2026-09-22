@@ -9,6 +9,7 @@ function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
   return {
     state: "printing",
     rawState: "RUNNING",
+    acknowledged: false,
     job: {
       name: "cable-clip_v3",
       progressPercent: 62,
@@ -49,6 +50,7 @@ function render(
     error?: boolean;
     filament?: FilamentPayload | null;
     onOpenFilament?: () => void;
+    onAcknowledged?: (next: BambuPrinterResponse) => void;
   }
 ) {
   return renderToStaticMarkup(
@@ -58,6 +60,7 @@ function render(
       error={extra?.error ?? false}
       filament={extra?.filament}
       onOpenFilament={extra?.onOpenFilament}
+      onAcknowledged={extra?.onAcknowledged}
     />
   );
 }
@@ -291,6 +294,56 @@ describe("PrinterCard", () => {
   });
 });
 
+
+describe("「取り出した」（#464）", () => {
+  it("完了・停止で未確認のときだけ出す", () => {
+    const finished = render(response({ printer: snapshot({ state: "finished" }) }), {
+      onAcknowledged: () => {},
+    });
+    expect(finished).toContain("取り出した");
+
+    const failed = render(response({ printer: snapshot({ state: "failed" }) }), {
+      onAcknowledged: () => {},
+    });
+    expect(failed).toContain("取り出した");
+
+    const printing = render(response({ printer: snapshot({ state: "printing" }) }), {
+      onAcknowledged: () => {},
+    });
+    expect(printing).not.toContain("取り出した");
+  });
+
+  it("onAcknowledged を渡さなければボタンを出さない", () => {
+    const html = render(response({ printer: snapshot({ state: "finished" }) }));
+    expect(html).not.toContain("取り出した");
+  });
+
+  it("確認済みは進捗を出さず、待機中の表示にする", () => {
+    const html = render(
+      response({ printer: snapshot({ state: "finished", acknowledged: true }) }),
+      { onAcknowledged: () => {} }
+    );
+    expect(html).not.toContain("取り出した");
+    expect(html).not.toContain("印刷が終わりました");
+    expect(html).not.toContain("progressbar");
+    expect(html).toContain("印刷していません。");
+    expect(html).toContain("待機中");
+  });
+
+  it("確認済みの停止は、エラー表示も出さない", () => {
+    const html = render(
+      response({
+        printer: snapshot({
+          state: "failed",
+          acknowledged: true,
+          errors: { printError: { code: "0300_4001", raw: 1 }, hms: [] },
+        }),
+      }),
+      { onAcknowledged: () => {} }
+    );
+    expect(html).not.toContain("0300_4001");
+  });
+});
 
 describe("この造形の使用量（#454）", () => {
   const jobKey = "cable-clip_v3@2026-09-21T12:00:00+09:00";

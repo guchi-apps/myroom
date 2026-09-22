@@ -353,6 +353,74 @@ class TestRecordState:
         assert events == []
 
 
+class TestAcknowledgeFinished:
+    """「取り出した」操作（#464）。"""
+
+    def test_no_record_yet(self, data_dir):
+        assert bambu.acknowledge_finished() is None
+
+    def test_ignored_while_printing(self, data_dir):
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="RUNNING"),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+
+        record = bambu.acknowledge_finished()
+
+        assert record["acknowledged"] is False
+
+    @pytest.mark.parametrize("state", ["FINISH", "FAILED"])
+    def test_sets_the_flag_when_finished_or_failed(self, data_dir, state):
+        bambu.record_state(
+            connected=True, report=_report(gcode_state=state),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+
+        record = bambu.acknowledge_finished()
+
+        assert record["acknowledged"] is True
+
+    def test_new_print_resets_the_flag(self, data_dir):
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+        bambu.acknowledge_finished()
+
+        record, _, _ = bambu.record_state(
+            connected=True, report=_report(gcode_state="RUNNING"),
+            last_message_at=None, now=NOW + datetime.timedelta(seconds=30),
+        )
+
+        assert record["acknowledged"] is False
+
+    def test_disconnection_without_report_keeps_the_flag(self, data_dir):
+        """report が無い（プリンターに繋がっていない）更新では、確認状態を変えない。"""
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+        bambu.acknowledge_finished()
+
+        record, _, _ = bambu.record_state(
+            connected=False, report=None, last_message_at=None,
+            now=NOW + datetime.timedelta(seconds=30),
+        )
+
+        assert record["acknowledged"] is True
+
+    def test_build_response_reflects_the_flag(self, data_dir):
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+        bambu.acknowledge_finished()
+
+        response = bambu.build_response(bambu.get_record(), NOW)
+
+        assert response["printer"]["acknowledged"] is True
+
+
 def _job_filament(name="benchy", grams=24.41, **overrides):
     """収集が3mfから読んだ使用量（`job_filament`）。1色。"""
     value = {
@@ -654,6 +722,48 @@ def test_app_get_hides_current_values_when_printer_offline(authed_client):
     assert body["online"] is False
     assert body["printer"] is None
     assert body["lastKnown"]["state"] == "finished"
+
+
+# --- 「取り出した」（#464） --------------------------------------------------
+
+
+def test_ack_endpoint_requires_login(client):
+    assert client.post("/api/bambu/printer/ack").status_code in (401, 403)
+
+
+def test_ack_endpoint_sets_acknowledged(authed_client):
+    _post(authed_client, connected=True, last_message_at=bambu.now_jst().isoformat(), report=_report())
+
+    response = authed_client.post("/api/bambu/printer/ack")
+
+    assert response.status_code == 200
+    assert response.json()["printer"]["acknowledged"] is True
+    # 取得し直しても反映されている
+    assert authed_client.get("/api/bambu/printer").json()["printer"]["acknowledged"] is True
+
+
+def test_ack_endpoint_ignored_while_printing(authed_client):
+    _post(
+        authed_client, connected=True, last_message_at=bambu.now_jst().isoformat(),
+        report=_report(gcode_state="RUNNING"),
+    )
+
+    response = authed_client.post("/api/bambu/printer/ack")
+
+    assert response.json()["printer"]["acknowledged"] is False
+
+
+def test_new_print_resets_acknowledged(authed_client):
+    _post(authed_client, connected=True, last_message_at=bambu.now_jst().isoformat(), report=_report())
+    authed_client.post("/api/bambu/printer/ack")
+
+    _post(
+        authed_client, connected=True, last_message_at=bambu.now_jst().isoformat(),
+        report=_report(gcode_state="RUNNING"),
+    )
+
+    body = authed_client.get("/api/bambu/printer").json()
+    assert body["printer"]["acknowledged"] is False
 
 
 # --- 使用量の自動記録（#454）-----------------------------------------------------

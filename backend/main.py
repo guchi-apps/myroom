@@ -954,6 +954,21 @@ def get_bambu_printer(
     return bambu.build_response(bambu.get_record(db))
 
 
+@app.post("/api/bambu/printer/ack")
+def acknowledge_bambu_printer(
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(get_current_user),
+):
+    """「取り出した」操作（#464）。
+
+    印刷完了・停止のまま次の印刷を始めるまでカードの表示が張り付く問題への対応。現在の状態が
+    完了（finished）・停止（failed）のときだけ確認済みにし、カードの表示を待機中相当へ戻す。
+    新しい印刷が始まれば `bambu.record_state()` が確認状態を自動でリセットする。対象外の状態
+    （印刷中など）で呼ばれても何も変えず、現在の状態をそのまま返す。**印刷の操作ではない。**
+    """
+    return bambu.build_response(bambu.acknowledge_finished(db))
+
+
 @app.get("/api/garbage")
 def get_garbage_schedule(_: dict = Depends(get_current_user)):
     """今日・明日・この先の収集予定。data/garbage.json の定義から計算する。"""
