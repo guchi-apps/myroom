@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { ChevronRight, Printer } from "lucide-react";
+import { acknowledgeBambuPrinter } from "@/lib/api";
 import { LevelBar, SpoolSwatch } from "@/components/filament-parts";
 import {
+  canAcknowledgeBambuPrinter,
   collectBambuErrors,
   describeLastKnown,
   formatFinishAt,
@@ -14,6 +17,7 @@ import {
   formatTemperature,
   getBambuStatusPill,
   hasJobProgress,
+  isAcknowledgedIdle,
   resolveBambuView,
   type BambuPrinterResponse,
   type BambuSnapshot,
@@ -41,6 +45,8 @@ interface PrinterCardProps {
   filament?: FilamentPayload | null;
   /** 残量の欄を押したときに在庫シートを開く */
   onOpenFilament?: () => void;
+  /** 「取り出した」操作が成功したときに、最新の状態を親へ伝える（#464） */
+  onAcknowledged?: (next: BambuPrinterResponse) => void;
 }
 
 /** 状態の色。`--pc` に入れて、ピルの文字・背景と進捗バーがそこから読む */
@@ -242,7 +248,51 @@ function ErrorAlert({ snapshot }: { snapshot: BambuSnapshot }) {
   );
 }
 
-function JobProgress({ snapshot, nowIso }: { snapshot: BambuSnapshot; nowIso: string }) {
+/** 「取り出した」ボタン（#464）。押すとカードの表示が待機中相当に切り替わる */
+function EjectButton({
+  onAcknowledged,
+}: {
+  onAcknowledged: (next: BambuPrinterResponse) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleClick = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      onAcknowledged(await acknowledgeBambuPrinter());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "操作できませんでした");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-2.5">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        className="w-full rounded-2xl bg-[color:var(--pc)] px-3 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {busy ? "処理しています..." : "取り出した"}
+      </button>
+      {error && <p className="mt-1.5 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function JobProgress({
+  snapshot,
+  nowIso,
+  onAcknowledged,
+}: {
+  snapshot: BambuSnapshot;
+  nowIso: string;
+  onAcknowledged?: (next: BambuPrinterResponse) => void;
+}) {
   const { job, state } = snapshot;
   const percent = job.progressPercent ?? 0;
   const running = state === "printing" || state === "preparing" || state === "paused";
@@ -299,6 +349,9 @@ function JobProgress({ snapshot, nowIso }: { snapshot: BambuSnapshot; nowIso: st
           {speed && <span>速度 {speed}</span>}
         </p>
       )}
+      {canAcknowledgeBambuPrinter(snapshot) && onAcknowledged && (
+        <EjectButton onAcknowledged={onAcknowledged} />
+      )}
     </>
   );
 }
@@ -326,22 +379,25 @@ function CurrentBody({
   snapshot,
   printer,
   stock,
+  onAcknowledged,
 }: {
   snapshot: BambuSnapshot;
   printer: BambuPrinterResponse;
   stock: FilamentPayload | null;
+  onAcknowledged?: (next: BambuPrinterResponse) => void;
 }) {
   const updatedAt = formatClock(printer.lastUpdateAt);
   return (
     <>
       {hasJobProgress(snapshot) ? (
-        <JobProgress snapshot={snapshot} nowIso={printer.fetchedAt} />
+        <JobProgress snapshot={snapshot} nowIso={printer.fetchedAt} onAcknowledged={onAcknowledged} />
       ) : snapshot.state === "unknown" ? (
         <PrinterMessage>プリンターの状態を読み取れませんでした。</PrinterMessage>
       ) : (
         <p className="text-sm text-foreground">印刷していません。</p>
       )}
-      <ErrorAlert snapshot={snapshot} />
+      {/* 「取り出した」済みの完了・停止は、エラー表示も待機中相当へ倒す（#464） */}
+      {!isAcknowledgedIdle(snapshot) && <ErrorAlert snapshot={snapshot} />}
       <div className="mt-3.5 grid grid-cols-2 gap-2">
         <TemperatureCell
           label="ノズル"
@@ -375,6 +431,7 @@ export function PrinterCard({
   error,
   filament = null,
   onOpenFilament,
+  onAcknowledged,
 }: PrinterCardProps) {
   const view = printer ? resolveBambuView(printer) : null;
 
@@ -406,7 +463,12 @@ export function PrinterCard({
       )}
 
       {!loading && !error && printer && view?.kind === "current" && (
-        <CurrentBody snapshot={view.snapshot} printer={printer} stock={filament} />
+        <CurrentBody
+          snapshot={view.snapshot}
+          printer={printer}
+          stock={filament}
+          onAcknowledged={onAcknowledged}
+        />
       )}
 
       {!loading && !error && printer && view?.kind === "offline" && (

@@ -1497,6 +1497,7 @@ export function MyRoomDashboard() {
                         error={bambuError && bambuPrinter == null}
                         filament={filament}
                         onOpenFilament={() => setFilamentOpen(true)}
+                        onAcknowledged={setBambuPrinter}
                       />
                     );
                   }

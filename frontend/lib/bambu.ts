@@ -63,6 +63,11 @@ export interface BambuJobFilament {
 export interface BambuSnapshot {
   state: BambuState;
   rawState: string | null;
+  /**
+   * 「取り出した」操作（#464）で確認済みか。完了・停止のときだけ意味を持ち、新しい印刷が
+   * 始まるとバックエンドが自動でfalseへ戻す。確認済みのあいだは待機中相当として表示する
+   */
+  acknowledged: boolean;
   job: {
     name: string | null;
     progressPercent: number | null;
@@ -223,8 +228,22 @@ const STATUS_PILLS: Record<BambuState, BambuStatusPill> = {
   unknown: { label: "状態不明", tone: "idle", live: false },
 };
 
+/** 完了・停止のあと、「取り出した」を押していないか（#464。ボタンを出す条件） */
+export function canAcknowledgeBambuPrinter(snapshot: BambuSnapshot): boolean {
+  return (snapshot.state === "finished" || snapshot.state === "failed") && !snapshot.acknowledged;
+}
+
+/** 完了・停止で、かつ「取り出した」を押し済みか（#464。待機中相当として見せる条件） */
+export function isAcknowledgedIdle(snapshot: BambuSnapshot): boolean {
+  return (snapshot.state === "finished" || snapshot.state === "failed") && snapshot.acknowledged;
+}
+
 /** 状態のピル。停止（`failed`）以外でも、エラーが出ていれば「エラー」を優先する */
 export function getBambuStatusPill(snapshot: BambuSnapshot): BambuStatusPill {
+  // 「取り出した」済みの完了・停止は、次の印刷が始まるまで待機中として見せる（#464）
+  if (isAcknowledgedIdle(snapshot)) {
+    return STATUS_PILLS.idle;
+  }
   const pill = STATUS_PILLS[snapshot.state] ?? STATUS_PILLS.unknown;
   if (snapshot.state !== "failed" && snapshot.state !== "unknown" && collectBambuErrors(snapshot).length > 0) {
     return { label: "エラー", tone: "bad", live: false };
@@ -253,8 +272,14 @@ export function describeLastKnown(snapshot: BambuSnapshot): string {
   }
 }
 
-/** 印刷の進み具合を出す状態か（待機中・状態不明は出さない） */
+/**
+ * 印刷の進み具合を出す状態か（待機中・状態不明は出さない）。
+ *
+ * **「取り出した」を押した完了・停止は出さない**（#464）。次の印刷が始まるまで、
+ * 進捗100%（または途中%）が張り付いて見えるのを防ぐ
+ */
 export function hasJobProgress(snapshot: BambuSnapshot): boolean {
+  if (isAcknowledgedIdle(snapshot)) return false;
   return (
     ["preparing", "printing", "paused", "finished", "failed"].includes(snapshot.state) &&
     snapshot.job.progressPercent != null

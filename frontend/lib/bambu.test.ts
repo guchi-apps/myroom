@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAcknowledgeBambuPrinter,
   collectBambuErrors,
   describeLastKnown,
   formatFinishAt,
@@ -8,6 +9,8 @@ import {
   formatTargetTemperature,
   formatTemperature,
   getBambuStatusPill,
+  hasJobProgress,
+  isAcknowledgedIdle,
   resolveBambuView,
   type BambuPrinterResponse,
   type BambuSnapshot,
@@ -17,6 +20,7 @@ function snapshot(overrides: Partial<BambuSnapshot> = {}): BambuSnapshot {
   return {
     state: "printing",
     rawState: "RUNNING",
+    acknowledged: false,
     job: {
       name: "cable-clip_v3",
       progressPercent: 62,
@@ -165,5 +169,34 @@ describe("最後に確認した状態", () => {
     expect(describeLastKnown(snapshot())).toBe("cable-clip_v3　印刷中 62%");
     expect(describeLastKnown(snapshot({ state: "finished" }))).toBe("cable-clip_v3　完了");
     expect(describeLastKnown(snapshot({ state: "idle" }))).toBe("待機中");
+  });
+});
+
+describe("「取り出した」（#464）", () => {
+  it("完了・停止で未確認のときだけボタンを出す", () => {
+    expect(canAcknowledgeBambuPrinter(snapshot({ state: "finished" }))).toBe(true);
+    expect(canAcknowledgeBambuPrinter(snapshot({ state: "failed" }))).toBe(true);
+    expect(canAcknowledgeBambuPrinter(snapshot({ state: "printing" }))).toBe(false);
+    expect(canAcknowledgeBambuPrinter(snapshot({ state: "finished", acknowledged: true }))).toBe(
+      false
+    );
+  });
+
+  it("確認済みの完了・停止は進捗を出さず、待機中のピルにする", () => {
+    const acknowledged = snapshot({ state: "finished", acknowledged: true });
+    expect(hasJobProgress(acknowledged)).toBe(false);
+    expect(isAcknowledgedIdle(acknowledged)).toBe(true);
+    expect(getBambuStatusPill(acknowledged)).toEqual({
+      label: "待機中",
+      tone: "idle",
+      live: false,
+    });
+  });
+
+  it("未確認の完了・停止は、これまでどおり進捗とピルを出す", () => {
+    const notAcknowledged = snapshot({ state: "finished", acknowledged: false });
+    expect(hasJobProgress(notAcknowledged)).toBe(true);
+    expect(isAcknowledgedIdle(notAcknowledged)).toBe(false);
+    expect(getBambuStatusPill(notAcknowledged).label).toBe("完了");
   });
 });
