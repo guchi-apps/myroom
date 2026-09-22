@@ -259,7 +259,7 @@ function DeviceCard({
     <>
       <div className="mb-1 flex items-start justify-between gap-2">
         <p
-          className="device-card-title flex min-w-0 flex-1 items-center gap-1.5"
+          className="device-card-compact-title flex min-w-0 flex-1 items-center gap-1.5"
           style={accentColor ? { color: accentColor } : undefined}
         >
           {titleIcon}
@@ -276,9 +276,9 @@ function DeviceCard({
         <div className="flex flex-col gap-1">
           {primary && (
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="device-card-value">
+              <span className="device-card-compact-value">
                 {primary.text}
-                <span className="device-card-unit">
+                <span className="device-card-compact-unit">
                   {primary.unit === "°C" || primary.unit === "%"
                     ? primary.unit
                     : ` ${primary.unit}`}
@@ -287,7 +287,7 @@ function DeviceCard({
               {secondary.map((reading) => {
                 const Icon = METRIC_ICONS[reading.metric];
                 return (
-                  <span key={reading.metric} className="device-card-sub">
+                  <span key={reading.metric} className="device-card-compact-sub">
                     <Icon className="size-3.5 shrink-0" strokeWidth={1.75} />
                     {formatReading(reading)}
                   </span>
