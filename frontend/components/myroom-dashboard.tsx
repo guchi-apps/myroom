@@ -257,7 +257,7 @@ function DeviceCard({
   const [primary, ...secondary] = readings;
   const content = (
     <>
-      <div className="mb-1.5 flex items-start justify-between gap-2">
+      <div className="mb-1 flex items-start justify-between gap-2">
         <p
           className="device-card-title flex min-w-0 flex-1 items-center gap-1.5"
           style={accentColor ? { color: accentColor } : undefined}
@@ -268,14 +268,14 @@ function DeviceCard({
         {action && <div className="flex shrink-0 items-center">{action}</div>}
       </div>
       {statusNote && (
-        <p className="mb-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <p className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-300">
           {statusNote}
         </p>
       )}
       {metricsState === "ready" ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
           {primary && (
-            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="device-card-value">
                 {primary.text}
                 <span className="device-card-unit">
@@ -1255,7 +1255,7 @@ export function MyRoomDashboard() {
                 <SettingsIconButton label="表示設定" href="/devices" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
               {visibleDisplayOrder.map((item) => {
                 if (item.type === "device") {
                   const deviceId = item.deviceId;

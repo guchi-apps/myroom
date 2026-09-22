@@ -139,27 +139,28 @@
   }
   /*
    * 「いまの部屋」のカード。計測値を2つに絞ったぶん、暮らしのカードより低く置く（#226）。
-   * `min-h` を外して中身なりの高さにする。
+   * `min-h` を外して中身なりの高さにする。スマホの初期表示で「暮らし」の操作ボタンまで
+   * 見えるよう、パディング・文字サイズを他のカードより一段詰めている（#465）。
    */
   .device-card-compact {
-    @apply flex min-h-0 flex-col rounded-[18px] bg-card p-3.5;
+    @apply flex min-h-0 flex-col rounded-[16px] bg-card p-2.5;
   }
   .device-card-title {
-    @apply text-[15px] font-bold leading-snug text-foreground;
+    @apply text-[13px] font-bold leading-snug text-foreground;
   }
   .device-card-status {
     @apply text-sm text-muted-foreground;
   }
   /* 主役の計測値。単位は `.device-card-unit` で一段小さく添える */
   .device-card-value {
-    @apply text-[28px] font-bold leading-none tracking-tight tabular-nums text-foreground;
+    @apply text-[20px] font-bold leading-none tracking-tight tabular-nums text-foreground;
   }
   .device-card-unit {
-    @apply text-[15px] font-bold tracking-normal;
+    @apply text-xs font-bold tracking-normal;
   }
   /* 2つ目の計測値。主役の右へ添える */
   .device-card-sub {
-    @apply inline-flex items-center gap-1 text-[15px] font-bold tabular-nums text-muted-foreground;
+    @apply inline-flex items-center gap-1 text-xs font-bold tabular-nums text-muted-foreground;
   }
   /* 詳細パネル先頭の「いまの値」 */
   .reading-cell {
