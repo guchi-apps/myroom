@@ -22,6 +22,7 @@ function snapshot(
   return {
     state,
     rawState: null,
+    acknowledged: false,
     job: {
       name: "benchy",
       progressPercent: 50,

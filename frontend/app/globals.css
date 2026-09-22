@@ -139,10 +139,11 @@
   }
   /*
    * 「いまの部屋」のカード。計測値を2つに絞ったぶん、暮らしのカードより低く置く（#226）。
-   * `min-h` を外して中身なりの高さにする。
+   * `min-h` を外して中身なりの高さにする。スマホの初期表示で「暮らし」の操作ボタンまで
+   * 見えるよう、パディングを他のカードより一段詰めている（#465）。
    */
   .device-card-compact {
-    @apply flex min-h-0 flex-col rounded-[18px] bg-card p-3.5;
+    @apply flex min-h-0 flex-col rounded-[16px] bg-card p-2.5;
   }
   .device-card-title {
     @apply text-[15px] font-bold leading-snug text-foreground;
@@ -160,6 +161,25 @@
   /* 2つ目の計測値。主役の右へ添える */
   .device-card-sub {
     @apply inline-flex items-center gap-1 text-[15px] font-bold tabular-nums text-muted-foreground;
+  }
+  /*
+   * 「いまの部屋」専用の見出し・値・単位・副計測値（#473）。`.device-card-title` 等は
+   * 「暮らし」セクションの各カード（`.device-card` を使う power-card / garbage-card /
+   * cleaning-card / remote-card / bill-card / printer-card）とも共有しているため、
+   * ここを縮めるとそれらの文字サイズまで意図せず変わる。`.device-card-compact` 配下だけに
+   * 効く専用クラスとして分離する。
+   */
+  .device-card-compact-title {
+    @apply text-[13px] font-bold leading-snug text-foreground;
+  }
+  .device-card-compact-value {
+    @apply text-[20px] font-bold leading-none tracking-tight tabular-nums text-foreground;
+  }
+  .device-card-compact-unit {
+    @apply text-xs font-bold tracking-normal;
+  }
+  .device-card-compact-sub {
+    @apply inline-flex items-center gap-1 text-xs font-bold tabular-nums text-muted-foreground;
   }
   /* 詳細パネル先頭の「いまの値」 */
   .reading-cell {

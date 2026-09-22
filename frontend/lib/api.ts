@@ -573,6 +573,19 @@ export async function fetchBambuPrinter(): Promise<BambuPrinterResponse> {
   return fetchJson<BambuPrinterResponse>("/api/bambu/printer");
 }
 
+/**
+ * 「取り出した」操作（#464）。完了・停止のときだけ確認済みにし、応答に最新の状態が入る。
+ * 新しい印刷が始まると、バックエンドが確認状態を自動でリセットする。
+ */
+export async function acknowledgeBambuPrinter(): Promise<BambuPrinterResponse> {
+  const res = await fetchWithAuth("/api/bambu/printer/ack", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail || `Request failed: ${res.status}`);
+  }
+  return res.json() as Promise<BambuPrinterResponse>;
+}
+
 /** 掃除カード用。場所ごとの次にやる日まで計算済みで返る */
 export async function fetchCleaningSchedule(): Promise<CleaningSchedule> {
   return fetchJson<CleaningSchedule>("/api/cleaning");

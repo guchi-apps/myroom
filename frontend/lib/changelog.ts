@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.23.0",
+    date: "2026-09-22",
+    changes: [
+      "3Dプリンターカードに「取り出した」ボタンを追加しました。印刷が完了・停止したあとに造形物を取り出したら押すことで、カードの表示を待機中の状態へ戻せるようになりました。",
+    ],
+  },
+  {
     version: "4.22.1",
     date: "2026-09-22",
     changes: [
