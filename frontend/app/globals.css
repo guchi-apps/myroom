@@ -113,6 +113,15 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /*
+   * ページの下地（キャンバス）はヘッダーの帯の色にする（#478）。iOS 26以降のPWAは上端の
+   * ぼかしをこの色で色付けするため、本文の灰色のままだと薄緑のヘッダーへ灰色が混ざる。
+   * 本文の灰色は layout.tsx の内側の div が塗るので見た目は変わらない（body も同じ理由で
+   * layout.tsx 側でヘッダー色にしている）
+   */
+  html {
+    @apply bg-header-band;
+  }
   body {
     @apply bg-background text-foreground antialiased;
   }
