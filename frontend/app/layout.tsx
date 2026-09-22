@@ -30,7 +30,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#2ecc71",
+  // ステータスバー・タイトルバーの色をヘッダーの帯（globals.css の --header-band）に揃える（#478）
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#e9fbf2" },
+    { media: "(prefers-color-scheme: dark)", color: "#12261e" },
+  ],
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -45,7 +49,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" suppressHydrationWarning>
-      <body className={`${notoSansJP.className} min-h-screen`}>
+      {/*
+        body もヘッダーの帯の色にする（#478）。iOS がぼかしの色付けに html と body の
+        どちらを見ても灰色が混ざらないようにするため。本文の灰色は内側の div が塗る
+        （global-error.tsx は globals.css の body の既定色のまま）
+      */}
+      <body className={`${notoSansJP.className} min-h-screen bg-header-band`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -55,6 +64,17 @@ export default function RootLayout({
           <ServiceWorkerRegister />
           {/* 新しいビルドを自分で見つけて取り込む。全画面に効かせたいのでここに置く（#277） */}
           <AppUpdateChecker />
+          {/*
+            iOS 26以降のPWAは、ステータスバーの下へ潜った内容を上端でぼかす（#478）。
+            下の余白は本文と一緒にスクロールするので、スクロールするとカードや文字が
+            潜ってモザイク状に見える。安全領域の高さぶんを動かない単色の帯で塞ぎ、
+            ぼかす下地を常にヘッダー色にする（単色はぼかしても単色）。モーダルの
+            暗幕（z-50）より下に置き、開いたときは帯も一緒に暗くする。
+          */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[env(safe-area-inset-top)] bg-header-band"
+          />
           {/*
             iOS PWAではステータスバー直下に半透明の効果が重なるため、上端まで
             ヘッダー色で塗り、安全領域の下から画面を始める。env()が0の環境では
