@@ -76,6 +76,19 @@ export default function RootLayout({
             className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[env(safe-area-inset-top)] bg-header-band"
           />
           {/*
+            iOS 27以降のPWAは、CSSの静的な見た目だけで上端に固定ヘッダーが実在するかを
+            判定し、無いと判断すると自動でぼかしを重ねる（opacity:0・display:noneの要素は
+            判定から除外される。#482 https://qiita.com/na-trium-144/items/0add98a80ca2391e3f17）。
+            上の帯（#478）は可視の単色塗りなのでこの用途には使えない（background-clip:textを
+            付けると背景そのものが消えて#478の効果が壊れる）。テキストを持たないため見た目には
+            何も描画されない別要素を置き、WebKitに「実在する固定ヘッダーがある」と誤認させて
+            自動ぼかしの発生自体を止める。高さは記事が示す下限（10px超）に合わせた固定値。
+          */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[11px] bg-header-band [background-clip:text]"
+          />
+          {/*
             iOS PWAではステータスバー直下に半透明の効果が重なるため、上端まで
             ヘッダー色で塗り、安全領域の下から画面を始める。env()が0の環境では
             従来と同じ配置になる。画面ごとの最大幅は各画面が決める。

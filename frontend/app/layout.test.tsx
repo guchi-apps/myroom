@@ -31,6 +31,12 @@ describe("iOS PWAの安全領域", () => {
     expect(css).toMatch(/html\s*\{\s*@apply bg-header-band;/);
   });
 
+  it("背景の描画されない要素でWebKitに固定ヘッダーの実在を認識させる（#482）", () => {
+    expect(source).toContain(
+      "pointer-events-none fixed inset-x-0 top-0 z-40 h-[11px] bg-header-band [background-clip:text]",
+    );
+  });
+
   it("theme-colorとマニフェストをヘッダーの帯の色に揃える（#478）", () => {
     const light = css.match(/:root\s*\{[^}]*--header-band:\s*(#[0-9a-f]{6})/)?.[1];
     const dark = css.match(/\.dark\s*\{[^}]*--header-band:\s*(#[0-9a-f]{6})/)?.[1];
