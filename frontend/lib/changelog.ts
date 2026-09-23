@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.24.0",
+    date: "2026-09-23",
+    changes: [
+      "画面をスクロールしても、上部のヘッダー（アプリ名やメニューなど）が隠れずに常に表示されるようになりました。",
+    ],
+  },
+  {
     version: "4.23.0",
     date: "2026-09-22",
     changes: [
