@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 interface SettingsIconButtonProps {
   /** 読み上げ・ツールチップに使う名前。「表示設定」「掃除の設定」など */
   label: string;
-  /** 枠付きの大きめ（ヘッダー）か、枠なしの小さめ（セクション・カード）か */
+  /** 大きめ（ヘッダー）か、小さめ（セクション・カード）か。見た目はどちらも枠なし（#483） */
   tone?: "header" | "inline";
   className?: string;
   /** 渡すとリンクになる。渡さなければ `onClick` のボタン */
@@ -30,7 +30,7 @@ interface SettingsIconButtonProps {
 function iconButtonClass(tone: "header" | "inline", className?: string) {
   return cn(
     "flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-    tone === "header" ? "size-9 border bg-card" : "size-8",
+    tone === "header" ? "size-9" : "size-8",
     className
   );
 }

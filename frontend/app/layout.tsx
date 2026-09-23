@@ -30,10 +30,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // ステータスバー・タイトルバーの色をヘッダーの帯（globals.css の --header-band）に揃える（#478）
+  // ステータスバー・タイトルバーの色をヘッダーの帯（globals.css の --header-band）に揃える（#478・#483）
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#e9fbf2" },
-    { media: "(prefers-color-scheme: dark)", color: "#12261e" },
+    { media: "(prefers-color-scheme: light)", color: "#f5f5f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#060606" },
   ],
   width: "device-width",
   initialScale: 1,

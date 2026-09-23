@@ -1131,12 +1131,14 @@ export function MyRoomDashboard() {
         左から データを取り直す・部屋のようす・アプリ全体の設定。フッターは設定シートへ畳んだ。
         フッターが無いので、ヘッダーの下に引く線が本文との区切りになる。
 
-        薄緑の帯にして1段へ詰めた（#457）。ブランド画像のタイルが薄緑で、ヘッダーが本文と
-        同じ灰色だとタイルだけが浮いて見えたため、帯をタイルと同じ色にして溶かす（色は
-        `globals.css` の `--header-band`）。それまでは上余白32pt＋右側2段で約100ptあり、
-        最初の画面の3割近くを取っていた。**帯は画面の端まで伸ばし、中身だけ本文と同じ最大幅**に
-        揃える（PC・iPad は本文が中央に寄るので、帯まで寄せると端が切れて見える）。
-        本文の背景（`--background`）は変えていない。
+        1段へ詰めた（#457）。それまでは上余白32pt＋右側2段で約100ptあり、最初の画面の
+        3割近くを取っていた。**帯は画面の端まで伸ばし、中身だけ本文と同じ最大幅**に揃える
+        （PC・iPad は本文が中央に寄るので、帯まで寄せると端が切れて見える）。
+
+        帯の色は本文の背景（`--background`）と同じにしてあり（`globals.css` の
+        `--header-band`。#483）、ヘッダーだけ色が付いて見えないようにする。右の3つの
+        アイコンも枠・白背景を外し、セクション見出しの設定アイコン（`tone="inline"`）と
+        同じ枠なしの見た目に揃えている。
 
         左はブランド画像、右は「最終更新」と操作ボタン（#447）。ブランド画像は元の素材が
         PNGしか無いため、ロゴ文字を明るく塗り替えたダーク版を別に持ち、テーマで出し分ける
@@ -1179,7 +1181,7 @@ export function MyRoomDashboard() {
                     void refreshLatest();
                   }}
                   disabled={isOfflineMode}
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="データを更新"
                   title="データを更新"
                 >
@@ -1197,7 +1199,7 @@ export function MyRoomDashboard() {
                   href="/room"
                   aria-label="部屋のようす"
                   title="部屋のようす"
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   <Box className="size-[18px]" strokeWidth={1.75} />
                 </Link>
