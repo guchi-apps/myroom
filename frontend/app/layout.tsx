@@ -30,10 +30,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // ステータスバー・タイトルバーの色をヘッダーの帯（globals.css の --header-band）に揃える（#478）
+  // ステータスバー・タイトルバーの色をヘッダーの帯（globals.css の --header-band）に揃える（#478・#483）
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#e9fbf2" },
-    { media: "(prefers-color-scheme: dark)", color: "#12261e" },
+    { media: "(prefers-color-scheme: light)", color: "#f5f5f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#060606" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -74,6 +74,19 @@ export default function RootLayout({
           <div
             aria-hidden="true"
             className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[env(safe-area-inset-top)] bg-header-band"
+          />
+          {/*
+            iOS 27以降のPWAは、CSSの静的な見た目だけで上端に固定ヘッダーが実在するかを
+            判定し、無いと判断すると自動でぼかしを重ねる（opacity:0・display:noneの要素は
+            判定から除外される。#482 https://qiita.com/na-trium-144/items/0add98a80ca2391e3f17）。
+            上の帯（#478）は可視の単色塗りなのでこの用途には使えない（background-clip:textを
+            付けると背景そのものが消えて#478の効果が壊れる）。テキストを持たないため見た目には
+            何も描画されない別要素を置き、WebKitに「実在する固定ヘッダーがある」と誤認させて
+            自動ぼかしの発生自体を止める。高さは記事が示す下限（10px超）に合わせた固定値。
+          */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[11px] bg-header-band [background-clip:text]"
           />
           {/*
             iOS PWAではステータスバー直下に半透明の効果が重なるため、上端まで

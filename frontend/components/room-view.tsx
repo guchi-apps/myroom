@@ -294,7 +294,7 @@ export function RoomView() {
               type="button"
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex size-9 shrink-0 items-center justify-center rounded-full border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="データを更新"
               title="データを更新"
             >
