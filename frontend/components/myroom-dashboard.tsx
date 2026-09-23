@@ -1145,8 +1145,14 @@ export function MyRoomDashboard() {
         （`scripts/generate-icons.mjs` が両方を書き出す）。最終更新は390px以上ならボタンの
         左横に置いて1段にし、それより狭い端末（375pt幅など）では横幅が足りないので
         ボタン列の下へ右寄せで回す。
+
+        スクロールしても常に見える固定表示にする（#488）。`sticky` の基準はbodyスクロール
+        （scroll containerを持たない構造）で、`top`はiOS安全領域の帯（`app/layout.tsx`の
+        `env(safe-area-inset-top)`分の帯）の直下に揃える。`z-30`は安全領域の帯（z-40）・
+        ボトムシート系モーダルの暗幕（z-50）より下に置き、開いたときはそれらの下に隠れるように
+        しつつ、スクロールする本文（z-index無し）より上に出るための最小限の値。
       */}
-      <header className="border-b border-header-band-border bg-header-band">
+      <header className="sticky top-[env(safe-area-inset-top)] z-30 border-b border-header-band-border bg-header-band">
         <div className="mx-auto w-full max-w-[480px] px-5 py-2.5 lg:max-w-[1040px] lg:px-8">
           <div className="flex items-center justify-between gap-3 px-0.5">
             <h1 className="shrink-0">
