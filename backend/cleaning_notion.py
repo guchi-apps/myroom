@@ -327,6 +327,10 @@ def sync(
     # 完了の読み戻しを先に済ませてから、次の予定を計算する
     completed_ids = find_completed(tasks, existing) if "done" in resolved else []
     if completed_ids and not dry_run:
+        # 冒頭の読み込みで始まったトランザクション（REPEATABLE READ のスナップショット）を捨てる。
+        # 残すと、Notion を呼んでいる間に画面から入った操作を古い内容で上書きして消す（#496）
+        if db is not None:
+            db.commit()
         for task_id in completed_ids:
             tasks, _ = cleaning.mark_done(task_id, db, done_on=today)
 

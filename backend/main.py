@@ -1733,7 +1733,8 @@ async def create_sensor_data(
         return {"status": "ok"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("sensorの保存に失敗")
+        raise HTTPException(status_code=500, detail="internal error")
 
 @app.get("/api/latest")
 def get_latest(
@@ -1924,7 +1925,8 @@ async def create_aircon_data(
         return {"status": "ok"}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("airconの保存に失敗")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @app.post("/api/energy")
@@ -1960,7 +1962,8 @@ async def create_daily_energy(
         return {"status": "ok", "written": written}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("energyの保存に失敗")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @app.get("/api/energy/summary")
@@ -2095,7 +2098,8 @@ def create_bambu_state(
         )
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("bambu stateの保存に失敗")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
     _handle_bambu_events(events)
     response: Dict[str, Any] = {"status": "ok", "events": [event.kind for event in events]}
@@ -2148,7 +2152,8 @@ async def create_utility_bills(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("billsの保存に失敗")
+        raise HTTPException(status_code=500, detail="internal error") from e
 
 
 @app.get("/api/bills/summary")

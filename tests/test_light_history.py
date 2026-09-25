@@ -94,6 +94,16 @@ def test_最後まで点いたままなら継続中として返す():
     assert segments[0].open_end is True
 
 
+def test_最後の記録から窓の終わりまで空いていたら継続中にせず最後の記録で閉じる():
+    # 0:30 まで点灯を記録したあと照度が届かなくなり、窓は 4:00 まで続く
+    records = illuminance_records([5, 300, 300, 300])
+    segments = light_history.segments_from_illuminance(records, 80, dt(6, 0), dt(6, 4))
+
+    assert len(segments) == 1
+    assert segments[0].end == dt(6, 0, 30)
+    assert segments[0].open_end is False
+
+
 def test_窓の手前から続く区間は開始が窓の先頭になり点けた扱いにしない():
     # 窓の手前（LOOKBACK ぶん）から点いている
     records = [
