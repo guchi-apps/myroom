@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.24.3",
+    date: "2026-09-25",
+    changes: [
+      "3Dプリンターカードの「取り出した」ボタンを押したタイミングが印刷状態の受信と重なると、確認済みの表示が元の「完了」表示に戻ってしまうことがある不具合を修正しました。",
+    ],
+  },
+  {
     version: "4.24.2",
     date: "2026-09-25",
     changes: [
