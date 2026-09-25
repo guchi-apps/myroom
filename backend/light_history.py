@@ -187,8 +187,15 @@ def segments_from_illuminance(
         previous_at = at
 
     if open_start is not None and previous_at is not None:
-        # 最後まで点いたまま。窓の終わりまで続いているものとして扱う
-        segments.append(Segment(start=open_start, end=max(previous_at, window_end), open_end=True))
+        if _minutes_between(previous_at, window_end) > MAX_GAP_MINUTES:
+            # 最後の記録から窓の終わりまで空いている（照度だけ届かなくなった等）。
+            # 読めていない時間を「継続中」に含めず、最後の記録で閉じる
+            segments.append(Segment(start=open_start, end=previous_at))
+        else:
+            # 最後まで点いたまま。窓の終わりまで続いているものとして扱う
+            segments.append(
+                Segment(start=open_start, end=max(previous_at, window_end), open_end=True)
+            )
 
     return _clip(smooth_segments(segments), window_start, window_end)
 
