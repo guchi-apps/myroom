@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.24.2",
+    date: "2026-09-25",
+    changes: [
+      "ゴミ出しの通知時刻を設定するとき、入力中に欄が使えなくなって数字を打ち切れないことがある不具合を修正しました。",
+    ],
+  },
+  {
     version: "4.24.0",
     date: "2026-09-23",
     changes: [
