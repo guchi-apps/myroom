@@ -4,6 +4,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = fs.readFileSync(path.join(process.cwd(), "app/layout.tsx"), "utf8");
+const dashboard = fs.readFileSync(
+  path.join(process.cwd(), "components/myroom-dashboard.tsx"),
+  "utf8",
+);
 const css = fs.readFileSync(path.join(process.cwd(), "app/globals.css"), "utf8");
 const manifest = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), "public/manifest.json"), "utf8"),
@@ -35,6 +39,14 @@ describe("iOS PWAの安全領域", () => {
     expect(source).toContain(
       "pointer-events-none fixed inset-x-0 top-0 z-40 h-[11px] bg-header-band [background-clip:text]",
     );
+  });
+
+  it("ダッシュボードのヘッダーは上端から始まる固定要素で、安全領域も自分で塗る（#513）", () => {
+    expect(dashboard).toContain(
+      "fixed inset-x-0 top-0 z-[45] border-b border-header-band-border bg-header-band pt-[env(safe-area-inset-top)]",
+    );
+    // 安全領域の下から始まる sticky に戻すと、iOS が固定ヘッダーと見なさずぼかしが届く
+    expect(dashboard).not.toContain("sticky top-[env(safe-area-inset-top)]");
   });
 
   it("theme-colorとマニフェストをヘッダーの帯の色に揃える（#478）", () => {
