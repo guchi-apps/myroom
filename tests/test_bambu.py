@@ -409,6 +409,39 @@ class TestAcknowledgeFinished:
 
         assert record["acknowledged"] is True
 
+    def test_ack_during_a_concurrent_post_is_not_lost(self, data_dir, monkeypatch):
+        """収集のPOSTの読み込み→書き戻しの最中に確認が入っても消えない（#500）。"""
+        import threading
+        import time
+
+        bambu.record_state(
+            connected=True, report=_report(gcode_state="FINISH"),
+            last_message_at=NOW.isoformat(), now=NOW,
+        )
+        original_load = bambu._load_record
+        original_write = bambu._write_record
+
+        def slow_write(db, record):
+            if threading.current_thread().name == "poster":
+                time.sleep(0.2)  # 読んでから書くまでの窓を広げる
+            original_write(db, record)
+
+        monkeypatch.setattr(bambu, "_write_record", slow_write)
+        poster = threading.Thread(
+            name="poster",
+            target=bambu.record_state,
+            kwargs=dict(
+                connected=True, report=_report(gcode_state="FINISH"),
+                last_message_at=None, now=NOW + datetime.timedelta(seconds=30),
+            ),
+        )
+        poster.start()
+        time.sleep(0.05)  # POSTが読み込みに入ってから確認する
+        bambu.acknowledge_finished()
+        poster.join()
+
+        assert original_load(None)["acknowledged"] is True
+
     def test_build_response_reflects_the_flag(self, data_dir):
         bambu.record_state(
             connected=True, report=_report(gcode_state="FINISH"),
