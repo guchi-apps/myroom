@@ -92,6 +92,8 @@ const THRESHOLD_FIELDS: {
 ];
 
 const REMINDER_DRAFT_KEY = "reminder_minutes";
+const GARBAGE_TIME_DRAFT_KEY = "garbage_notify_time";
+const GARBAGE_SAME_DAY_TIME_DRAFT_KEY = "garbage_notify_same_day_time";
 
 export function thresholdDraftKey(metric: ThresholdMetric, bound: ThresholdBound): string {
   return `${metric}.${bound}`;
@@ -155,6 +157,18 @@ export function commitReminderDraft(current: number, raw: string): DraftCommit<n
   );
   if (minutes === current) return { status: "unchanged" };
   return { status: "ok", value: minutes };
+}
+
+/**
+ * 通知時刻（`<input type="time">`）の入力を確定する。時と分を打ち分けている途中でも値が
+ * 完成すると change が発火するため、入力のたびに保存せず入力欄から離れたときだけ呼ぶ。
+ * 空欄（消した状態）は確定せず、保存済みの値へ戻す。
+ */
+export function commitTimeDraft(current: string, raw: string): DraftCommit<string> {
+  const value = raw.trim();
+  if (!/^\d{2}:\d{2}$/.test(value)) return { status: "unchanged" };
+  if (value === current) return { status: "unchanged" };
+  return { status: "ok", value };
 }
 
 function isIosNotInstalledPwa(): boolean {
@@ -307,6 +321,19 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
     if (result.status !== "ok") return;
     setError("");
     void saveSettings({ room_anomaly_reminder_minutes: result.value });
+  };
+
+  const commitGarbageTime = (
+    draftKey: string,
+    field: "garbage_notify_time" | "garbage_notify_same_day_time",
+    fallback: string
+  ) => {
+    const raw = takeDraft(draftKey);
+    if (raw === undefined || !settings) return;
+    const result = commitTimeDraft(settings[field] ?? fallback, raw);
+    if (result.status !== "ok") return;
+    setError("");
+    void saveSettings({ [field]: result.value });
   };
 
   const handleEnablePush = async () => {
@@ -476,11 +503,22 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
                       <input
                         id="garbage-notify-time"
                         type="time"
-                        disabled={saving}
-                        value={settings.garbage_notify_time ?? DEFAULT_GARBAGE_NOTIFY_TIME}
-                        onChange={(event) =>
-                          void saveSettings({ garbage_notify_time: event.target.value })
+                        value={
+                          drafts[GARBAGE_TIME_DRAFT_KEY] ??
+                          settings.garbage_notify_time ??
+                          DEFAULT_GARBAGE_NOTIFY_TIME
                         }
+                        onChange={(event) => setDraft(GARBAGE_TIME_DRAFT_KEY, event.target.value)}
+                        onBlur={() =>
+                          commitGarbageTime(
+                            GARBAGE_TIME_DRAFT_KEY,
+                            "garbage_notify_time",
+                            DEFAULT_GARBAGE_NOTIFY_TIME
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
                         className="rounded-full bg-muted/40 px-3 py-1.5 text-[13.5px] font-bold tabular-nums"
                       />
                     </div>
@@ -512,14 +550,24 @@ export function NotificationSettingsSheet({ open, onClose }: NotificationSetting
                       <input
                         id="garbage-notify-same-day-time"
                         type="time"
-                        disabled={saving}
                         value={
+                          drafts[GARBAGE_SAME_DAY_TIME_DRAFT_KEY] ??
                           settings.garbage_notify_same_day_time ??
                           DEFAULT_GARBAGE_NOTIFY_SAME_DAY_TIME
                         }
                         onChange={(event) =>
-                          void saveSettings({ garbage_notify_same_day_time: event.target.value })
+                          setDraft(GARBAGE_SAME_DAY_TIME_DRAFT_KEY, event.target.value)
                         }
+                        onBlur={() =>
+                          commitGarbageTime(
+                            GARBAGE_SAME_DAY_TIME_DRAFT_KEY,
+                            "garbage_notify_same_day_time",
+                            DEFAULT_GARBAGE_NOTIFY_SAME_DAY_TIME
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
                         className="rounded-full bg-muted/40 px-3 py-1.5 text-[13.5px] font-bold tabular-nums"
                       />
                     </div>
