@@ -3,6 +3,7 @@ import {
   categoryHasTiming,
   commitReminderDraft,
   commitThresholdDraft,
+  commitTimeDraft,
   parseNumberDraft,
   thresholdDraftKey,
   toggleCategoryTiming,
@@ -150,5 +151,20 @@ describe("toggleCategoryTiming", () => {
     );
     expect(result.recyclable).toEqual(["same_day"]);
     expect(result.burnable).toEqual(["before", "same_day"]);
+  });
+});
+
+describe("commitTimeDraft", () => {
+  it("空欄・形式が崩れた値は確定しない", () => {
+    expect(commitTimeDraft("20:00", "")).toEqual({ status: "unchanged" });
+    expect(commitTimeDraft("20:00", "2:30")).toEqual({ status: "unchanged" });
+  });
+
+  it("保存済みと同じ値は保存しない", () => {
+    expect(commitTimeDraft("20:00", "20:00")).toEqual({ status: "unchanged" });
+  });
+
+  it("HH:MM の値は確定する", () => {
+    expect(commitTimeDraft("20:00", "02:30")).toEqual({ status: "ok", value: "02:30" });
   });
 });
