@@ -16,6 +16,7 @@ data/garbage_notion_state.json
 data/cleaning.json
 data/filament.json
 data/filament.json.lock
+data/cleaning.json.lock
 data/bambu_state.json
 data/bambu_state.json.lock
 __pycache__/
