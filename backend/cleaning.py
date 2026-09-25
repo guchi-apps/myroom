@@ -30,13 +30,15 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import threading
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import database
+from . import atomic_json, database
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -278,13 +280,6 @@ def _load_file_tasks() -> List[Dict[str, Any]]:
     return normalize_tasks(data)
 
 
-def _write_file_tasks(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as handle:
-        json.dump({"tasks": tasks}, handle, ensure_ascii=False, indent=2)
-    return tasks
-
-
 def _load_db_tasks(db: Session) -> List[Dict[str, Any]]:
     row = (
         db.query(database.AppSetting)
@@ -299,25 +294,84 @@ def _load_db_tasks(db: Session) -> List[Dict[str, Any]]:
         return []
 
 
-def _write_db_tasks(db: Session, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    serialized = json.dumps(tasks, ensure_ascii=False)
-    row = (
-        db.query(database.AppSetting)
-        .filter(database.AppSetting.setting_key == SETTING_KEY)
-        .first()
-    )
-    if row is None:
-        db.add(database.AppSetting(setting_key=SETTING_KEY, setting_value=serialized))
-    else:
-        row.setting_value = serialized
-    db.commit()
-    return tasks
-
-
 def get_tasks(db: Optional[Session] = None) -> List[Dict[str, Any]]:
     if database.DB_MOCK or db is None:
         return _load_file_tasks()
     return _load_db_tasks(db)
+
+
+#: DB経路でプロセス内の並行リクエストを1本ずつにするロック。行ロック（`FOR UPDATE`）が効かない
+#: DB（テストのSQLite）でも、同じプロセスの中では読み→書きが重ならないようにする
+_db_lock = threading.Lock()
+
+
+def _lock_db_row(db: Session) -> database.AppSetting:
+    """`cleaning_tasks` の行を書き込み用に確保する（`SELECT ... FOR UPDATE`）。
+
+    行がまだ無い最初の1回だけ、空の行を作ってから取り直す。
+    """
+    query = (
+        db.query(database.AppSetting)
+        .filter(database.AppSetting.setting_key == SETTING_KEY)
+        .with_for_update()
+        .populate_existing()
+    )
+    row = query.first()
+    if row is None:
+        try:
+            db.add(database.AppSetting(setting_key=SETTING_KEY, setting_value="[]"))
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        row = query.first()
+    assert row is not None
+    return row
+
+
+def _update(
+    db: Optional[Session],
+    mutate: Callable[[List[Dict[str, Any]]], Any],
+) -> Tuple[List[Dict[str, Any]], Any]:
+    """読み込み・加工・書き戻しを**1つの排他区間**で行う。戻り値は（保存後の一覧, `mutate` の返り値）。
+
+    `mutate` は一覧をその場で書き換え、**書き戻さなくてよいとき（見つからない等）は `False`** を
+    返す（それ以外の返り値は書き戻す）。全タスクが1行のJSONに入っているので、別のタスクへの
+    操作同士でも、読み込みから書き戻しの間に割り込まれると片方が消える（lost update）。
+    Notion同期の完了の読み戻しと、画面からの操作が重なるのがこの形（#496）。
+    `filament._update()` と同じ考え方。
+
+    - DB_MOCK: `atomic_json.update_json`（プロセス内のロックと `.lock` ファイルの `flock`）
+    - 本番: プロセス内のロックと、行ロック（`FOR UPDATE`）で読み込みから `commit` までを囲む
+    """
+    if database.DB_MOCK or db is None:
+        outcome: List[Any] = [None]
+
+        def apply_file(raw: Any) -> Any:
+            if isinstance(raw, dict):
+                raw = raw.get("tasks")
+            tasks = normalize_tasks(raw)
+            outcome[0] = mutate(tasks)
+            return {"tasks": tasks} if outcome[0] is not False else {"tasks": normalize_tasks(raw)}
+
+        result = atomic_json.update_json(CONFIG_PATH, None, apply_file)
+        return result["tasks"], outcome[0]
+
+    with _db_lock:
+        try:
+            row = _lock_db_row(db)
+            try:
+                tasks = normalize_tasks(json.loads(row.setting_value))
+            except (TypeError, ValueError):
+                tasks = []
+            result_value = mutate(tasks)
+            if result_value is not False:
+                row.setting_value = json.dumps(tasks, ensure_ascii=False)
+            db.commit()
+            return tasks, result_value
+        except BaseException:
+            # 例外のまま抜けると行ロックが残り、次のリクエストがロック待ちで止まる
+            db.rollback()
+            raise
 
 
 def save_tasks(raw: Any, db: Optional[Session] = None) -> List[Dict[str, Any]]:
@@ -326,19 +380,18 @@ def save_tasks(raw: Any, db: Optional[Session] = None) -> List[Dict[str, Any]]:
     実施履歴は画面から送られてこないので、同じ id の既存項目から引き継ぐ。
     画面の編集で履歴を落とさないため。
     """
-    current = {task["id"]: task for task in get_tasks(db)}
 
-    merged: List[Dict[str, Any]] = []
-    for entry in raw if isinstance(raw, list) else []:
-        if not isinstance(entry, dict):
-            continue
-        existing = current.get(_clean_text(entry.get("id"), 64))
-        merged.append({**entry, "history": (existing or {}).get("history", [])})
+    def mutate(tasks: List[Dict[str, Any]]) -> None:
+        current = {task["id"]: task for task in tasks}
+        merged: List[Dict[str, Any]] = []
+        for entry in raw if isinstance(raw, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            existing = current.get(_clean_text(entry.get("id"), 64))
+            merged.append({**entry, "history": (existing or {}).get("history", [])})
+        tasks[:] = normalize_tasks(merged)
 
-    tasks = normalize_tasks(merged)
-    if database.DB_MOCK or db is None:
-        return _write_file_tasks(tasks)
-    return _write_db_tasks(db, tasks)
+    return _update(db, mutate)[0]
 
 
 def mark_done(
@@ -356,25 +409,20 @@ def mark_done(
     同じ日に2回押しても履歴は増えず、**先に入っていた登録日時も変えない**
     （`_normalize_history` が同じ日の後ろのほうを落とすので、既存を先に並べる）。
     """
-    tasks = get_tasks(db)
     entry = {
         "date": (done_on or get_today_jst()).isoformat(),
         "recorded_at": (recorded_at or get_now_jst()).isoformat(),
     }
 
-    found = False
-    for task in tasks:
-        if task["id"] == task_id:
-            task["history"] = _normalize_history([*task["history"], entry])
-            found = True
-            break
+    def mutate(tasks: List[Dict[str, Any]]) -> bool:
+        for task in tasks:
+            if task["id"] == task_id:
+                task["history"] = _normalize_history([*task["history"], entry])
+                return True
+        return False
 
-    if not found:
-        return tasks, False
-
-    if database.DB_MOCK or db is None:
-        return _write_file_tasks(tasks), True
-    return _write_db_tasks(db, tasks), True
+    tasks, found = _update(db, mutate)
+    return tasks, found
 
 
 def remove_done(
@@ -387,21 +435,18 @@ def remove_done(
     日付を間違えて登録したときの直し方はこれ1つ（消してから正しい日で登録し直す）。
     履歴を直接書き換える口を作らないのは、登録日時が実態とずれないようにするため。
     """
-    tasks = get_tasks(db)
     target = done_on.isoformat()
 
-    removed = False
-    for task in tasks:
-        if task["id"] != task_id:
-            continue
-        kept = [entry for entry in task["history"] if entry.get("date") != target]
-        removed = len(kept) != len(task["history"])
-        task["history"] = kept
-        break
+    def mutate(tasks: List[Dict[str, Any]]) -> bool:
+        for task in tasks:
+            if task["id"] != task_id:
+                continue
+            kept = [entry for entry in task["history"] if entry.get("date") != target]
+            if len(kept) == len(task["history"]):
+                return False
+            task["history"] = kept
+            return True
+        return False
 
-    if not removed:
-        return tasks, False
-
-    if database.DB_MOCK or db is None:
-        return _write_file_tasks(tasks), True
-    return _write_db_tasks(db, tasks), True
+    tasks, removed = _update(db, mutate)
+    return tasks, removed

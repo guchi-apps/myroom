@@ -433,3 +433,152 @@ def test_sync_creates_updates_archives_and_reads_back(data_dir, monkeypatch):
 
     assert archived == ["p-old"]
     assert created == []
+
+
+# --- 並行する更新（lost update・#496）------------------------------------------
+#
+# 全タスクが1行のJSONに入っているので、別のタスクへの操作同士でも、読み込みから書き戻しの
+# 間に割り込まれると片方が消える。窓を広げるため、ロックの内側で走る `_normalize_history` を
+# 遅くして、ロックが無ければ確実に取りこぼす形にしてある。
+
+import threading
+import time
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from backend import database
+
+_TASK_IDS = ["t0", "t1", "t2", "t3"]
+
+
+@pytest.fixture
+def slow_history(monkeypatch):
+    original = cleaning._normalize_history
+
+    def slow(raw):
+        time.sleep(0.01)
+        return original(raw)
+
+    monkeypatch.setattr(cleaning, "_normalize_history", slow)
+
+
+def _definitions():
+    return [{"id": task_id, "name": task_id, "interval_days": 7} for task_id in _TASK_IDS]
+
+
+def _run_concurrently(jobs):
+    errors = []
+    barrier = threading.Barrier(len(jobs))
+
+    def run(job):
+        try:
+            barrier.wait()
+            job()
+        except BaseException as exc:  # pragma: no cover
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(job,)) for job in jobs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+
+def _days(count):
+    return [TODAY - datetime.timedelta(days=index) for index in range(count)]
+
+
+def _assert_nothing_lost(tasks, count):
+    by_id = {task["id"]: task for task in tasks}
+    for task_id in _TASK_IDS:
+        assert len(by_id[task_id]["history"]) == count
+
+
+def test_concurrent_mark_done_does_not_lose_each_other_in_file_mode(data_dir, slow_history):
+    cleaning.save_tasks(_definitions())
+    per_task = 4
+    jobs = [
+        (lambda task_id=task_id, day=day: cleaning.mark_done(task_id, done_on=day))
+        for task_id in _TASK_IDS
+        for day in _days(per_task)
+    ]
+    _run_concurrently(jobs)
+    _assert_nothing_lost(cleaning.get_tasks(), per_task)
+
+
+@pytest.fixture
+def sqlite_db(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'cleaning.db'}", connect_args={"timeout": 30})
+    database.AppSetting.__table__.create(engine)
+    monkeypatch.setattr(database, "DB_MOCK", False)
+    factory = sessionmaker(bind=engine)
+    try:
+        yield factory
+    finally:
+        engine.dispose()
+
+
+def _in_session(factory, action):
+    session = factory()
+    try:
+        return action(session)
+    finally:
+        session.close()
+
+
+def test_concurrent_mark_done_does_not_lose_each_other_in_db_mode(sqlite_db, slow_history):
+    _in_session(sqlite_db, lambda db: cleaning.save_tasks(_definitions(), db))
+    per_task = 4
+    jobs = [
+        (
+            lambda task_id=task_id, day=day: _in_session(
+                sqlite_db, lambda db: cleaning.mark_done(task_id, db, done_on=day)
+            )
+        )
+        for task_id in _TASK_IDS
+        for day in _days(per_task)
+    ]
+    _run_concurrently(jobs)
+    _assert_nothing_lost(_in_session(sqlite_db, cleaning.get_tasks), per_task)
+
+
+def test_concurrent_first_saves_create_the_row_once(sqlite_db):
+    jobs = [
+        (lambda: _in_session(sqlite_db, lambda db: cleaning.save_tasks(_definitions(), db)))
+        for _ in range(4)
+    ]
+    _run_concurrently(jobs)
+    assert [t["id"] for t in _in_session(sqlite_db, cleaning.get_tasks)] == _TASK_IDS
+
+
+def test_db_mode_not_found_writes_nothing_and_keeps_working(sqlite_db):
+    _in_session(sqlite_db, lambda db: cleaning.save_tasks(_definitions(), db))
+    _, found = _in_session(sqlite_db, lambda db: cleaning.mark_done("nope", db, done_on=TODAY))
+    assert found is False
+    _, removed = _in_session(
+        sqlite_db, lambda db: cleaning.remove_done("t0", TODAY, db)
+    )
+    assert removed is False
+    _, found = _in_session(sqlite_db, lambda db: cleaning.mark_done("t0", db, done_on=TODAY))
+    assert found is True
+
+
+def test_db_mode_save_keeps_history_written_after_the_stale_read(sqlite_db):
+    """Notion同期の冒頭で読んだあとに画面から入った記録を、完了の読み戻しが消さない。"""
+    _in_session(sqlite_db, lambda db: cleaning.save_tasks(_definitions(), db))
+
+    db = sqlite_db()
+    try:
+        cleaning.get_tasks(db)  # 同期の冒頭の読み込み（ここでトランザクションが始まる）
+        _in_session(sqlite_db, lambda other: cleaning.mark_done("t1", other, done_on=TODAY))
+        db.commit()  # cleaning_notion.sync() が完了の読み戻しの前に行う
+        cleaning.mark_done("t0", db, done_on=TODAY)
+    finally:
+        db.close()
+
+    by_id = {t["id"]: t for t in _in_session(sqlite_db, cleaning.get_tasks)}
+    assert len(by_id["t0"]["history"]) == 1
+    assert len(by_id["t1"]["history"]) == 1
