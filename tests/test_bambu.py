@@ -879,3 +879,28 @@ def test_oversized_job_filament_is_rejected(client):
     huge["filaments"] = [{"used_g": 1.0, "type": "x" * 100} for _ in range(400)]
 
     assert _post(client, connected=True, report=_report(), job_filament=huge).status_code == 422
+
+
+def test_bambu_state_failure_does_not_leak_exception_text(client, monkeypatch):
+    """無認証の収集の口は、DBの例外文（SQL・接続先など）を応答へ返さない（#498）。"""
+    from backend import bambu
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("(pymysql) SELECT secret FROM t host=10.0.0.1")
+
+    from unittest.mock import MagicMock
+
+    from backend import database
+    from backend.main import app
+
+    monkeypatch.setattr(bambu, "record_state", boom)
+    app.dependency_overrides[database.get_db] = lambda: MagicMock()
+    try:
+        response = client.post(
+            "/api/bambu/state",
+            json={"connected": True, "report": {}, "last_message_at": None},
+        )
+    finally:
+        app.dependency_overrides.pop(database.get_db, None)
+    assert response.status_code == 500
+    assert response.json() == {"detail": "internal error"}
