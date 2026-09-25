@@ -34,6 +34,13 @@ export function formatChangelogDate(date: string): string {
  */
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.24.5",
+    date: "2026-09-26",
+    changes: [
+      "iPhoneのホーム画面に追加してお使いの方向けに、アプリを開いた際にステータスバー直下のヘッダー(ロゴやアイコン)がぼやけて見えることがある表示の乱れを修正しました。",
+    ],
+  },
+  {
     version: "4.24.3",
     date: "2026-09-25",
     changes: [

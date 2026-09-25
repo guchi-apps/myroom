@@ -60,6 +60,7 @@ import {
   type DashboardOfflineSnapshot,
 } from "@/lib/offline-cache";
 import { useChartHistory } from "@/lib/use-chart-history";
+import { useElementHeight } from "@/lib/use-element-height";
 import {
   buildAirconReadings,
   buildIndoorReadings,
@@ -340,6 +341,8 @@ function DeviceCard({
 
 export function MyRoomDashboard() {
   const { isAuthenticated, setIsAuthenticated } = useAuthState();
+  // ヘッダーを fixed にしたので、同じ高さの余白を本文の前に置く（#513）
+  const [headerBarRef, headerBarHeight] = useElementHeight<HTMLDivElement>();
   const [latestData, setLatestData] = useState<LatestData | null>(null);
   const [latestByDevice, setLatestByDevice] = useState<Record<number, LatestData | null>>(
     {}
@@ -1146,14 +1149,23 @@ export function MyRoomDashboard() {
         左横に置いて1段にし、それより狭い端末（375pt幅など）では横幅が足りないので
         ボタン列の下へ右寄せで回す。
 
-        スクロールしても常に見える固定表示にする（#488）。`sticky` の基準はbodyスクロール
-        （scroll containerを持たない構造）で、`top`はiOS安全領域の帯（`app/layout.tsx`の
-        `env(safe-area-inset-top)`分の帯）の直下に揃える。`z-30`は安全領域の帯（z-40）・
-        ボトムシート系モーダルの暗幕（z-50）より下に置き、開いたときはそれらの下に隠れるように
-        しつつ、スクロールする本文（z-index無し）より上に出るための最小限の値。
+        スクロールしても常に見える固定表示にする（#488）。**画面の上端（y=0）から始まる
+        `position: fixed` の1枚にし、iOSの安全領域（ステータスバーの裏）も `padding-top` で
+        ヘッダー自身が塗る**（#513）。iOS 26以降のPWAは、上端に接した不透明な固定ヘッダーが
+        無いとステータスバーの下へ約40ptのぼかしを重ね、それがヘッダーの上半分まで届いて
+        ロゴやアイコンがぼけていた。以前は安全領域の帯（`app/layout.tsx`・#478/#482）と
+        ヘッダー（安全領域の下から始まる `sticky`）が別要素で、どちらも「上端に接した固定
+        ヘッダー」にならなかった。fixed で流れから外れるぶん、直後に同じ高さの余白を置く
+        （安全領域ぶんは layout.tsx の外側の `padding-top` がすでに取っている）。
+        `z-[45]`は安全領域の帯と #482 の要素（どちらも z-40）より上、ボトムシート系モーダルの
+        暗幕（z-50）より下。ダッシュボードでは上端の最前面をこのヘッダーにして、iOS が上端で
+        拾う要素を確実にこれにする（帯の下に置くと、#478/#482 と同じ判定のままになり得る）。
       */}
-      <header className="sticky top-[env(safe-area-inset-top)] z-30 border-b border-header-band-border bg-header-band">
-        <div className="mx-auto w-full max-w-[480px] px-5 py-2.5 lg:max-w-[1040px] lg:px-8">
+      <header className="fixed inset-x-0 top-0 z-[45] border-b border-header-band-border bg-header-band pt-[env(safe-area-inset-top)]">
+        <div
+          ref={headerBarRef}
+          className="mx-auto w-full max-w-[480px] px-5 py-2.5 lg:max-w-[1040px] lg:px-8"
+        >
           <div className="flex items-center justify-between gap-3 px-0.5">
             <h1 className="shrink-0">
               {/* 表示サイズ固定のローカル画像で、`output: "export"`では最適化も効かないため素の<img>で出す */}
@@ -1219,6 +1231,16 @@ export function MyRoomDashboard() {
           </div>
         </div>
       </header>
+      {/*
+        fixed のヘッダーと同じ高さ（安全領域と下線を除いた中身＋下線1px）。測れるまでは
+        いちばん多い1段の高さ（py-2.5＋ロゴ h-9、sm 以上は h-10）で埋めておき、JS が
+        走ったあとの本文の飛びを小さくする
+      */}
+      <div
+        aria-hidden="true"
+        className="h-[57px] sm:h-[61px]"
+        style={headerBarHeight === null ? undefined : { height: headerBarHeight + 1 }}
+      />
 
       {/* 帯の下は、これまでどおり本文の幅・余白（バナーもここから並ぶ） */}
       <div className="mx-auto w-full max-w-[480px] space-y-6 px-5 pt-5 lg:max-w-[1040px] lg:px-8">
